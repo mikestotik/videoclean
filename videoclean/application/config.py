@@ -254,3 +254,4 @@ class RunCleanupRequest:
     overwrite: bool = False
     job_id: str | None = None
     manifest: object | None = None
+    targets_override: list[dict] | None = None  # manual targets: skips the prompt parser

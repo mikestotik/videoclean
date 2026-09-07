@@ -448,3 +448,50 @@ def test_unavailable_parser_fails_in_ensure_ready_before_extract(tmp_path: Path)
         raise AssertionError("expected AdapterUnavailable")
     # status() is checked in _ensure_ready before ffmpeg extract
     assert "extract" not in media.events
+
+
+def test_targets_override_skips_parser(tmp_path: Path):
+    from videoclean.domain.tracks import Track
+
+    calls = []
+    parser = FakeParser()
+    orig_parse = parser.parse
+
+    def spy_parse(*a, **kw):
+        calls.append(a)
+        return orig_parse(*a, **kw)
+
+    parser.parse = spy_parse
+    det = FakeDetector()
+    jobs = FakeJobs()
+    src = tmp_path / "in.mp4"
+    src.write_bytes(b"fake")
+    frame = np.zeros((8, 8, 3), dtype=np.uint8)
+    uc = RunCleanup(
+        media=FakeMedia(),
+        parser=parser,
+        detectors=[det],
+        segmenter=FakeSegmenter(),
+        inpainter=FakeInpainter(),
+        jobs=jobs,
+        progress=SilentProgress(),
+        new_job_id=lambda: "j-override",
+        make_paths=JobPaths.create,
+        utc_now=lambda: __import__("datetime").datetime(2026, 1, 1),
+        read_image=lambda path: frame,
+        write_image=lambda path, image: path.write_bytes(b"img"),
+    )
+    req = RunCleanupRequest(
+        input_path=src,
+        output_path=tmp_path / "out.mp4",
+        prompt="",
+        config=PipelineConfig(detectors=["grounding-dino"], formats=["mp4"], verify=False),
+        overwrite=True,
+        keep_workdir=True,
+        job_id="j-override",
+        targets_override=[{"kind": "object", "query": "mug", "where": None, "motion": "any"}],
+    )
+    report = uc.execute(req, tmp_path)
+    assert calls == [], "parser must not run when targets_override is given"
+    assert report["promptParseMode"] == "manual"
+    assert report["targets"][0]["query"] == "mug"

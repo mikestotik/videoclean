@@ -19,6 +19,7 @@ from videoclean.application.frames_sample import sample_frame_indices
 from videoclean.application.frames import LazyFrames
 from videoclean.application.select import explain_unmatched, select_tracks
 from videoclean.domain.formats import resolve_dest
+from videoclean.domain.intent import Intent
 from videoclean.domain.tracks import Detection, tracks_to_json
 
 
@@ -55,8 +56,8 @@ class RunCleanup:
     def execute(self, req: RunCleanupRequest, data_dir: Path) -> dict:
         cfg = req.config
         cfg.validate()
-        if not (req.prompt or "").strip():
-            raise PipelineError("--prompt is required")
+        if not (req.prompt or "").strip() and not req.targets_override:
+            raise PipelineError("--prompt is required (or pass manual targets)")
         if not req.input_path.is_file():
             raise FileNotFoundError(req.input_path)
         for fmt in cfg.formats:
@@ -148,16 +149,24 @@ class RunCleanup:
         parse_st = self.parser.status() if hasattr(self.parser, "status") else "llm"
         sample_idxs = sample_frame_indices(len(frames), cfg.prompt_frame_stride, cfg.prompt_frame_max)
         sample_frames = [images[i] for i in sample_idxs] if sample_idxs else None
-        detail = f"llm  {parse_st}"
-        if sample_idxs:
-            detail += f"  vision frames={len(sample_idxs)} stride={cfg.prompt_frame_stride}"
-        self.progress.start("parse", detail=detail)
-        intent = self.parser.parse(
-            req.prompt,
-            frames=sample_frames,
-            frame_indices=sample_idxs,
-            parse_chunk_frames=cfg.parse_chunk_frames,
-        )
+        if req.targets_override:
+            from videoclean.application.use_cases.run_preview import targets_from_json
+
+            targets = targets_from_json(req.targets_override)
+            intent = Intent(targets=targets, parse_mode="manual", raw=req.prompt or "")
+            detail = f"manual targets: {len(targets)}"
+            label = ", ".join(_target_label(t) for t in intent.targets)
+        else:
+            detail = f"llm  {parse_st}"
+            if sample_idxs:
+                detail += f"  vision frames={len(sample_idxs)} stride={cfg.prompt_frame_stride}"
+            self.progress.start("parse", detail=detail)
+            intent = self.parser.parse(
+                req.prompt,
+                frames=sample_frames,
+                frame_indices=sample_idxs,
+                parse_chunk_frames=cfg.parse_chunk_frames,
+            )
         (paths.root / "analysis" / "prompt.json").write_text(
             json.dumps(
                 {
@@ -176,10 +185,11 @@ class RunCleanup:
             encoding="utf-8",
         )
         label = ", ".join(_target_label(t) for t in intent.targets)
-        if intent.defaulted:
-            label += " (default)"
-        if intent.parse_mode == "llm-vision":
-            label += f"  (vision×{len(sample_idxs)})"
+        if intent.parse_mode != "manual":
+            if intent.defaulted:
+                label += " (default)"
+            if intent.parse_mode == "llm-vision":
+                label += f"  (vision×{len(sample_idxs)})"
         self.progress.finish("parse", label)
 
         self.progress.start("detect", total=len(frames), detail="read frames")
