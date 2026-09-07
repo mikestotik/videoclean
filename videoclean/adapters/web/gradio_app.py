@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import json
 import os
-import queue
 import shutil
 import signal
 import threading
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -477,7 +476,7 @@ def build_ui(state: AppState):
                 jobs_status = gr.Markdown()
                 output_file = gr.File(label="Download output", interactive=False)
 
-        timer = gr.Timer(2)
+        timer = gr.Timer(1.0)
 
         def _refresh_clean_selects(current_det, current_seg, current_inp):
             d = _choice_list(ready_choices("detector", state.catalog), "grounding-dino", current_det)
@@ -559,14 +558,12 @@ def build_ui(state: AppState):
             return (*_models_status_panel(), *selects)
 
         def _on_cancel_download(current_det, current_seg, current_inp):
-            started = _cancel_download(state)
-            table, frac, msg, doctor, *selects = _on_refresh_models(
+            msg = _cancel_download(state)
+            table, _, _, doctor, *selects = _on_refresh_models(
                 current_det, current_seg, current_inp
             )
-            if started.startswith("Cancel") or started.startswith("No running"):
-                msg = started
-                state.last_download_msg = msg
-            return (table, frac, msg, doctor, *selects)
+            # Always clear the bar on cancel — do not keep a mid-download %.
+            return (table, 0.0, msg, doctor, *selects)
         def _jobs_refresh(filter_val, selected_id):
             st = None if not filter_val or filter_val == "all" else str(filter_val)
             table = format_jobs_table(list_full_jobs(state.jobs, state=st))
@@ -654,15 +651,15 @@ def build_ui(state: AppState):
             inputs=[detector, segmenter, inpainter],
             outputs=model_outputs,
         )
+        # queue=False: cancel must run even if a download/poll event is in flight.
+        # Streaming generators previously blocked the queue so Cancel never fired.
         cancel_dl.click(
             _on_cancel_download,
             inputs=[detector, segmenter, inpainter],
             outputs=model_outputs,
+            queue=False,
         )
         for cid, btn in download_buttons.items():
-            # Must bind a real generator function. A lambda that *returns*
-            # iter_download_updates(...) is one output (the generator object)
-            # and Gradio raises "needed: 11, returned: 1".
             btn.click(
                 make_download_click_handler(state, cid),
                 inputs=[detector, segmenter, inpainter],
@@ -876,6 +873,10 @@ def _format_download_line(
 
 def _download_progress(state: AppState) -> tuple[float, str]:
     for row in _active_downloads(state):
+        if row["cancel_requested"]:
+            state.last_download_frac = 0.0
+            state.last_download_msg = f"Cancelling {row['component_id']}…"
+            return 0.0, state.last_download_msg
         try:
             frac = float(row["progress"] or 0.0)
         except (TypeError, ValueError):
@@ -890,17 +891,37 @@ def _download_progress(state: AppState) -> tuple[float, str]:
         state.last_download_frac = max(0.0, min(frac, 1.0))
         state.last_download_msg = line
         return state.last_download_frac, line
+
+    # No active download: sync terminal status so the bar does not stick mid-%.
+    recent = state.jobs.list_downloads(limit=1)
+    if recent:
+        row = recent[0]
+        cid = row["component_id"]
+        st = row["state"]
+        if st == "done":
+            state.last_download_frac = 1.0
+            state.last_download_msg = f"Finished {cid} — ready"
+        elif st == "cancelled":
+            state.last_download_frac = 0.0
+            state.last_download_msg = f"Cancelled {cid}"
+        elif st == "failed":
+            state.last_download_frac = 0.0
+            detail = (row["message"] or "failed").strip()
+            state.last_download_msg = f"Failed {cid}: {detail}"
+
     return float(state.last_download_frac or 0.0), state.last_download_msg or "No download in progress."
 
 
 def _download_message(state: AppState) -> str:
     for row in _active_downloads(state):
+        if row["cancel_requested"]:
+            return f"Cancelling {row['component_id']}…"
         return f"Downloading {row['component_id']}…"
     return state.last_download_msg or "No download in progress."
 
 
 def _start_download(state: AppState, component_id: str) -> str:
-    """Fire-and-forget start (used by tests / cancel paths). Prefer iter_download_updates in UI."""
+    """Start download on a daemon thread; UI progress comes from the Timer poll."""
     if state.downloader is None:
         return "Downloader is not configured."
     component_id = (component_id or "").strip()
@@ -918,123 +939,29 @@ def _start_download(state: AppState, component_id: str) -> str:
 
     threading.Thread(target=_run, name=f"vc-dl-{component_id}", daemon=True).start()
     state.last_download_frac = 0.01
-    state.last_download_msg = f"Started download: {component_id}"
+    state.last_download_msg = f"Starting {component_id}…"
     return state.last_download_msg
 
 
 def make_download_click_handler(state: AppState, component_id: str):
-    """Bind component_id into a Gradio generator callback (not a returning lambda)."""
+    """Bind component_id; return one model_outputs tuple (do not hold the Gradio queue)."""
 
-    def _handler(current_det, current_seg, current_inp) -> Iterator[tuple]:
-        yield from iter_download_updates(
-            state, component_id, current_det, current_seg, current_inp
-        )
+    def _handler(current_det, current_seg, current_inp):
+        msg = _start_download(state, component_id)
+        table = format_models_table(_safe_list_status(state.catalog))
+        doctor = format_doctor_text()
+        # Keep Clean dropdowns unchanged until download finishes (Timer refreshes bar/msg).
+        hold = (gr.update(),) * 7
+        frac = 0.01 if msg.startswith("Starting") else float(state.last_download_frac or 0.0)
+        if msg.startswith("Starting"):
+            state.last_download_frac = 0.01
+            state.last_download_msg = msg
+        else:
+            frac, _ = _download_progress(state)
+            state.last_download_msg = msg
+        return (table, frac, msg, doctor, *hold)
 
     return _handler
-
-
-def iter_download_updates(
-    state: AppState,
-    component_id: str,
-    current_det,
-    current_seg,
-    current_inp,
-) -> Iterator[tuple]:
-    """Yield Gradio model_outputs tuples while a download runs."""
-    hold = (gr.update(),) * 7
-    catalog_table = format_models_table(_safe_list_status(state.catalog))
-    doctor = format_doctor_text()
-
-    if state.downloader is None:
-        state.last_download_msg = "Downloader is not configured."
-        yield (catalog_table, 0.0, state.last_download_msg, doctor, *hold)
-        return
-    component_id = (component_id or "").strip()
-    if not component_id:
-        state.last_download_msg = "Pick a component."
-        yield (catalog_table, 0.0, state.last_download_msg, doctor, *hold)
-        return
-    active = _active_downloads(state)
-    if active:
-        msg = f"Already downloading {active[0]['component_id']}. Wait or cancel."
-        state.last_download_msg = msg
-        frac, _ = _download_progress(state)
-        yield (catalog_table, frac, msg, doctor, *hold)
-        return
-
-    events: queue.Queue = queue.Queue()
-
-    def on_progress(
-        fraction: float,
-        message: str = "",
-        bytes_done: int | None = None,
-        bytes_total: int | None = None,
-    ) -> None:
-        events.put(("prog", float(fraction), message, bytes_done, bytes_total))
-
-    def runner() -> None:
-        try:
-            assert state.downloader is not None
-            state.downloader.execute(component_id, state.jobs, on_progress)
-            events.put(("done", 1.0, "ready", None, None))
-        except Exception as exc:  # noqa: BLE001 — surface in UI
-            events.put(("err", 0.0, str(exc)[:400], None, None))
-
-    state.last_download_frac = 0.01
-    state.last_download_msg = f"Starting {component_id}…"
-    yield (catalog_table, 0.01, state.last_download_msg, doctor, *hold)
-
-    threading.Thread(target=runner, name=f"vc-dl-{component_id}", daemon=True).start()
-
-    while True:
-        try:
-            kind, frac, message, bytes_done, bytes_total = events.get(timeout=0.2)
-        except queue.Empty:
-            frac, msg = _download_progress(state)
-            table = format_models_table(_safe_list_status(state.catalog))
-            yield (table, frac, msg, format_doctor_text(), *hold)
-            continue
-
-        if kind == "prog":
-            line = _format_download_line(component_id, frac, message or "", bytes_done, bytes_total)
-            state.last_download_frac = max(0.0, min(float(frac), 0.99))
-            state.last_download_msg = line
-            table = format_models_table(_safe_list_status(state.catalog))
-            yield (table, state.last_download_frac, line, format_doctor_text(), *hold)
-            continue
-
-        # done / err — full refresh so Clean selects unlock when ready
-        if kind == "done":
-            state.last_download_frac = 1.0
-            state.last_download_msg = f"Finished {component_id} — ready"
-        else:
-            state.last_download_frac = 0.0
-            state.last_download_msg = f"Failed {component_id}: {message}"
-        selects = _select_updates(state, current_det, current_seg, current_inp)
-        table = format_models_table(_safe_list_status(state.catalog))
-        yield (
-            table,
-            state.last_download_frac,
-            state.last_download_msg,
-            format_doctor_text(),
-            *selects,
-        )
-        return
-
-
-def _select_updates(state: AppState, current_det, current_seg, current_inp):
-    d = _choice_list(ready_choices("detector", state.catalog), "grounding-dino", current_det)
-    s = _choice_list(ready_choices("segmenter", state.catalog), "sam2", current_seg)
-    i = _choice_list(ready_choices("inpainter", state.catalog), "opencv-telea", current_inp)
-    return (
-        gr.update(choices=d[0], value=d[1]),
-        gr.update(choices=s[0], value=s[1]),
-        gr.update(choices=i[0], value=i[1]),
-        missing_hint("detector", state.catalog),
-        missing_hint("segmenter", state.catalog),
-        missing_hint("inpainter", state.catalog),
-        gr.update(interactive=max_quality_ready(state.catalog)),
-    )
 
 
 def _cancel_download(state: AppState) -> str:
@@ -1042,10 +969,21 @@ def _cancel_download(state: AppState) -> str:
     for row in state.jobs.list_downloads(limit=20):
         if row["state"] in {"running", "queued"}:
             state.jobs.request_download_cancel(row["id"])
+            # Flip row to cancelled immediately so the Timer stops painting mid-%.
+            state.jobs.upsert_download(
+                row["id"],
+                row["component_id"],
+                "cancelled",
+                progress=0.0,
+                message="cancelled",
+            )
             cancelled.append(row["component_id"])
+    state.last_download_frac = 0.0
     if not cancelled:
-        return "No running download."
-    return "Cancel requested for " + ", ".join(cancelled)
+        state.last_download_msg = "No running download."
+        return state.last_download_msg
+    state.last_download_msg = "Cancelled " + ", ".join(cancelled)
+    return state.last_download_msg
 
 
 def _cancel_job(state: AppState, job_id: str) -> str:

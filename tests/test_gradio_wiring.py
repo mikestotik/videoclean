@@ -1,4 +1,5 @@
 import json
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -460,43 +461,58 @@ def test_download_progress_keeps_last_status_when_idle(tmp_path: Path):
     assert "Finished" in msg
 
 
-def test_iter_download_updates_streams_progress(tmp_path: Path):
-    pytest.importorskip("gradio")
-    from videoclean.adapters.web.gradio_app import iter_download_updates
-    from videoclean.application.use_cases.download_component import DownloadComponent
+def test_download_progress_syncs_finished_from_store(tmp_path: Path):
+    from videoclean.adapters.web.gradio_app import _download_progress
 
-    def fake_runner(component_id, on_progress=None, is_cancelled=None):
-        if on_progress:
-            on_progress(0.25, "part", bytes_done=1, bytes_total=4)
-            on_progress(0.75, "part", bytes_done=3, bytes_total=4)
+    state = build_app_state(tmp_path, worker=False, catalog=FakeCat(), downloader=False)
+    state.last_download_frac = 0.78
+    state.last_download_msg = "segmenter:sam2-large: 78% Fetching"
+    state.jobs.upsert_download("d1", "segmenter:sam2-large", "done", progress=1.0, message="ready")
+    frac, msg = _download_progress(state)
+    assert frac == 1.0
+    assert msg == "Finished segmenter:sam2-large — ready"
 
-    state = build_app_state(
-        tmp_path,
-        worker=False,
-        catalog=FakeCat(),
-        downloader=DownloadComponent(fake_runner),
+
+def test_cancel_download_clears_bar_immediately(tmp_path: Path):
+    from videoclean.adapters.web.gradio_app import _cancel_download, _download_progress
+
+    state = build_app_state(tmp_path, worker=False, catalog=FakeCat(), downloader=False)
+    state.jobs.upsert_download(
+        "d1",
+        "segmenter:sam2-large",
+        "running",
+        progress=0.78,
+        message="Fetching",
     )
-    updates = list(
-        iter_download_updates(state, "detector:owlvit", None, None, "opencv-telea")
-    )
-    assert len(updates) >= 2
-    fracs = [u[1] for u in updates]
-    msgs = [u[2] for u in updates]
-    assert any(f >= 0.25 for f in fracs)
-    assert any("75%" in m or "Finished" in m for m in msgs)
-    assert updates[-1][2].startswith("Finished")
-    assert state.last_download_frac == 1.0
+    state.last_download_frac = 0.78
+    msg = _cancel_download(state)
+    assert msg.startswith("Cancelled")
+    assert state.last_download_frac == 0.0
+    row = state.jobs.get_download("d1")
+    assert row is not None
+    assert row["state"] == "cancelled"
+    assert row["cancel_requested"] == 1
+    frac, status = _download_progress(state)
+    assert frac == 0.0
+    assert "Cancelled" in status
 
 
-def test_download_click_handler_yields_tuples_not_generator_object(tmp_path: Path):
-    """Gradio needs a generator fn; a lambda that *returns* a generator counts as 1 output."""
+def test_download_click_handler_returns_tuple_without_blocking(tmp_path: Path):
+    """Download click must return immediately — a generator holds Gradio's queue and blocks Cancel."""
     pytest.importorskip("gradio")
+    import types
+
     from videoclean.adapters.web.gradio_app import make_download_click_handler
     from videoclean.application.use_cases.download_component import DownloadComponent
 
+    started = threading.Event()
+    release = threading.Event()
+
     def fake_runner(component_id, on_progress=None, is_cancelled=None):
+        started.set()
+        release.wait(timeout=2)
         if on_progress:
-            on_progress(0.5, "halfway", bytes_done=1, bytes_total=2)
+            on_progress(1.0, "ready")
 
     state = build_app_state(
         tmp_path,
@@ -505,11 +521,10 @@ def test_download_click_handler_yields_tuples_not_generator_object(tmp_path: Pat
         downloader=DownloadComponent(fake_runner),
     )
     handler = make_download_click_handler(state, "detector:owlvit")
-    stream = handler(None, None, "opencv-telea")
-    assert hasattr(stream, "__next__"), "handler must be a generator function"
-    first = next(stream)
-    assert isinstance(first, tuple)
-    assert len(first) == 11
-    # Drain so the download thread finishes cleanly.
-    for _ in stream:
-        pass
+    result = handler(None, None, "opencv-telea")
+    assert not isinstance(result, types.GeneratorType)
+    assert isinstance(result, tuple)
+    assert len(result) == 11
+    assert result[2].startswith("Starting")
+    assert started.wait(timeout=1)
+    release.set()

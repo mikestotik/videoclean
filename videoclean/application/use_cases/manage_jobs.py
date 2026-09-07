@@ -101,4 +101,16 @@ class ManageJobs:
         self.jobs.upsert(job_id, "FAILED", error=reason)
 
     def recover_orphans(self) -> int:
-        return self.jobs.mark_orphans_failed("interrupted")
+        n = self.jobs.mark_orphans_failed("interrupted")
+        for row in self.jobs.list_downloads(limit=10_000):
+            if row["state"] in {"running", "queued"}:
+                self.jobs.request_download_cancel(row["id"])
+                self.jobs.upsert_download(
+                    row["id"],
+                    row["component_id"],
+                    "cancelled",
+                    progress=0.0,
+                    message="interrupted by restart",
+                )
+                n += 1
+        return n

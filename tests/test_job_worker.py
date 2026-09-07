@@ -180,10 +180,12 @@ def test_recover_orphans(tmp_path: Path):
     mgr = ManageJobs(jobs)
     jobs.upsert("run", "RUNNING")
     jobs.upsert("q", "QUEUED")
+    jobs.upsert_download("dl1", "segmenter:sam2-large", "running", progress=0.5)
     n = mgr.recover_orphans()
-    assert n == 1
+    assert n == 2
     assert jobs.get("run")["state"] == "FAILED"
     assert jobs.get("q")["state"] == "QUEUED"
+    assert jobs.get_download("dl1")["state"] == "cancelled"
 
 
 def test_delete_job(tmp_path: Path):
