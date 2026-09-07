@@ -99,6 +99,7 @@ def serialize_clean_form(payload: Mapping[str, Any] | None = None) -> dict[str, 
         "telea_radius": int(data.get("telea_radius") or 9),
         "prompt_frame_stride": int(data.get("prompt_frame_stride") or 4),
         "prompt_frame_max": int(data.get("prompt_frame_max") or 8),
+        "parse_chunk_frames": int(data.get("parse_chunk_frames") or 0),
         "vision_batch": int(data.get("vision_batch") or 2),
         "detector_keyframes": (
             int(data["detector_keyframes"]) if str(data.get("detector_keyframes") or "").strip() else None

@@ -430,6 +430,12 @@ def preview(
     llm_base_url: str = _llm_url_opt(),
     prompt_frame_stride: int = _prompt_frame_stride_opt(),
     prompt_frame_max: int = _prompt_frame_max_opt(),
+    parse_chunk_frames: int = typer.Option(
+        0,
+        "--parse-chunk-frames",
+        help="Scoped parse: split the timeline into chunks of N frames; each chunk gets its own targets (frame windows). 0 = one list for the whole clip.",
+        min=0,
+    ),
     vision_batch: int = typer.Option(2, "--vision-batch"),
     detector_keyframes: int | None = typer.Option(None, "--detector-keyframes", min=1),
     detector_nms_iou: float = typer.Option(0.3, "--detector-nms-iou"),
@@ -555,6 +561,12 @@ def run(
     llm_base_url: str = _llm_url_opt(),
     prompt_frame_stride: int = _prompt_frame_stride_opt(),
     prompt_frame_max: int = _prompt_frame_max_opt(),
+    parse_chunk_frames: int = typer.Option(
+        0,
+        "--parse-chunk-frames",
+        help="Scoped parse: split the timeline into chunks of N frames; each chunk gets its own targets (frame windows). 0 = one list for the whole clip.",
+        min=0,
+    ),
     vision_batch: int = typer.Option(
         2,
         "--vision-batch",
@@ -664,6 +676,7 @@ def run(
         verify_max_coverage=verify_max_coverage,
         prompt_frame_stride=prompt_frame_stride,
         prompt_frame_max=prompt_frame_max,
+        parse_chunk_frames=parse_chunk_frames,
         vision_batch=vision_batch,
         detector_keyframes=detector_keyframes,
         detector_nms_iou=detector_nms_iou,

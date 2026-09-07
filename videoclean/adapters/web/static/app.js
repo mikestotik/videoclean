@@ -439,6 +439,7 @@ if (view === "work") {
       "telea_radius",
       "prompt_frame_stride",
       "prompt_frame_max",
+      "parse_chunk_frames",
       "vision_batch",
       "propainter_mask_dilation",
       "propainter_ref_stride",

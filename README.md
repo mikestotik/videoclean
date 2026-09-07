@@ -56,6 +56,7 @@ LLM parser достаёт из `--prompt` короткие запросы (`red 
 | `--prompt-frame-stride` | vision-parse: кадр 0, потом каждый N-й (`4` → 0,4,8…). `0` = только текст | по умолчанию `4` |
 | `--prompt-frame-max` | потолок кадров в vision LLM | по умолчанию `8` |
 | `--vision-batch` | кадров на один vision-запрос. llava-phi3 — строго `2` | по умолчанию `2` |
+| `--parse-chunk-frames` | scoped-парс: чанк из N кадров со своими таргетами (окна времени). `0` = весь клип одним списком | по умолчанию `0` |
 | `--prompt-templates` | каталог со своими промптами (`system.md`, `vision_system.md`, `bridge_system.md`) | встроенные |
 | `--detector-keyframes` | сколько кадров реально детектить (остальные добирает трекинг) | dino `8` |
 | `--detector-nms-iou` | схлопывание дублей боксов | по умолчанию `0.3` |
@@ -168,6 +169,20 @@ uv run huggingface-cli download camenduru/ProPainter \
 ```
 
 Большой SAM2: `--segmenter-model facebook/sam2-hiera-large` (ориентир 24 GB VRAM).
+
+## Превью детекции
+
+Быстро посмотреть, куда встанут маски, без инпейнта и кодирования:
+
+```bash
+uv run videoclean preview \
+  --input ./input.mp4 --output ./preview-out \
+  --prompt "удали текст и логотип" \
+  --llm local --llm-model llava-phi3 \
+  --frames 0:16:4
+```
+
+Артефакты: `{кадр}_boxes.jpg`, `{кадр}_mask.jpg`, `preview.json`. Подмена LLM-таргетов своими и полный прогон с ними: `--queries "text [bottom], logo"` и `--targets_override` (WebUI-панель «Превью»). Подробнее: docs/PARAMS.md.
 
 ## UI (FastAPI) и RunPod
 
