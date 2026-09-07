@@ -15,7 +15,7 @@ from videoclean.application.ports.media import MediaGateway
 from videoclean.application.ports.progress import ProgressPort
 from videoclean.application.ports.prompt import PromptParser
 from videoclean.application.ports.segmenter import Segmenter
-from videoclean.adapters.prompt.frames import sample_frame_indices
+from videoclean.application.frames_sample import sample_frame_indices
 from videoclean.application.frames import LazyFrames
 from videoclean.application.select import select_tracks
 from videoclean.domain.formats import resolve_dest

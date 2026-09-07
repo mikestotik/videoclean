@@ -12,6 +12,7 @@ from videoclean.application.config import (
     DEFAULT_INPAINTER_MODEL,
     DEFAULT_SEGMENTER_MODEL,
     PORT_HELP,
+    PipelineConfig,
     RunCleanupRequest,
 )
 from videoclean.application.errors import AdapterUnavailable, PipelineError

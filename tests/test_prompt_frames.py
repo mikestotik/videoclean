@@ -1,4 +1,4 @@
-from videoclean.adapters.prompt.frames import sample_frame_indices
+from videoclean.application.frames_sample import sample_frame_indices
 
 
 def test_sample_stride_four():
