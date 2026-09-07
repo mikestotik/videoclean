@@ -198,6 +198,64 @@ def test_llm_parser_unavailable_raises():
         raise AssertionError("expected AdapterUnavailable")
 
 
+def test_llm_parser_vision_batches_frames_in_pairs():
+    import numpy as np
+
+    llm = FakeLlm(
+        replies=[
+            '{"targets":[{"kind":"object","query":"mug","motion":"any"}]}',
+            '{"targets":[{"kind":"watermark","query":"channel logo","motion":"static"}]}',
+        ]
+    )
+    parser = LlmPromptParser(llm)
+    frames = [np.zeros((32, 32, 3), dtype=np.uint8) for _ in range(4)]
+    intent = parser.parse("убери кружку и логотип", frames=frames)
+    assert len(llm.calls) == 2
+    assert llm.calls[0][2] == 2
+    assert llm.calls[1][2] == 2
+    assert intent.parse_mode == "llm-vision"
+    assert set(intent.queries) == {"mug", "channel logo"}
+
+
+def test_llm_parser_vision_skips_dead_batch():
+    import numpy as np
+
+    llm = FakeLlm(
+        replies=[
+            "if, if, the frame, if",  # batch 1: vision garbage
+            "still no json",  # batch 1: repair garbage
+            "the frames show things",  # batch 1: bridge garbage
+            '{"targets":[{"kind":"object","query":"mug","motion":"any"}]}',  # batch 2 ok
+        ]
+    )
+    parser = LlmPromptParser(llm)
+    frames = [np.zeros((32, 32, 3), dtype=np.uint8) for _ in range(4)]
+    intent = parser.parse("убери кружку", frames=frames)
+    assert intent.parse_mode == "llm-vision"
+    assert intent.queries == ["mug"]
+    assert len(llm.calls) == 4
+
+
+def test_llm_parser_vision_all_batches_fail_falls_back_to_text():
+    import numpy as np
+    from videoclean.adapters.prompt.llm import SYSTEM
+
+    llm = FakeLlm(
+        replies=[
+            "if, if, the frame, if",
+            "still no json",
+            "the frames show things",
+            '{"targets":[{"kind":"object","query":"mug","motion":"any"}]}',
+        ]
+    )
+    parser = LlmPromptParser(llm)
+    frames = [np.zeros((32, 32, 3), dtype=np.uint8) for _ in range(2)]
+    intent = parser.parse("убери кружку", frames=frames)
+    assert intent.parse_mode == "llm"
+    assert llm.calls[-1][0] == SYSTEM
+    assert intent.queries == ["mug"]
+
+
 def test_system_prompt_does_not_hand_canned_overlay_lists():
     from videoclean.adapters.prompt.llm import BRIDGE_SYSTEM, SYSTEM, VISION_SYSTEM
 

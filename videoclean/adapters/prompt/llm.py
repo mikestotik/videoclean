@@ -73,6 +73,10 @@ query must be English, concrete, searchable by Grounding DINO. No Russian. Overl
 """
 
 
+# Small VLMs (llava-phi3) degrade to word salad past 1-2 attached frames.
+_VISION_BATCH = 2
+
+
 class LlmPromptParser:
     name = "llm"
 
@@ -116,6 +120,30 @@ class LlmPromptParser:
             jpegs = [bgr_to_jpeg(f) for f in frames]
         except Exception:  # noqa: BLE001
             return None
+        targets: list[Target] = []
+        modes: list[str] = []
+        for i in range(0, len(jpegs), _VISION_BATCH):
+            batch = jpegs[i : i + _VISION_BATCH]
+            batch_intent = self._vision_batch(raw, batch)
+            if batch_intent is None:
+                continue
+            targets.extend(batch_intent.targets)
+            modes.append(batch_intent.parse_mode)
+        if not targets:
+            return None
+        deduped: list[Target] = []
+        seen: set[tuple] = set()
+        for t in targets:
+            key = (t.kind, t.query.casefold(), t.where, t.ordinal, t.from_side)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(t)
+        intent = Intent(targets=deduped, raw=raw, defaulted=False)
+        intent.parse_mode = "llm-vision-bridged" if modes and all(m == "llm-vision-bridged" for m in modes) else "llm-vision"
+        return intent
+
+    def _vision_batch(self, raw: str, jpegs: list[bytes]) -> Intent | None:
         # Small VLMs (llava-phi3) often ignore system; put the contract in user text.
         user = (
             f"{VISION_SYSTEM}\n\n"

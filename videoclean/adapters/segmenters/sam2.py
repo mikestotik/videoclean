@@ -196,17 +196,20 @@ def _or_masks(masks, shape: tuple[int, int]) -> np.ndarray:
     acc = np.zeros((h, w), dtype=np.uint8)
     tensor = masks if isinstance(masks, torch.Tensor) else torch.as_tensor(masks)
     arr = tensor.detach().cpu().numpy()
-    while arr.ndim > 3:
-        arr = arr[0]
     if arr.ndim == 2:
         acc[arr > 0] = 255
         return acc
-    for plane in arr:
-        sl = plane
-        while sl.ndim > 2:
-            sl = sl[0]
-        if sl.shape != (h, w):
-            sl = _resize_mask(sl.astype(np.float32), (h, w))
+    if arr.ndim >= 2 and arr.shape[-2:] == (h, w):
+        planes = arr.reshape(-1, h, w)
+    else:
+        planes = []
+        for sl in arr.reshape(-1, *arr.shape[-2:]):
+            while sl.ndim > 2:
+                sl = sl[0]
+            if sl.shape != (h, w):
+                sl = _resize_mask(sl.astype(np.float32), (h, w))
+            planes.append(sl)
+    for sl in planes:
         acc[sl > 0] = 255
     return acc
 
