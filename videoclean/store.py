@@ -57,6 +57,15 @@ class JobPaths:
         return paths
 
 
+_JOB_COLUMNS = (
+    ("updated_at", "TEXT"),
+    ("request_json", "TEXT"),
+    ("progress_json", "TEXT"),
+    ("error", "TEXT"),
+    ("cancel_requested", "INTEGER NOT NULL DEFAULT 0"),
+)
+
+
 class JobIndex:
     def __init__(self, db_path: Path):
         db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -75,6 +84,34 @@ class JobIndex:
                 )
                 """
             )
+            for name, decl in _JOB_COLUMNS:
+                try:
+                    con.execute(f"ALTER TABLE jobs ADD COLUMN {name} {decl}")
+                except sqlite3.OperationalError as exc:
+                    if "duplicate column" not in str(exc).lower():
+                        raise
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS downloads (
+                    id TEXT PRIMARY KEY,
+                    component_id TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    progress REAL,
+                    bytes_done INTEGER,
+                    bytes_total INTEGER,
+                    message TEXT,
+                    updated_at TEXT NOT NULL,
+                    cancel_requested INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+            try:
+                con.execute(
+                    "ALTER TABLE downloads ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0"
+                )
+            except sqlite3.OperationalError as exc:
+                if "duplicate column" not in str(exc).lower():
+                    raise
 
     def _connect(self) -> sqlite3.Connection:
         con = sqlite3.connect(self.db_path)
@@ -89,48 +126,230 @@ class JobIndex:
         output_path: str | None = None,
         prompt: str | None = None,
         report: dict[str, Any] | None = None,
+        request: dict[str, Any] | None = None,
+        progress: dict[str, Any] | None = None,
+        error: str | None = None,
+        cancel_requested: bool | None = None,
     ) -> None:
+        now = utc_now().isoformat()
         with self._connect() as con:
             existing = con.execute("SELECT id FROM jobs WHERE id = ?", (job_id,)).fetchone()
-            payload = json.dumps(report, ensure_ascii=False) if report is not None else None
+            report_payload = json.dumps(report, ensure_ascii=False) if report is not None else None
+            request_payload = (
+                json.dumps(request, ensure_ascii=False) if request is not None else None
+            )
+            progress_payload = (
+                json.dumps(progress, ensure_ascii=False) if progress is not None else None
+            )
+            cancel_val = None if cancel_requested is None else (1 if cancel_requested else 0)
             if existing:
                 con.execute(
                     """
                     UPDATE jobs
-                    SET state = ?, input_path = COALESCE(?, input_path),
+                    SET state = ?,
+                        updated_at = ?,
+                        input_path = COALESCE(?, input_path),
                         output_path = COALESCE(?, output_path),
                         prompt = COALESCE(?, prompt),
-                        report_json = COALESCE(?, report_json)
+                        report_json = COALESCE(?, report_json),
+                        request_json = COALESCE(?, request_json),
+                        progress_json = COALESCE(?, progress_json),
+                        error = COALESCE(?, error),
+                        cancel_requested = COALESCE(?, cancel_requested)
                     WHERE id = ?
                     """,
-                    (state, input_path, output_path, prompt, payload, job_id),
+                    (
+                        state,
+                        now,
+                        input_path,
+                        output_path,
+                        prompt,
+                        report_payload,
+                        request_payload,
+                        progress_payload,
+                        error,
+                        cancel_val,
+                        job_id,
+                    ),
                 )
             else:
                 con.execute(
                     """
-                    INSERT INTO jobs (id, created_at, state, input_path, output_path, prompt, report_json)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO jobs (
+                        id, created_at, updated_at, state, input_path, output_path,
+                        prompt, report_json, request_json, progress_json, error,
+                        cancel_requested
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         job_id,
-                        utc_now().isoformat(),
+                        now,
+                        now,
                         state,
                         input_path,
                         output_path,
                         prompt,
-                        payload,
+                        report_payload,
+                        request_payload,
+                        progress_payload,
+                        error,
+                        cancel_val if cancel_val is not None else 0,
                     ),
                 )
 
-    def list_jobs(self, limit: int = 20) -> list[sqlite3.Row]:
+    def list_jobs(self, limit: int = 100, state: str | None = None) -> list[sqlite3.Row]:
         with self._connect() as con:
+            if state is None:
+                return list(
+                    con.execute(
+                        "SELECT id, created_at, state, input_path, output_path FROM jobs "
+                        "ORDER BY created_at DESC LIMIT ?",
+                        (limit,),
+                    )
+                )
             return list(
                 con.execute(
-                    "SELECT id, created_at, state, input_path, output_path FROM jobs ORDER BY created_at DESC LIMIT ?",
-                    (limit,),
+                    "SELECT id, created_at, state, input_path, output_path FROM jobs "
+                    "WHERE state = ? ORDER BY created_at DESC LIMIT ?",
+                    (state, limit),
                 )
             )
 
     def get(self, job_id: str) -> sqlite3.Row | None:
         with self._connect() as con:
             return con.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+
+    def request_cancel(self, job_id: str) -> bool:
+        now = utc_now().isoformat()
+        with self._connect() as con:
+            cur = con.execute(
+                "UPDATE jobs SET cancel_requested = 1, updated_at = ? WHERE id = ?",
+                (now, job_id),
+            )
+            return cur.rowcount > 0
+
+    def is_cancel_requested(self, job_id: str) -> bool:
+        with self._connect() as con:
+            row = con.execute(
+                "SELECT cancel_requested FROM jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+            return bool(row and row["cancel_requested"])
+
+    def mark_orphans_failed(self, reason: str = "interrupted") -> int:
+        now = utc_now().isoformat()
+        with self._connect() as con:
+            cur = con.execute(
+                """
+                UPDATE jobs
+                SET state = 'FAILED', error = ?, updated_at = ?
+                WHERE state = 'RUNNING'
+                """,
+                (reason, now),
+            )
+            return cur.rowcount
+
+    def update_progress(self, job_id: str, progress: dict[str, Any]) -> None:
+        now = utc_now().isoformat()
+        payload = json.dumps(progress, ensure_ascii=False)
+        with self._connect() as con:
+            con.execute(
+                "UPDATE jobs SET progress_json = ?, updated_at = ? WHERE id = ?",
+                (payload, now, job_id),
+            )
+
+    def upsert_download(
+        self,
+        download_id: str,
+        component_id: str,
+        state: str,
+        progress: float | None = None,
+        bytes_done: int | None = None,
+        bytes_total: int | None = None,
+        message: str | None = None,
+        cancel_requested: bool | None = None,
+    ) -> None:
+        now = utc_now().isoformat()
+        cancel_val = None if cancel_requested is None else (1 if cancel_requested else 0)
+        with self._connect() as con:
+            existing = con.execute(
+                "SELECT id FROM downloads WHERE id = ?", (download_id,)
+            ).fetchone()
+            if existing:
+                con.execute(
+                    """
+                    UPDATE downloads
+                    SET component_id = ?,
+                        state = ?,
+                        progress = COALESCE(?, progress),
+                        bytes_done = COALESCE(?, bytes_done),
+                        bytes_total = COALESCE(?, bytes_total),
+                        message = COALESCE(?, message),
+                        updated_at = ?,
+                        cancel_requested = COALESCE(?, cancel_requested)
+                    WHERE id = ?
+                    """,
+                    (
+                        component_id,
+                        state,
+                        progress,
+                        bytes_done,
+                        bytes_total,
+                        message,
+                        now,
+                        cancel_val,
+                        download_id,
+                    ),
+                )
+            else:
+                con.execute(
+                    """
+                    INSERT INTO downloads (
+                        id, component_id, state, progress, bytes_done, bytes_total,
+                        message, updated_at, cancel_requested
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        download_id,
+                        component_id,
+                        state,
+                        progress,
+                        bytes_done,
+                        bytes_total,
+                        message,
+                        now,
+                        cancel_val if cancel_val is not None else 0,
+                    ),
+                )
+
+    def get_download(self, download_id: str) -> sqlite3.Row | None:
+        with self._connect() as con:
+            return con.execute(
+                "SELECT * FROM downloads WHERE id = ?", (download_id,)
+            ).fetchone()
+
+    def list_downloads(self, limit: int = 100, state: str | None = None) -> list[sqlite3.Row]:
+        with self._connect() as con:
+            if state is None:
+                return list(
+                    con.execute(
+                        "SELECT * FROM downloads ORDER BY updated_at DESC LIMIT ?",
+                        (limit,),
+                    )
+                )
+            return list(
+                con.execute(
+                    "SELECT * FROM downloads WHERE state = ? ORDER BY updated_at DESC LIMIT ?",
+                    (state, limit),
+                )
+            )
+
+    def request_download_cancel(self, download_id: str) -> bool:
+        now = utc_now().isoformat()
+        with self._connect() as con:
+            cur = con.execute(
+                "UPDATE downloads SET cancel_requested = 1, updated_at = ? WHERE id = ?",
+                (now, download_id),
+            )
+            return cur.rowcount > 0
