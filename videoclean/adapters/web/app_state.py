@@ -18,6 +18,9 @@ class AppState:
     catalog: Any
     worker: JobWorker | None = None
     downloader: DownloadComponent | None = None
+    # Last finished download line so the UI does not snap back to 0%/idle.
+    last_download_frac: float = 0.0
+    last_download_msg: str = "No download in progress."
 
 
 def build_app_state(

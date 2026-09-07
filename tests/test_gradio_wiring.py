@@ -447,3 +447,42 @@ def test_download_progress_reads_running_row(tmp_path: Path):
     assert "42%" in msg
     assert "3/9" in msg
     assert "detector:grounding-dino" in msg
+
+
+def test_download_progress_keeps_last_status_when_idle(tmp_path: Path):
+    from videoclean.adapters.web.gradio_app import _download_progress
+
+    state = build_app_state(tmp_path, worker=False, catalog=FakeCat(), downloader=False)
+    state.last_download_frac = 1.0
+    state.last_download_msg = "Finished detector:owlvit — ready"
+    frac, msg = _download_progress(state)
+    assert frac == 1.0
+    assert "Finished" in msg
+
+
+def test_iter_download_updates_streams_progress(tmp_path: Path):
+    pytest.importorskip("gradio")
+    from videoclean.adapters.web.gradio_app import iter_download_updates
+    from videoclean.application.use_cases.download_component import DownloadComponent
+
+    def fake_runner(component_id, on_progress=None, is_cancelled=None):
+        if on_progress:
+            on_progress(0.25, "part", bytes_done=1, bytes_total=4)
+            on_progress(0.75, "part", bytes_done=3, bytes_total=4)
+
+    state = build_app_state(
+        tmp_path,
+        worker=False,
+        catalog=FakeCat(),
+        downloader=DownloadComponent(fake_runner),
+    )
+    updates = list(
+        iter_download_updates(state, "detector:owlvit", None, None, "opencv-telea")
+    )
+    assert len(updates) >= 2
+    fracs = [u[1] for u in updates]
+    msgs = [u[2] for u in updates]
+    assert any(f >= 0.25 for f in fracs)
+    assert any("75%" in m or "Finished" in m for m in msgs)
+    assert updates[-1][2].startswith("Finished")
+    assert state.last_download_frac == 1.0

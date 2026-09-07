@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import shutil
 import signal
 import threading
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -557,18 +558,14 @@ def build_ui(state: AppState):
             selects = _refresh_clean_selects(current_det, current_seg, current_inp)
             return (*_models_status_panel(), *selects)
 
-        def _on_download(component_id: str, current_det, current_seg, current_inp):
-            started = _start_download(state, component_id)
-            table, frac, msg, doctor, *selects = _on_refresh_models(
-                current_det, current_seg, current_inp
-            )
-            # Race: worker may not have upserted the row yet — keep the start line.
-            if started.startswith("Started") and "Downloading" not in msg:
-                msg = started
-                frac = max(frac, 0.01)
-            elif not started.startswith("Started"):
-                msg = started
-            return (table, frac, msg, doctor, *selects)
+        def _on_download(
+            component_id: str, current_det, current_seg, current_inp
+        ) -> Iterator[tuple]:
+            """Stream progress into the UI (do not rely on the 2s Timer)."""
+            for update in iter_download_updates(
+                state, component_id, current_det, current_seg, current_inp
+            ):
+                yield update
 
         def _on_cancel_download(current_det, current_seg, current_inp):
             started = _cancel_download(state)
@@ -577,8 +574,8 @@ def build_ui(state: AppState):
             )
             if started.startswith("Cancel") or started.startswith("No running"):
                 msg = started
+                state.last_download_msg = msg
             return (table, frac, msg, doctor, *selects)
-
         def _jobs_refresh(filter_val, selected_id):
             st = None if not filter_val or filter_val == "all" else str(filter_val)
             table = format_jobs_table(list_full_jobs(state.jobs, state=st))
@@ -870,38 +867,55 @@ def _active_downloads(state: AppState) -> list:
     return rows
 
 
+def _format_download_line(
+    component_id: str,
+    frac: float,
+    message: str = "",
+    bytes_done: int | None = None,
+    bytes_total: int | None = None,
+) -> str:
+    frac = max(0.0, min(float(frac), 1.0))
+    counts = ""
+    if bytes_done is not None and bytes_total not in (None, 0):
+        counts = f" ({bytes_done}/{bytes_total})"
+    msg = (message or "").strip()
+    return f"{component_id}: {int(round(frac * 100))}%{counts} {msg}".strip()
+
+
 def _download_progress(state: AppState) -> tuple[float, str]:
     for row in _active_downloads(state):
         try:
             frac = float(row["progress"] or 0.0)
         except (TypeError, ValueError):
             frac = 0.0
-        frac = max(0.0, min(frac, 1.0))
-        msg = (row["message"] or "").strip()
-        bd = row["bytes_done"]
-        bt = row["bytes_total"]
-        counts = ""
-        if bd is not None and bt not in (None, 0):
-            counts = f" ({bd}/{bt})"
-        return frac, f"{row['component_id']}: {int(round(frac * 100))}%{counts} {msg}".strip()
-    return 0.0, _download_message(state)
+        line = _format_download_line(
+            row["component_id"],
+            frac,
+            row["message"] or "",
+            row["bytes_done"],
+            row["bytes_total"],
+        )
+        state.last_download_frac = max(0.0, min(frac, 1.0))
+        state.last_download_msg = line
+        return state.last_download_frac, line
+    return float(state.last_download_frac or 0.0), state.last_download_msg or "No download in progress."
 
 
 def _download_message(state: AppState) -> str:
     for row in _active_downloads(state):
         return f"Downloading {row['component_id']}…"
-    return "No download in progress."
+    return state.last_download_msg or "No download in progress."
 
 
 def _start_download(state: AppState, component_id: str) -> str:
+    """Fire-and-forget start (used by tests / cancel paths). Prefer iter_download_updates in UI."""
     if state.downloader is None:
         return "Downloader is not configured."
     component_id = (component_id or "").strip()
     if not component_id:
         return "Pick a component."
-    for row in state.jobs.list_downloads(limit=20):
-        if row["state"] in {"running", "queued"}:
-            return f"Already downloading {row['component_id']}. Wait or cancel."
+    for row in _active_downloads(state):
+        return f"Already downloading {row['component_id']}. Wait or cancel."
     downloader = state.downloader
 
     def _run() -> None:
@@ -911,7 +925,113 @@ def _start_download(state: AppState, component_id: str) -> str:
             return
 
     threading.Thread(target=_run, name=f"vc-dl-{component_id}", daemon=True).start()
-    return f"Started download: {component_id}"
+    state.last_download_frac = 0.01
+    state.last_download_msg = f"Started download: {component_id}"
+    return state.last_download_msg
+
+
+def iter_download_updates(
+    state: AppState,
+    component_id: str,
+    current_det,
+    current_seg,
+    current_inp,
+) -> Iterator[tuple]:
+    """Yield Gradio model_outputs tuples while a download runs."""
+    hold = (gr.update(),) * 7
+    catalog_table = format_models_table(_safe_list_status(state.catalog))
+    doctor = format_doctor_text()
+
+    if state.downloader is None:
+        state.last_download_msg = "Downloader is not configured."
+        yield (catalog_table, 0.0, state.last_download_msg, doctor, *hold)
+        return
+    component_id = (component_id or "").strip()
+    if not component_id:
+        state.last_download_msg = "Pick a component."
+        yield (catalog_table, 0.0, state.last_download_msg, doctor, *hold)
+        return
+    active = _active_downloads(state)
+    if active:
+        msg = f"Already downloading {active[0]['component_id']}. Wait or cancel."
+        state.last_download_msg = msg
+        frac, _ = _download_progress(state)
+        yield (catalog_table, frac, msg, doctor, *hold)
+        return
+
+    events: queue.Queue = queue.Queue()
+
+    def on_progress(
+        fraction: float,
+        message: str = "",
+        bytes_done: int | None = None,
+        bytes_total: int | None = None,
+    ) -> None:
+        events.put(("prog", float(fraction), message, bytes_done, bytes_total))
+
+    def runner() -> None:
+        try:
+            assert state.downloader is not None
+            state.downloader.execute(component_id, state.jobs, on_progress)
+            events.put(("done", 1.0, "ready", None, None))
+        except Exception as exc:  # noqa: BLE001 — surface in UI
+            events.put(("err", 0.0, str(exc)[:400], None, None))
+
+    state.last_download_frac = 0.01
+    state.last_download_msg = f"Starting {component_id}…"
+    yield (catalog_table, 0.01, state.last_download_msg, doctor, *hold)
+
+    threading.Thread(target=runner, name=f"vc-dl-{component_id}", daemon=True).start()
+
+    while True:
+        try:
+            kind, frac, message, bytes_done, bytes_total = events.get(timeout=0.2)
+        except queue.Empty:
+            frac, msg = _download_progress(state)
+            table = format_models_table(_safe_list_status(state.catalog))
+            yield (table, frac, msg, format_doctor_text(), *hold)
+            continue
+
+        if kind == "prog":
+            line = _format_download_line(component_id, frac, message or "", bytes_done, bytes_total)
+            state.last_download_frac = max(0.0, min(float(frac), 0.99))
+            state.last_download_msg = line
+            table = format_models_table(_safe_list_status(state.catalog))
+            yield (table, state.last_download_frac, line, format_doctor_text(), *hold)
+            continue
+
+        # done / err — full refresh so Clean selects unlock when ready
+        if kind == "done":
+            state.last_download_frac = 1.0
+            state.last_download_msg = f"Finished {component_id} — ready"
+        else:
+            state.last_download_frac = 0.0
+            state.last_download_msg = f"Failed {component_id}: {message}"
+        selects = _select_updates(state, current_det, current_seg, current_inp)
+        table = format_models_table(_safe_list_status(state.catalog))
+        yield (
+            table,
+            state.last_download_frac,
+            state.last_download_msg,
+            format_doctor_text(),
+            *selects,
+        )
+        return
+
+
+def _select_updates(state: AppState, current_det, current_seg, current_inp):
+    d = _choice_list(ready_choices("detector", state.catalog), "grounding-dino", current_det)
+    s = _choice_list(ready_choices("segmenter", state.catalog), "sam2", current_seg)
+    i = _choice_list(ready_choices("inpainter", state.catalog), "opencv-telea", current_inp)
+    return (
+        gr.update(choices=d[0], value=d[1]),
+        gr.update(choices=s[0], value=s[1]),
+        gr.update(choices=i[0], value=i[1]),
+        missing_hint("detector", state.catalog),
+        missing_hint("segmenter", state.catalog),
+        missing_hint("inpainter", state.catalog),
+        gr.update(interactive=max_quality_ready(state.catalog)),
+    )
 
 
 def _cancel_download(state: AppState) -> str:
