@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from videoclean.application.config import PipelineConfig, RunCleanupRequest
-from videoclean.application.errors import AdapterUnavailable, PipelineError
+from videoclean.application.errors import AdapterUnavailable, JobCancelled, PipelineError
 from videoclean.application.ports.detector import Detector
 from videoclean.application.ports.inpainter import Inpainter
 from videoclean.application.ports.jobs import JobStore
@@ -343,7 +343,7 @@ class RunCleanup:
             self.progress.tick(stage, 0, 1, f"{detector.name}  queries: {q}")
             try:
                 tracks = detector.discover(images, queries, on_progress=on_progress)
-            except MemoryError:
+            except (MemoryError, JobCancelled):
                 raise
             except Exception as exc:  # noqa: BLE001 — optional backend; next in chain
                 msg = f"{type(exc).__name__}: {exc}".replace("\n", " ")[:400]

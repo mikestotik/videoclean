@@ -6,6 +6,7 @@ import numpy as np
 
 from videoclean.adapters.progress.silent import SilentProgress
 from videoclean.application.config import PipelineConfig, RunCleanupRequest
+from videoclean.application.errors import JobCancelled
 from videoclean.application.use_cases.run_cleanup import RunCleanup
 from videoclean.domain.intent import Intent, Target
 from videoclean.domain.media import MediaManifest
@@ -175,6 +176,39 @@ def test_discover_falls_back_when_first_detector_raises(tmp_path: Path):
     assert report["state"] == "COMPLETED"
     assert report["detectorUsed"] == "grounding-dino"
     assert any("owlvit: error" in a for a in report["detectorAttempts"])
+
+
+class CancelDetector:
+    name = "owlvit"
+
+    def status(self) -> str:
+        return "ready"
+
+    def discover(self, frames, queries, on_progress=None):
+        raise JobCancelled("job-cancel")
+
+
+def test_discover_reraises_job_cancelled():
+    uc = RunCleanup(
+        media=FakeMedia(),
+        parser=FakeParser(),
+        detectors=[CancelDetector(), FakeDetector()],
+        segmenter=FakeSegmenter(),
+        inpainter=FakeInpainter(),
+        jobs=FakeJobs(),
+        progress=SilentProgress(),
+        new_job_id=lambda: "job-cancel",
+        make_paths=JobPaths.create,
+        utc_now=lambda: __import__("datetime").datetime(2026, 1, 1),
+        read_image=lambda path: None,
+        write_image=lambda path, image: None,
+    )
+    frame = np.zeros((8, 8, 3), dtype=np.uint8)
+    try:
+        uc._discover([frame], ["mug"], stage="detect")
+    except JobCancelled:
+        return
+    raise AssertionError("expected JobCancelled to propagate from _discover")
 
 
 class CountingDetector:

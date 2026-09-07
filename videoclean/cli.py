@@ -15,15 +15,19 @@ from videoclean.application.config import (
     PipelineConfig,
     RunCleanupRequest,
 )
-from videoclean.application.errors import AdapterUnavailable, PipelineError
+from videoclean.application.errors import AdapterUnavailable, DownloadCancelled, PipelineError
 from videoclean.composition import (
     backends_rows,
+    build_catalog,
+    build_downloader,
     build_packager,
     build_run_cleanup,
     config_from_flags,
+    default_serve_port,
     doctor_sections,
     estimate_seconds,
     make_parser,
+    resolve_data_dir,
 )
 from videoclean.domain.formats import known_format_names
 from videoclean.adapters.media.ffmpeg import FFmpegMedia
@@ -36,12 +40,23 @@ app = typer.Typer(
     help="Remove a named object from video. FFmpeg reads and writes files. See: videoclean backends",
 )
 jobs_app = typer.Typer(no_args_is_help=True, help="Job history")
+models_app = typer.Typer(no_args_is_help=True, help="Model catalog")
 app.add_typer(jobs_app, name="jobs")
+app.add_typer(models_app, name="models")
 console = Console()
 
 
 def data_dir() -> Path:
-    return Path.home() / ".videoclean"
+    return resolve_data_dir()
+
+
+def _job_index() -> JobIndex:
+    return JobIndex(data_dir() / "jobs.sqlite")
+
+
+def _die(msg: str, code: int = 1) -> None:
+    console.print(msg)
+    raise typer.Exit(code)
 
 
 def _flags(
@@ -480,9 +495,58 @@ def package_cmd(
         console.print(f"[green]{fmt}[/green]  {path}")
 
 
+@app.command()
+def serve(
+    host: str = typer.Option("0.0.0.0", "--host"),
+    port: int | None = typer.Option(None, "--port", help="Default VIDEOCLEAN_PORT or 7860"),
+) -> None:
+    """Launch the Gradio UI and background job worker."""
+    try:
+        from videoclean.adapters.web.gradio_app import launch_from_env
+    except ImportError:
+        _die("Gradio UI is not installed. Install with: uv sync --extra web")
+    port_i = port if port is not None else default_serve_port()
+    try:
+        launch_from_env(host=host, port=port_i, data_dir=data_dir())
+    except RuntimeError as exc:
+        _die(str(exc))
+
+
+@models_app.command("list")
+def models_list() -> None:
+    """Show local catalog status (no network)."""
+    catalog = build_catalog(jobs=_job_index())
+    table = Table(title="models")
+    table.add_column("id", overflow="fold", no_wrap=True)
+    table.add_column("title")
+    table.add_column("status")
+    table.add_column("size")
+    table.add_column("message", overflow="fold")
+    for status in catalog.list_status():
+        info = status.info
+        table.add_row(info.id, info.title, status.state, info.size_hint, status.message)
+    console.print(table)
+
+
+@models_app.command("download")
+def models_download(component_id: str) -> None:
+    """Download one catalog component (HF / git / Ollama / LaMa)."""
+    jobs = _job_index()
+
+    def on_progress(fraction: float, message: str = "") -> None:
+        pct = int(max(0.0, min(float(fraction), 1.0)) * 100)
+        console.print(f"{pct:3d}%  {message}".rstrip())
+
+    try:
+        build_downloader().execute(component_id, jobs, on_progress)
+    except (PipelineError, DownloadCancelled) as exc:
+        _die(str(exc))
+    console.print(f"[green]ready[/green]  {component_id}")
+
+
 @jobs_app.command("list")
 def jobs_list() -> None:
-    index = JobIndex(data_dir() / "jobs.sqlite")
+    index = _job_index()
     rows = index.list_jobs()
     if not rows:
         console.print("No jobs yet.")
@@ -499,8 +563,49 @@ def jobs_list() -> None:
 
 @jobs_app.command("show")
 def jobs_show(job_id: str) -> None:
-    index = JobIndex(data_dir() / "jobs.sqlite")
+    index = _job_index()
     row = index.get(job_id)
     if not row:
-        raise typer.Exit(f"unknown job {job_id}")
+        _die(f"unknown job {job_id}")
     console.print_json(row["report_json"] or "{}")
+
+
+@jobs_app.command("cancel")
+def jobs_cancel(job_id: str) -> None:
+    from videoclean.application.use_cases.manage_jobs import ManageJobs
+
+    index = _job_index()
+    row = index.get(job_id)
+    if row is None:
+        _die(f"unknown job {job_id}")
+    if row["state"] not in {"QUEUED", "RUNNING"}:
+        _die(f"job {job_id} is {row['state']}; nothing to cancel")
+    ManageJobs(index).cancel(job_id)
+    after = index.get(job_id)
+    if after is not None and after["state"] == "RUNNING":
+        console.print(f"Cancel requested for {job_id}; the worker stops at the next progress tick.")
+        return
+    console.print(f"Job {job_id} → {after['state'] if after else 'CANCELLED'}.")
+
+
+@jobs_app.command("retry")
+def jobs_retry(job_id: str) -> None:
+    from videoclean.application.use_cases.manage_jobs import ManageJobs
+
+    index = _job_index()
+    try:
+        new_id = ManageJobs(index).retry(job_id)
+    except PipelineError as exc:
+        _die(str(exc))
+    console.print(f"Queued retry {new_id} (from {job_id}).")
+
+
+@jobs_app.command("delete")
+def jobs_delete(job_id: str) -> None:
+    from videoclean.application.use_cases.manage_jobs import ManageJobs
+
+    index = _job_index()
+    if index.get(job_id) is None:
+        _die(f"unknown job {job_id}")
+    ManageJobs(index).delete(job_id, data_dir())
+    console.print(f"Deleted {job_id}.")

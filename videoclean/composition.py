@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 import shutil
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 from videoclean.adapters.detectors.grounding_dino import DEFAULT_MODEL as DEFAULT_GROUNDING_DINO_MODEL
@@ -28,6 +30,7 @@ from videoclean.application.errors import AdapterUnavailable, DeviceUnavailable,
 from videoclean.application.ports.detector import Detector
 from videoclean.application.ports.progress import ProgressPort
 from videoclean.application.jobs.worker import JobWorker
+from videoclean.application.use_cases.download_component import DownloadComponent
 from videoclean.application.use_cases.package_media import PackageMedia
 from videoclean.application.use_cases.run_cleanup import RunCleanup
 from videoclean.store import JobIndex, JobPaths, new_job_id, utc_now
@@ -235,6 +238,61 @@ def build_job_worker(data_dir: Path, jobs: JobIndex) -> JobWorker:
     return JobWorker(data_dir=data_dir, jobs=jobs, build_runner=factory)
 
 
+def build_catalog(jobs: JobIndex | None = None):
+    from videoclean.adapters.models.catalog import ModelCatalog
+
+    return ModelCatalog(jobs=jobs)
+
+
+def build_downloader() -> DownloadComponent:
+    from videoclean.adapters.models.downloaders import run_download
+
+    return DownloadComponent(run_download)
+
+
+def resolve_data_dir(env: Mapping[str, str] | None = None) -> Path:
+    env_map = os.environ if env is None else env
+    raw = str(env_map.get("VIDEOCLEAN_DATA_DIR") or "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    return Path.home() / ".videoclean"
+
+
+def default_serve_port(env: Mapping[str, str] | None = None) -> int:
+    env_map = os.environ if env is None else env
+    raw = str(env_map.get("VIDEOCLEAN_PORT") or "7860").strip()
+    try:
+        return int(raw)
+    except ValueError:
+        return 7860
+
+
+def parse_torch_version(version: str) -> tuple[int, int] | None:
+    text = (version or "").strip()
+    if not text or text in {"not imported", "missing"}:
+        return None
+    core = text.split("+", 1)[0].split(".dev", 1)[0]
+    parts = core.split(".")
+    try:
+        return int(parts[0]), int(parts[1])
+    except (IndexError, ValueError):
+        return None
+
+
+def sam2_video_torch_warning(segmenter: str, torch_ver: str) -> str | None:
+    if (segmenter or "").strip().lower() != "sam2-video":
+        return None
+    parsed = parse_torch_version(torch_ver)
+    if parsed is None or parsed >= (2, 5):
+        return None
+    return f"warning: sam2-video typically needs torch>=2.5 (this machine has {torch_ver})"
+
+
+def extra_doctor_warnings(cfg: PipelineConfig, facts: Mapping[str, str]) -> list[str]:
+    warning = sam2_video_torch_warning(cfg.segmenter, facts.get("torch", ""))
+    return [warning] if warning else []
+
+
 def estimate_seconds(frame_count: int, width: int, height: int, device: str = "cpu") -> float:
     megapixels = (width * height) / 1_000_000
     per_frame = megapixels * (0.05 if device in {"cuda", "mps"} else 0.12)
@@ -278,6 +336,7 @@ def doctor_sections(cfg: PipelineConfig) -> list[tuple[str, list[str]]]:
         f"OpenCV     {facts['opencv']}",
         f"torch      {facts['torch']}   cuda={facts['cuda']}  mps={facts['mps']}",
     ]
+    machine.extend(extra_doctor_warnings(cfg, facts))
     device_line = f"device           {cfg.device}   (ML adapters only)"
     try:
         resolve_device(cfg.device)
