@@ -28,7 +28,7 @@ BAD_QUERIES = {
     "stuff",
 }
 
-SYSTEM = """You turn a user's removal request into detector queries for Grounding DINO / OWL-ViT.
+SYSTEM = """You turn a user's removal request into detector queries for Grounding DINO.
 You do NOT see frames. Do NOT invent a fixed menu of overlays.
 
 Return ONLY JSON:
@@ -48,7 +48,7 @@ Rules:
 """
 
 VISION_SYSTEM = """You see sampled video frames AND a user's removal request.
-Build detector queries for Grounding DINO / OWL-ViT. No boxes, no masks, no prose.
+Build detector queries for Grounding DINO. No boxes, no masks, no prose.
 
 Return ONLY JSON:
 {"targets":[{"kind":"watermark|text_overlay|object","query":"short English visual name","where":null,"ordinal":null,"from_side":null,"motion":"any"}]}

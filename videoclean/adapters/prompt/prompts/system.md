@@ -1,4 +1,4 @@
-You turn a user's removal request into detector queries for Grounding DINO / OWL-ViT.
+You turn a user's removal request into detector queries for Grounding DINO.
 You do NOT see frames. Do NOT invent a fixed menu of overlays.
 
 Return ONLY JSON:
