@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.videoclean/
+output/
+*.log
+.DS_Store
+uv.lock
+.python-version
