@@ -118,6 +118,24 @@ def test_serve_missing_password_exits(monkeypatch, tmp_path: Path):
     assert "VIDEOCLEAN_UI_PASSWORD" in text
 
 
+def test_serve_busy_port_message(monkeypatch, tmp_path: Path):
+    pytest.importorskip("gradio")
+
+    def boom(*, host, port, data_dir, env=None):
+        raise OSError(
+            "Cannot find empty port in range: 7860-7860. You can specify a different port"
+        )
+
+    monkeypatch.setenv("VIDEOCLEAN_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("VIDEOCLEAN_UI_PASSWORD", "x")
+    monkeypatch.setattr("videoclean.adapters.web.gradio_app.launch_from_env", boom)
+    result = runner.invoke(app, ["serve", "--host", "127.0.0.1", "--port", "7860"])
+    assert result.exit_code != 0
+    text = result.output + str(result.exception or "")
+    assert "already in use" in text
+    assert "--port 7861" in text
+
+
 def test_models_list_prints_component_ids(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("VIDEOCLEAN_DATA_DIR", str(tmp_path))
     result = runner.invoke(app, ["models", "list"])

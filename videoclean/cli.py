@@ -510,6 +510,15 @@ def serve(
         launch_from_env(host=host, port=port_i, data_dir=data_dir())
     except RuntimeError as exc:
         _die(str(exc))
+    except OSError as exc:
+        msg = str(exc)
+        if "empty port" in msg.lower() or "address already in use" in msg.lower():
+            _die(
+                f"port {port_i} is already in use (another videoclean serve?). "
+                f"Stop it, or pick a free port: videoclean serve --port 7861\n"
+                f"On macOS: lsof -nP -iTCP:{port_i} -sTCP:LISTEN"
+            )
+        _die(msg)
 
 
 @models_app.command("list")
