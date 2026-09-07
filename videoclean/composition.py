@@ -245,6 +245,35 @@ def build_run_cleanup(
     )
 
 
+def build_run_preview(
+    cfg: PipelineConfig,
+    progress: ProgressPort,
+    jobs: JobIndex | None = None,
+    job_id: str | None = None,
+):
+    from videoclean.application.use_cases.run_preview import RunPreview
+
+    id_factory = (lambda: job_id) if job_id else new_job_id
+    return RunPreview(
+        media=FFmpegMedia(),
+        parser=make_parser(cfg),
+        detectors=[make_detector(name, cfg) for name in cfg.detectors],
+        segmenter=make_segmenter(cfg),
+        jobs=jobs or JobIndex(Path.home() / ".videoclean" / "jobs.sqlite"),
+        progress=progress,
+        new_job_id=id_factory,
+        make_paths=PreviewPathsFactory,
+        read_image=read_bgr,
+        write_image=write_bgr,
+    )
+
+
+def PreviewPathsFactory(root: Path):
+    from videoclean.application.use_cases.run_preview import PreviewPaths
+
+    return PreviewPaths.create(root)
+
+
 def build_packager() -> PackageMedia:
     return PackageMedia(FFmpegMedia())
 
