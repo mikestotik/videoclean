@@ -118,13 +118,15 @@ class FFmpegMedia:
                 f"FFmpeg produced {len(produced)} of {len(idxs)} requested frames"
             )
         # Sequential output k-th file == k-th requested source frame index.
+        # Two-phase rename: produced names overlap targets (frame_000004 is both
+        # produced #4 and the target of produced #2) — renaming in place loses files.
         staged: list[tuple[Path, Path]] = []
-        for p, i in zip(produced, idxs):
-            target = dest_dir / f"frame_{i:06d}.jpg"
-            if p != target:
-                staged.append((p, target))
-        for src_p, target in staged:
-            src_p.rename(target)
+        for p in produced:
+            tmp = p.with_name(f".stage_{p.name}")
+            p.rename(tmp)
+            staged.append((tmp, p))
+        for (tmp, _orig), i in zip(staged, idxs):
+            tmp.rename(dest_dir / f"frame_{i:06d}.jpg")
         return [dest_dir / f"frame_{i:06d}.jpg" for i in idxs]
 
     def encode_mezzanine(

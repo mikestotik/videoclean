@@ -77,3 +77,16 @@ def test_subset_missing_output_raises(monkeypatch, tmp_path):
         assert "no frames" in str(exc).lower()
     else:
         raise AssertionError("expected PipelineError")
+
+
+def test_subset_rename_survives_overlapping_names(fake_run, tmp_path):
+    """ffmpeg names outputs sequentially; rename must not clobber (2→4 while 4 exists)."""
+    media = FFmpegMedia()
+    out = media.extract_frames_subset(
+        Path("in.mp4"), [0, 4, 8, 12], tmp_path / "frames", tmp_path / "log.txt"
+    )
+    assert [p.name for p in out] == [
+        "frame_000000.jpg", "frame_000004.jpg", "frame_000008.jpg", "frame_000012.jpg"
+    ]
+    for p in out:
+        assert p.is_file() and p.stat().st_size > 0

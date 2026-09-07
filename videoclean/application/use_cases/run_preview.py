@@ -201,6 +201,9 @@ class RunPreview:
             req.input_path, idxs, paths.frames_dir, paths.ffmpeg_log
         )
         images = [self._read_image(p) for p in frame_paths]
+        bad = [str(p) for p, img in zip(frame_paths, images) if img is None or not getattr(img, "size", 1)]
+        if bad:
+            raise PipelineError(f"preview: failed to read {len(bad)} extracted frame(s), first: {bad[0]}")
         self.progress.finish("extract", f"{len(images)} frames")
 
         if req.mode == "detect":
