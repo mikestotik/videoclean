@@ -156,7 +156,7 @@ def _device_opt() -> str:
     return typer.Option(
         "cpu",
         "--device",
-        help="cpu | cuda | mps. Where Grounding DINO / OWL-ViT / SAM2 / ProPainter run. TELEA stays CPU.",
+        help="cpu | cuda | mps. Where Grounding DINO / SAM2 / ProPainter run. TELEA stays CPU.",
     )
 
 
@@ -164,7 +164,7 @@ def _detector_opt() -> str:
     return typer.Option(
         ",".join(DEFAULT_DETECTORS),
         "--detector",
-        help="grounding-dino | owlvit. Searches the parser queries. Chain with a comma.",
+        help="grounding-dino. Searches the parser queries. Chain with a comma.",
     )
 
 
@@ -172,7 +172,7 @@ def _detector_model_opt() -> str:
     return typer.Option(
         DEFAULT_GROUNDING_DINO_MODEL,
         "--detector-model",
-        help="HF id for grounding-dino or owlvit. Empty/default follows --detector.",
+        help="HF id for grounding-dino. Empty/default follows --detector.",
     )
 
 
@@ -411,7 +411,7 @@ def run(
     detector_threshold: float = typer.Option(
         0.15,
         "--detector-threshold",
-        help="Box score cutoff. Applied as-is to grounding-dino and owlvit.",
+        help="Box score cutoff. Applied as-is to grounding-dino.",
     ),
     segmenter: str = _segmenter_opt(),
     segmenter_model: str = typer.Option(DEFAULT_SEGMENTER_MODEL, "--segmenter-model"),
@@ -442,7 +442,7 @@ def run(
     detector_keyframes: int | None = typer.Option(
         None,
         "--detector-keyframes",
-        help="Frames the detector actually runs on (default: grounding-dino 8, owlvit 12). More = slower, better recall.",
+        help="Frames the detector actually runs on (default: grounding-dino 8). More = slower, better recall.",
         min=1,
     ),
     detector_nms_iou: float = typer.Option(

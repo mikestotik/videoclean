@@ -221,7 +221,7 @@ function renderConfig() {
     llm: "LLM",
   };
   const backends = {
-    detector: ["grounding-dino", "owlvit"],
+    detector: ["grounding-dino"],
     segmenter: ["sam2"],
     inpainter: ["propainter", "lama"],
     llm: ["ollama"],
