@@ -8,7 +8,6 @@ from pathlib import Path
 
 from videoclean.adapters.detectors.grounding_dino import DEFAULT_MODEL as DEFAULT_GROUNDING_DINO_MODEL
 from videoclean.adapters.detectors.grounding_dino import GroundingDinoDetector
-from videoclean.adapters.detectors.owlvit import OwlVitDetector
 from videoclean.adapters.images import read_bgr, write_bgr
 from videoclean.adapters.inpainters.lama import LamaInpainter
 from videoclean.adapters.inpainters.opencv_telea import OpenCvTeleaInpainter
@@ -20,7 +19,6 @@ from videoclean.adapters.segmenters.sam2 import Sam2Segmenter
 from videoclean.adapters.segmenters.sam2_video import Sam2VideoSegmenter
 from videoclean.application.config import (
     BACKENDS,
-    DEFAULT_DETECTOR_MODEL,
     DEFAULT_DETECTORS,
     DETECTORS,
     PipelineConfig,
@@ -138,32 +136,14 @@ def resolve_device(device: str) -> str:
 
 def _detector_model_id(name: str, cfg: PipelineConfig) -> str:
     mid = (cfg.detector_model or "").strip()
-    if name == "grounding-dino":
-        if mid and "owlvit" not in mid.lower():
-            return mid
-        return DEFAULT_GROUNDING_DINO_MODEL
-    if name == "owlvit":
-        if mid and "grounding" not in mid.lower() and "dino" not in mid.lower():
-            return mid
-        return DEFAULT_DETECTOR_MODEL
-    return mid
+    if mid:
+        return mid
+    return DEFAULT_GROUNDING_DINO_MODEL
 
 
 def make_detector(name: str, cfg: PipelineConfig) -> Detector:
     if name == "grounding-dino":
         return GroundingDinoDetector(
-            model_id=_detector_model_id(name, cfg),
-            device=cfg.device,
-            threshold=cfg.detector_threshold,
-            allow_download=cfg.allow_download,
-            keyframes=cfg.detector_keyframes,
-            nms_iou=cfg.detector_nms_iou,
-            max_box_area=cfg.detector_max_box_area,
-            tracker_min_score=cfg.tracker_min_score,
-            tracker_max_template_area=cfg.tracker_max_template_area,
-        )
-    if name == "owlvit":
-        return OwlVitDetector(
             model_id=_detector_model_id(name, cfg),
             device=cfg.device,
             threshold=cfg.detector_threshold,

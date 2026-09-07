@@ -1,7 +1,6 @@
 import numpy as np
 
 from videoclean.adapters.detectors.grounding_dino import GroundingDinoDetector
-from videoclean.adapters.detectors.owlvit import OwlVitDetector
 from videoclean.adapters.inpainters.propainter import ProPainterInpainter
 from videoclean.adapters.prompt.llm import LlmPromptParser
 from videoclean.application.config import PipelineConfig
@@ -82,11 +81,6 @@ def test_make_detector_defaults_match_adapter_history():
     assert dino.keyframes is None  # adapter applies its own 8
     assert dino.nms_iou == 0.3
     assert dino.tracker_min_score == 0.55
-
-    owlcfg = _cfg(detector="owlvit")
-    owl = make_detector("owlvit", owlcfg)
-    assert isinstance(owl, OwlVitDetector)
-    assert owl.keyframes is None  # adapter applies its own 12
 
 
 def test_make_inpainter_gets_propainter_tunables():

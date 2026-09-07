@@ -35,8 +35,8 @@ def test_lama_is_a_valid_inpainter():
 
 
 def test_detector_chain():
-    names = parse_name_list("owlvit,grounding-dino", DETECTORS, default=["grounding-dino"])
-    assert names == ["owlvit", "grounding-dino"]
+    names = parse_name_list("grounding-dino,grounding-dino", DETECTORS, default=["grounding-dino"])
+    assert names == ["grounding-dino"]
 
 
 def test_unknown_detector():
@@ -79,7 +79,7 @@ def test_llm_place_must_be_known():
 
 def test_tunable_params_have_defaults():
     cfg = PipelineConfig()
-    assert cfg.detector_keyframes is None  # adapter default: dino 8, owlvit 12
+    assert cfg.detector_keyframes is None  # adapter default: dino 8
     assert cfg.detector_nms_iou == 0.3
     assert cfg.detector_max_box_area == 0.25
     assert cfg.tracker_min_score == 0.55

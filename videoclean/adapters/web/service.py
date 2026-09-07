@@ -17,7 +17,6 @@ from videoclean.adapters.models.catalog import (
 )
 from videoclean.adapters.web.app_state import AppState
 from videoclean.application.config import (
-    DEFAULT_DETECTOR_MODEL,
     DEFAULT_GROUNDING_DINO_MODEL,
     DEFAULT_INPAINTER_MODEL,
     DEFAULT_SEGMENTER_MODEL,
@@ -75,9 +74,7 @@ def serialize_clean_form(payload: Mapping[str, Any] | None = None) -> dict[str, 
     segmenter_model = str(data.get("segmenter_model") or "").strip()
     inpainter_model = str(data.get("inpainter_model") or "").strip()
     if not detector_model:
-        detector_model = (
-            DEFAULT_DETECTOR_MODEL if detector == "owlvit" else DEFAULT_GROUNDING_DINO_MODEL
-        )
+        detector_model = DEFAULT_GROUNDING_DINO_MODEL
     if not segmenter_model:
         segmenter_model = DEFAULT_SEGMENTER_MODEL
     if not inpainter_model:

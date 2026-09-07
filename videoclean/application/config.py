@@ -9,18 +9,17 @@ from videoclean.domain.formats import parse_formats
 DEVICES = ("cpu", "cuda", "mps")
 
 # Names the product understands. Wiring (or "not implemented") lives in composition.
-DETECTORS = ("grounding-dino", "owlvit")
+DETECTORS = ("grounding-dino",)
 SEGMENTERS = ("sam2", "sam2-video")
 INPAINTERS = ("opencv-telea", "lama", "propainter")
 LLM_PLACES = ("auto", "local", "cloud")
 
 READY_ADAPTERS = {
-    "detector": frozenset({"grounding-dino", "owlvit"}),
+    "detector": frozenset({"grounding-dino"}),
     "segmenter": frozenset({"sam2", "sam2-video"}),
     "inpainter": frozenset({"opencv-telea", "lama", "propainter"}),
 }
 
-DEFAULT_DETECTOR_MODEL = "google/owlvit-base-patch32"
 DEFAULT_GROUNDING_DINO_MODEL = "IDEA-Research/grounding-dino-tiny"
 DEFAULT_SEGMENTER_MODEL = "facebook/sam2-hiera-tiny"
 DEFAULT_INPAINTER_MODEL = "camenduru/ProPainter"
@@ -30,7 +29,7 @@ DEFAULT_DETECTORS = ["grounding-dino"]
 PORT_HELP = (
     ("media", "(fixed)", "ffmpeg", "Read and write video. Not a switch."),
     ("device", "--device", "cpu | cuda | mps", "Where ML adapters run. OpenCV TELEA stays on CPU."),
-    ("detector", "--detector", "grounding-dino | owlvit", "Text → boxes from the prompt queries."),
+    ("detector", "--detector", "grounding-dino", "Text → boxes from the prompt queries."),
     ("segmenter", "--segmenter", "sam2 | sam2-video", "Boxes → pixel masks."),
     ("inpainter", "--inpainter", "opencv-telea | lama | propainter", "How the hole is filled."),
     ("parser", "(fixed)", "llm", "Prompt → detector queries."),
@@ -57,15 +56,6 @@ BACKENDS: tuple[dict[str, str], ...] = (
         "device": "yes",
         "model": DEFAULT_GROUNDING_DINO_MODEL,
         "does": "Open-vocab boxes from the parser queries. Same model for any named thing.",
-    },
-    {
-        "port": "detector",
-        "flag": "--detector",
-        "name": "owlvit",
-        "status": "ready (needs local HF cache)",
-        "device": "yes",
-        "model": DEFAULT_DETECTOR_MODEL,
-        "does": "Open-vocab boxes from short queries, then template-track.",
     },
     {
         "port": "segmenter",
@@ -182,7 +172,7 @@ class PipelineConfig:
     # Frames per vision-LLM request. Small VLMs (llava-phi3) degrade past 1-2; stronger
     # multi-image models can take more. Raise --vision-batch only for models proven multi-image.
     vision_batch: int = 2
-    # Detector tuning. keyframes=None keeps each detector's own default (dino 8, owlvit 12).
+    # Detector tuning. keyframes=None keeps the detector's own default (dino 8).
     detector_keyframes: int | None = None
     detector_nms_iou: float = 0.3
     detector_max_box_area: float = 0.25

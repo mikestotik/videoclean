@@ -144,7 +144,7 @@ def test_run_cleanup_with_fakes(tmp_path: Path):
 
 
 class BoomDetector:
-    name = "owlvit"
+    name = "grounding-dino"
 
     def status(self) -> str:
         return "ready"
@@ -177,18 +177,18 @@ def test_discover_falls_back_when_first_detector_raises(tmp_path: Path):
         input_path=src,
         output_path=out,
         prompt="убери вотермарку и текстовые overlay",
-        config=PipelineConfig(detectors=["owlvit", "grounding-dino"], formats=["mp4"], verify=False),
+        config=PipelineConfig(detectors=["grounding-dino", "grounding-dino"], formats=["mp4"], verify=False),
         overwrite=True,
         keep_workdir=True,
     )
     report = uc.execute(req, tmp_path)
     assert report["state"] == "COMPLETED"
     assert report["detectorUsed"] == "grounding-dino"
-    assert any("owlvit: error" in a for a in report["detectorAttempts"])
+    assert any("grounding-dino: error" in a for a in report["detectorAttempts"])
 
 
 class CancelDetector:
-    name = "owlvit"
+    name = "grounding-dino"
 
     def status(self) -> str:
         return "ready"
@@ -221,7 +221,7 @@ def test_execute_upserts_cancelled_not_failed(tmp_path: Path):
         input_path=src,
         output_path=out,
         prompt="убери надписи",
-        config=PipelineConfig(detectors=["owlvit"], formats=["mp4"], verify=False),
+        config=PipelineConfig(detectors=["grounding-dino"], formats=["mp4"], verify=False),
         overwrite=True,
         keep_workdir=True,
     )
@@ -255,7 +255,7 @@ def test_discover_reraises_job_cancelled():
 
 
 class CountingDetector:
-    name = "owlvit"
+    name = "grounding-dino"
 
     def __init__(self):
         self.calls = 0
@@ -312,13 +312,13 @@ def test_parser_boxes_do_not_skip_the_detector(tmp_path: Path):
         input_path=src,
         output_path=out,
         prompt="убери кружку",
-        config=PipelineConfig(detectors=["owlvit"], formats=["mp4"], verify=False),
+        config=PipelineConfig(detectors=["grounding-dino"], formats=["mp4"], verify=False),
         overwrite=True,
         keep_workdir=True,
     )
     report = uc.execute(req, tmp_path)
     assert det.calls == 1
-    assert report["detectorUsed"] == "owlvit"
+    assert report["detectorUsed"] == "grounding-dino"
 
 
 def test_empty_prompt_fails_before_detect(tmp_path: Path):
