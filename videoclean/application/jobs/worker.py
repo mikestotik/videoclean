@@ -89,7 +89,14 @@ class JobWorker:
             return
         except Exception as exc:  # noqa: BLE001 — queue must isolate job failures
             current = self.jobs.get(job_id)
-            if current is None or current["state"] != "RUNNING":
+            if current is None:
+                return
+            # RunCleanup may already flip to FAILED/CANCELLED before re-raising.
+            if current["state"] in {"FAILED", "CANCELLED"}:
+                if not current["error"]:
+                    self.jobs.upsert(job_id, current["state"], error=str(exc)[:500])
+                return
+            if current["state"] != "RUNNING":
                 return
             if self.jobs.is_cancel_requested(job_id):
                 self.jobs.upsert(job_id, "CANCELLED", error=str(exc)[:500])

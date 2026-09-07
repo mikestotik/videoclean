@@ -113,17 +113,15 @@ def test_format_jobs_table():
         }
     ]
     table = format_jobs_table(rows)
-    assert table[0][0] == "j1"
-    assert table[0][1] == "RUNNING"
-    assert table[0][2].endswith("…")
-    assert "detect" in table[0][5]
-    assert "40%" in table[0][5]
-    assert "cuda" in table[0][6]
-    assert "propainter" in table[0][6]
+    assert isinstance(table, str)
+    assert "| j1 |" in table
+    assert "RUNNING" in table
+    assert "detect" in table
+    assert "40%" in table
 
 
 def test_format_jobs_table_empty():
-    assert format_jobs_table([]) == []
+    assert "No jobs" in format_jobs_table([])
 
 
 def test_auth_from_env_requires_password():
@@ -309,8 +307,9 @@ def test_format_models_table():
 
     info = ComponentInfo("detector:owlvit", "OWL-ViT", "detector", "google/owlvit", "~600 MB")
     rows = format_models_table([ComponentStatus(info, "missing", "not cached")])
-    assert rows[0][0] == "detector:owlvit"
-    assert rows[0][2] == "missing"
+    assert isinstance(rows, str)
+    assert "detector:owlvit" in rows
+    assert "missing" in rows
 
 
 def test_format_active_progress_running():

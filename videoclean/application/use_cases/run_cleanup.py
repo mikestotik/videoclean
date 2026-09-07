@@ -108,7 +108,7 @@ class RunCleanup:
                 paths.report_file.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
             except OSError:
                 pass
-            self.jobs.upsert(job_id, "FAILED", report=report)
+            self.jobs.upsert(job_id, "FAILED", report=report, error=str(exc)[:500])
             raise
 
     def _run(self, req: RunCleanupRequest, cfg: PipelineConfig, job_id: str, paths, manifest, report: dict) -> dict:

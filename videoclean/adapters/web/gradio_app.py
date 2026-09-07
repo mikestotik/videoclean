@@ -11,8 +11,6 @@ from pathlib import Path
 from typing import Any
 
 import gradio as gr
-from gradio.events import SelectData
-
 from videoclean.adapters.models.catalog import COMPONENTS, backend_ready
 from videoclean.adapters.web.app_state import AppState, build_app_state
 from videoclean.application.config import (
@@ -138,32 +136,70 @@ def serialize_clean_form(
     }
 
 
-def format_jobs_table(rows) -> list[list]:
-    table: list[list] = []
+def format_jobs_table(rows) -> str:
+    """Markdown table — Gradio Dataframe scroll/re-render was unusably laggy."""
+    if not rows:
+        return "_No jobs yet._"
+    lines = [
+        "| id | state | prompt | updated | progress |",
+        "| --- | --- | --- | --- | --- |",
+    ]
     for row in rows:
-        prompt = _truncate(_row_get(row, "prompt"), PROMPT_MAX)
-        progress = _progress_label(_row_get(row, "progress_json"))
-        backends = _backends_label(_row_get(row, "request_json"))
-        table.append(
-            [
-                _row_get(row, "id"),
-                _row_get(row, "state"),
-                prompt,
-                _short_ts(_row_get(row, "created_at")),
-                _short_ts(_row_get(row, "updated_at")),
-                progress,
-                backends,
-            ]
+        prompt = _truncate(_row_get(row, "prompt"), PROMPT_MAX).replace("|", "/")
+        progress = _progress_label(_row_get(row, "progress_json")).replace("|", "/")
+        lines.append(
+            "| {id} | {state} | {prompt} | {upd} | {prog} |".format(
+                id=_row_get(row, "id") or "",
+                state=_row_get(row, "state") or "",
+                prompt=prompt,
+                upd=_short_ts(_row_get(row, "updated_at") or _row_get(row, "created_at")),
+                prog=progress,
+            )
         )
-    return table
+    return "\n".join(lines)
 
 
-def format_models_table(statuses) -> list[list]:
-    rows: list[list] = []
+def format_models_table(statuses) -> str:
+    if not statuses:
+        return "_No components._"
+    lines = [
+        "| id | title | status | size | message |",
+        "| --- | --- | --- | --- | --- |",
+    ]
     for status in statuses:
         info = status.info
-        rows.append([info.id, info.title, status.state, info.size_hint, status.message])
-    return rows
+        msg = (status.message or "").replace("|", "/")
+        lines.append(
+            f"| `{info.id}` | {info.title} | **{status.state}** | {info.size_hint} | {msg} |"
+        )
+    return "\n".join(lines)
+
+
+def job_choices(rows) -> list[str]:
+    out: list[str] = []
+    for row in rows:
+        jid = _row_get(row, "id") or ""
+        st = _row_get(row, "state") or ""
+        prompt = _truncate(_row_get(row, "prompt"), 28)
+        out.append(f"{jid} · {st} · {prompt}")
+    return out
+
+
+def job_id_from_choice(choice: str | None) -> str:
+    text = (choice or "").strip()
+    if not text:
+        return ""
+    return text.split(" · ", 1)[0].strip()
+
+
+def job_error_text(row) -> str:
+    if row is None:
+        return ""
+    err = _row_get(row, "error")
+    if err:
+        return str(err)
+    report = _as_dict(_row_get(row, "report_json"))
+    return str(report.get("error") or "")
 
 
 def format_active_progress(row, now: datetime | None = None) -> str:
@@ -193,9 +229,9 @@ def format_active_progress(row, now: datetime | None = None) -> str:
     for key, stage_title, _weight in STAGES:
         mark = "→" if key == stage else ("✓" if _stage_before(key, stage) else "·")
         lines.append(f"{mark} {stage_title}")
-    error = _row_get(row, "error")
+    error = job_error_text(row)
     if error:
-        lines.extend(["", f"Error: {error}"])
+        lines.extend(["", f"**Error:** {error}"])
     return "\n".join(lines)
 
 
@@ -435,12 +471,9 @@ def build_ui(state: AppState):
                             elem_id="vc-progress",
                         )
             with gr.Tab("Models"):
-                models_table = gr.Dataframe(
-                    headers=MODEL_TABLE_HEADERS,
+                models_table = gr.Markdown(
                     value=format_models_table(_safe_list_status(catalog)),
-                    wrap=True,
-                    interactive=False,
-                    label="Catalog",
+                    elem_id="vc-models",
                 )
                 download_bar = gr.Slider(
                     minimum=0,
@@ -474,6 +507,9 @@ def build_ui(state: AppState):
                     elem_id="vc-doctor",
                 )
             with gr.Tab("Jobs"):
+                gr.Markdown(
+                    "Pick a job below. **Download output** appears when state is `COMPLETED`."
+                )
                 with gr.Row():
                     state_filter = gr.Dropdown(
                         label="Filter",
@@ -481,22 +517,32 @@ def build_ui(state: AppState):
                         value="all",
                     )
                     refresh_jobs = gr.Button("Refresh")
-                jobs_table = gr.Dataframe(
-                    headers=JOB_TABLE_HEADERS,
-                    value=format_jobs_table(list_full_jobs(state.jobs)),
-                    wrap=True,
-                    interactive=False,
-                    label="Queue",
+                _jobs0 = list_full_jobs(state.jobs)
+                jobs_table = gr.Markdown(value=format_jobs_table(_jobs0), elem_id="vc-jobs")
+                job_pick = gr.Dropdown(
+                    label="Select job",
+                    choices=job_choices(_jobs0),
+                    value=(job_choices(_jobs0)[0] if _jobs0 else None),
+                    allow_custom_value=False,
                 )
-                job_id_box = gr.Textbox(label="Job id", placeholder="select a row or paste an id")
+                job_id_box = gr.Textbox(
+                    label="Job id",
+                    value=(_row_get(_jobs0[0], "id") if _jobs0 else ""),
+                    placeholder="auto-filled from Select job",
+                )
                 with gr.Row():
                     cancel_btn = gr.Button("Cancel")
                     retry_btn = gr.Button("Retry")
                     delete_btn = gr.Button("Delete")
                     fail_btn = gr.Button("Mark failed")
-                jobs_status = gr.Markdown()
+                jobs_status = gr.Markdown(
+                    value=(
+                        format_active_progress(_jobs0[0])
+                        if _jobs0
+                        else "No jobs yet."
+                    )
+                )
                 output_file = gr.File(label="Download output", interactive=False)
-
         # Idle by default. User clicks must not sit behind a 1Hz full-UI rewrite.
         timer = gr.Timer(1.0, active=_ui_busy(state))
 
@@ -559,14 +605,34 @@ def build_ui(state: AppState):
                 )
                 job_id = queue_clean_job(state, video_val, prompt_val, payload)
             except Exception as exc:  # noqa: BLE001 — surface as UI text, not traceback
-                return _ui_error(exc), _live_progress_text(state)
+                return (
+                    _ui_error(exc),
+                    _live_progress_text(state),
+                    gr.update(),
+                    gr.update(),
+                    gr.update(),
+                    gr.update(),
+                    gr.update(active=False),
+                )
             extra = ""
             running = state.jobs.list_jobs(state="RUNNING", limit=1)
             if running and running[0]["id"] != job_id:
                 extra = " A job is already running — this one waits in the FIFO queue."
+            rows = list_full_jobs(state.jobs)
+            choices = job_choices(rows)
+            pick = next((c for c in choices if c.startswith(job_id)), None)
             return (
-                f"Queued **{job_id}**. Watch it on the Jobs tab.{extra}",
+                (
+                    f"### Queued `{job_id}`\n"
+                    f"Open the **Jobs** tab → it is pre-selected there. "
+                    f"When state is `COMPLETED`, use **Download output**.{extra}"
+                ),
                 _live_progress_text(state),
+                format_jobs_table(rows),
+                gr.update(choices=choices, value=pick),
+                job_id,
+                _job_detail(state, job_id),
+                gr.update(active=True),
             )
 
         def _models_status_panel():
@@ -588,32 +654,43 @@ def build_ui(state: AppState):
             return (table, 0.0, msg, doctor, *selects, gr.update(active=_ui_busy(state)))
         def _jobs_refresh(filter_val, selected_id):
             st = None if not filter_val or filter_val == "all" else str(filter_val)
-            table = format_jobs_table(list_full_jobs(state.jobs, state=st))
-            status = f"{len(table)} job(s)." if table else "No jobs yet."
+            rows = list_full_jobs(state.jobs, state=st)
+            table = format_jobs_table(rows)
+            choices = job_choices(rows)
+            selected_id = (selected_id or "").strip()
+            pick = next((c for c in choices if c.startswith(selected_id)), None) if selected_id else None
+            if pick is None and choices:
+                pick = choices[0]
+                selected_id = job_id_from_choice(pick)
+            detail = _job_detail(state, selected_id) if selected_id else (
+                f"{len(rows)} job(s)." if rows else "No jobs yet."
+            )
             out = _output_file(state, selected_id)
-            # gr.File rejects bare None in some Gradio 6 queue validations.
             if out is None:
                 out = gr.update(value=None)
-            return table, status, out, _live_progress_text(state)
+            return (
+                table,
+                gr.update(choices=choices, value=pick),
+                selected_id,
+                detail,
+                out,
+                _live_progress_text(state),
+            )
 
-        def _on_job_select(evt: SelectData):
-            row_value = getattr(evt, "row_value", None)
-            if isinstance(row_value, (list, tuple)) and row_value:
-                return str(row_value[0])
-            index = getattr(evt, "index", None)
-            value = getattr(evt, "value", None)
-            col = index[1] if isinstance(index, (list, tuple)) and len(index) > 1 else 0
-            if value is not None and col == 0:
-                return str(value)
-            return gr.update()
+        def _on_job_pick(choice):
+            jid = job_id_from_choice(choice)
+            out = _output_file(state, jid)
+            if out is None:
+                out = gr.update(value=None)
+            return jid, _job_detail(state, jid), out
 
         def _act(fn, job_id, filter_val):
             try:
                 msg = fn(state, (job_id or "").strip())
             except Exception as exc:  # noqa: BLE001
                 msg = _ui_error(exc)
-            table, status, out, live = _jobs_refresh(filter_val, job_id)
-            return table, f"{msg}\n\n{status}", out, live
+            table, pick, jid, detail, out, live = _jobs_refresh(filter_val, job_id)
+            return table, pick, jid, f"{msg}\n\n{detail}", out, live
 
         max_btn.click(
             _on_max_quality,
@@ -664,10 +741,10 @@ def build_ui(state: AppState):
                 outputs=[*model_outputs, timer],
             )
 
-        jobs_outputs = [jobs_table, jobs_status, output_file, live_progress]
+        jobs_outputs = [jobs_table, job_pick, job_id_box, jobs_status, output_file, live_progress]
         refresh_jobs.click(_jobs_refresh, inputs=[state_filter, job_id_box], outputs=jobs_outputs)
         state_filter.change(_jobs_refresh, inputs=[state_filter, job_id_box], outputs=jobs_outputs)
-        jobs_table.select(_on_job_select, outputs=[job_id_box])
+        job_pick.change(_on_job_pick, inputs=[job_pick], outputs=[job_id_box, jobs_status, output_file])
 
         def _on_poll(filter_val, selected_id):
             frac, msg = _download_progress(state)
@@ -679,8 +756,11 @@ def build_ui(state: AppState):
                 models = gr.update()
             if any(state.jobs.list_jobs(state=st, limit=1) for st in ("RUNNING", "QUEUED")):
                 st = None if not filter_val or filter_val == "all" else str(filter_val)
-                jobs = format_jobs_table(list_full_jobs(state.jobs, state=st))
-                status = f"{len(jobs)} job(s)." if jobs else "No jobs yet."
+                rows = list_full_jobs(state.jobs, state=st)
+                jobs = format_jobs_table(rows)
+                status = _job_detail(state, selected_id) if selected_id else (
+                    f"{len(rows)} job(s)." if rows else "No jobs yet."
+                )
             else:
                 jobs = gr.update()
                 status = gr.update()
@@ -720,12 +800,39 @@ def build_ui(state: AppState):
             show_progress="hidden",
             concurrency_limit=1,
         )
-        # No heavy demo.load refresh — build_ui already filled tables/selects.
-        # A full post-login reload was blocking the Gradio queue for seconds.
 
-        # Submit wakes the timer while a job is queued/running.
+        def _on_load(filter_val, selected_id):
+            # Light reload only — restores Jobs after F5 without re-probing Clean selects.
+            table, pick, jid, detail, out, live = _jobs_refresh(filter_val, selected_id)
+            frac, msg = _download_progress(state)
+            models = format_models_table(_safe_list_status(state.catalog))
+            return (
+                models,
+                frac,
+                msg,
+                table,
+                pick,
+                jid,
+                detail,
+                out,
+                live,
+                gr.update(active=_ui_busy(state)),
+            )
+
+        demo.load(
+            _on_load,
+            inputs=[state_filter, job_id_box],
+            outputs=[
+                models_table,
+                download_bar,
+                download_msg,
+                *jobs_outputs,
+                timer,
+            ],
+        )
+
         submit_btn.click(
-            lambda *args: (*_on_submit(*args), gr.update(active=True)),
+            _on_submit,
             inputs=[
                 video,
                 prompt,
@@ -744,7 +851,15 @@ def build_ui(state: AppState):
                 prompt_frame_max,
                 overwrite,
             ],
-            outputs=[submit_status, live_progress, timer],
+            outputs=[
+                submit_status,
+                live_progress,
+                jobs_table,
+                job_pick,
+                job_id_box,
+                jobs_status,
+                timer,
+            ],
         )
     return demo
 
@@ -876,6 +991,20 @@ def _live_progress_text(state: AppState) -> str:
         job_id = queued[0]["id"]
         return f"**{job_id}** `QUEUED`\n\nWaiting for the GPU worker."
     return format_active_progress(None)
+
+
+def _job_detail(state: AppState, job_id: str | None) -> str:
+    jid = (job_id or "").strip()
+    if not jid:
+        return "Select a job."
+    row = state.jobs.get(jid)
+    if row is None:
+        return f"Unknown job `{jid}`."
+    text = format_active_progress(row)
+    state_name = _row_get(row, "state")
+    if state_name == "COMPLETED":
+        text += "\n\nOutput ready → use **Download output** below."
+    return text
 
 
 def _safe_list_status(catalog) -> list:
