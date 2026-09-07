@@ -486,3 +486,30 @@ def test_iter_download_updates_streams_progress(tmp_path: Path):
     assert any("75%" in m or "Finished" in m for m in msgs)
     assert updates[-1][2].startswith("Finished")
     assert state.last_download_frac == 1.0
+
+
+def test_download_click_handler_yields_tuples_not_generator_object(tmp_path: Path):
+    """Gradio needs a generator fn; a lambda that *returns* a generator counts as 1 output."""
+    pytest.importorskip("gradio")
+    from videoclean.adapters.web.gradio_app import make_download_click_handler
+    from videoclean.application.use_cases.download_component import DownloadComponent
+
+    def fake_runner(component_id, on_progress=None, is_cancelled=None):
+        if on_progress:
+            on_progress(0.5, "halfway", bytes_done=1, bytes_total=2)
+
+    state = build_app_state(
+        tmp_path,
+        worker=False,
+        catalog=FakeCat(),
+        downloader=DownloadComponent(fake_runner),
+    )
+    handler = make_download_click_handler(state, "detector:owlvit")
+    stream = handler(None, None, "opencv-telea")
+    assert hasattr(stream, "__next__"), "handler must be a generator function"
+    first = next(stream)
+    assert isinstance(first, tuple)
+    assert len(first) == 11
+    # Drain so the download thread finishes cleanly.
+    for _ in stream:
+        pass

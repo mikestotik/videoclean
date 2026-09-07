@@ -558,15 +558,6 @@ def build_ui(state: AppState):
             selects = _refresh_clean_selects(current_det, current_seg, current_inp)
             return (*_models_status_panel(), *selects)
 
-        def _on_download(
-            component_id: str, current_det, current_seg, current_inp
-        ) -> Iterator[tuple]:
-            """Stream progress into the UI (do not rely on the 2s Timer)."""
-            for update in iter_download_updates(
-                state, component_id, current_det, current_seg, current_inp
-            ):
-                yield update
-
         def _on_cancel_download(current_det, current_seg, current_inp):
             started = _cancel_download(state)
             table, frac, msg, doctor, *selects = _on_refresh_models(
@@ -669,10 +660,11 @@ def build_ui(state: AppState):
             outputs=model_outputs,
         )
         for cid, btn in download_buttons.items():
+            # Must bind a real generator function. A lambda that *returns*
+            # iter_download_updates(...) is one output (the generator object)
+            # and Gradio raises "needed: 11, returned: 1".
             btn.click(
-                lambda current_det, current_seg, current_inp, component_id=cid: _on_download(
-                    component_id, current_det, current_seg, current_inp
-                ),
+                make_download_click_handler(state, cid),
                 inputs=[detector, segmenter, inpainter],
                 outputs=model_outputs,
             )
@@ -928,6 +920,17 @@ def _start_download(state: AppState, component_id: str) -> str:
     state.last_download_frac = 0.01
     state.last_download_msg = f"Started download: {component_id}"
     return state.last_download_msg
+
+
+def make_download_click_handler(state: AppState, component_id: str):
+    """Bind component_id into a Gradio generator callback (not a returning lambda)."""
+
+    def _handler(current_det, current_seg, current_inp) -> Iterator[tuple]:
+        yield from iter_download_updates(
+            state, component_id, current_det, current_seg, current_inp
+        )
+
+    return _handler
 
 
 def iter_download_updates(
