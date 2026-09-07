@@ -289,7 +289,15 @@ def build_job_worker(data_dir: Path, jobs: JobIndex) -> JobWorker:
             job_id=job_id,
         )
 
-    return JobWorker(data_dir=data_dir, jobs=jobs, build_runner=factory)
+    def preview_factory(cfg, progress, jobs, job_id):
+        return build_run_preview(
+            cfg,
+            progress or ProgressBridge(jobs, job_id),
+            jobs,
+            job_id=job_id,
+        )
+
+    return JobWorker(data_dir=data_dir, jobs=jobs, build_runner=factory, build_preview_runner=preview_factory)
 
 
 def build_catalog(jobs: JobIndex | None = None):

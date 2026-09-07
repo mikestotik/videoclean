@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import secrets
 import signal
@@ -25,6 +26,7 @@ from videoclean.adapters.web.service import (
     job_dict,
     options_payload,
     queue_clean_job,
+    queue_preview_job,
     serialize_clean_form,
     start_download,
 )
@@ -258,6 +260,79 @@ def create_app(state: AppState) -> FastAPI:
         if not path.is_file():
             raise HTTPException(404, "output file missing")
         return FileResponse(path, filename=path.name, media_type="application/octet-stream")
+
+    @app.post("/api/preview")
+    async def create_preview(
+        st: AppState = Depends(get_state),
+        video: UploadFile | None = File(None),
+        prompt: str = Form(""),
+        mode: str = Form("parse"),
+        targets: str = Form(""),
+        device: str = Form(""),
+        detector: str = Form(""),
+        detector_model: str = Form(""),
+        detector_threshold: str = Form(""),
+        segmenter: str = Form(""),
+        segmenter_model: str = Form(""),
+        mask_dilate_px: str = Form(""),
+        start: str = Form(""),
+        count: str = Form(""),
+        stride: str = Form(""),
+        indices: str = Form(""),
+    ):
+        payload = serialize_clean_form({k: v for k, v in {
+            "device": device,
+            "detector": detector,
+            "detector_model": detector_model,
+            "detector_threshold": detector_threshold,
+            "segmenter": segmenter,
+            "segmenter_model": segmenter_model,
+            "mask_dilate_px": mask_dilate_px,
+        }.items() if v != ""})
+        payload["kind"] = "preview"
+        payload["mode"] = mode
+        payload["start"] = int(start) if start.strip() else None
+        payload["count"] = int(count) if count.strip() else None
+        payload["stride"] = int(stride) if stride.strip() else None
+        payload["indices"] = [int(i) for i in indices.split(",") if i.strip()] if indices.strip() else None
+        if targets.strip():
+            try:
+                payload["targets"] = json.loads(targets)
+            except json.JSONDecodeError as exc:
+                raise HTTPException(400, f"targets must be JSON: {exc}") from exc
+        if video is None or not (video.filename or "").strip():
+            raise HTTPException(400, "video file is required")
+        suffix = Path(video.filename or "input.mp4").suffix.lower() or ".mp4"
+        if suffix not in VIDEO_SUFFIXES:
+            raise HTTPException(400, f"unsupported video type {suffix}")
+        tmp_dir = Path(st.data_dir) / "uploads" / "_incoming"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        tmp = tmp_dir / f"up_{os.getpid()}_{video.filename}"
+        try:
+            await _save_upload(video, tmp)
+            job_id = queue_preview_job(
+                st, tmp, prompt, payload, original_name=video.filename or tmp.name
+            )
+        except PipelineError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        finally:
+            tmp.unlink(missing_ok=True)
+        row = st.jobs.get(job_id)
+        body = job_dict(st, row) if row is not None else {"id": job_id, "state": "QUEUED"}
+        body["poll"] = f"/api/jobs/{job_id}"
+        return JSONResponse(body, status_code=201)
+
+    @app.get("/api/jobs/{job_id}/preview/{name}")
+    def preview_artifact(job_id: str, name: str, st: AppState = Depends(get_state)):
+        from videoclean.adapters.web.service import preview_artifact_path
+
+        path = preview_artifact_path(st, job_id, name)
+        if path is None:
+            raise HTTPException(404, "artifact not found")
+        media_type = "application/json" if name.endswith(".json") else (
+            "video/mp4" if name.endswith(".mp4") else "image/jpeg"
+        )
+        return FileResponse(path, media_type=media_type)
 
     @app.get("/api/jobs/{job_id}/input")
     def job_input(job_id: str, st: AppState = Depends(get_state)):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 from pathlib import Path
 from typing import Any, Callable
@@ -16,10 +17,12 @@ class JobWorker:
         jobs: JobIndex,
         build_runner: Callable[..., Any],
         idle_s: float = 0.05,
+        build_preview_runner: Callable[..., Any] | None = None,
     ) -> None:
         self.data_dir = Path(data_dir)
         self.jobs = jobs
         self.build_runner = build_runner
+        self.build_preview_runner = build_preview_runner or build_runner
         self._idle_s = idle_s
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -80,6 +83,14 @@ class JobWorker:
         row = self.jobs.get(job_id)
         if row is None:
             return
+        payload: dict = {}
+        try:
+            payload = json.loads(row["request_json"] or "{}")
+        except (TypeError, ValueError):
+            payload = {}
+        if payload.get("kind") == "preview":
+            self._run_preview(job_id, row, payload)
+            return
         try:
             req = cleanup_request_from_row(row)
             runner = self.build_runner(req.config, None, self.jobs, job_id)
@@ -111,3 +122,46 @@ class JobWorker:
             return
         payload = report if isinstance(report, dict) else None
         self.jobs.upsert(job_id, "COMPLETED", report=payload)
+
+    def _run_preview(self, job_id: str, row, payload: dict) -> None:
+        from videoclean.application.use_cases.run_preview import PreviewRequest
+
+        try:
+            config = self._config_from_payload(payload)
+            input_path = Path(row["input_path"] or payload.get("input_path") or "")
+            req = PreviewRequest(
+                input_path=input_path,
+                prompt=payload.get("prompt") or "",
+                config=config,
+                start=payload.get("start"),
+                count=payload.get("count"),
+                stride=payload.get("stride"),
+                indices=payload.get("indices"),
+                mode=payload.get("mode") or "parse",
+                targets=payload.get("targets"),
+                job_id=job_id,
+            )
+            runner = self.build_preview_runner(config, None, self.jobs, job_id)
+            report = runner.execute(req, self.data_dir)
+        except JobCancelled:
+            self.jobs.upsert(job_id, "CANCELLED", error="cancelled")
+            return
+        except Exception as exc:  # noqa: BLE001 — queue must isolate job failures
+            current = self.jobs.get(job_id)
+            if current is None:
+                return
+            if current["state"] in {"FAILED", "CANCELLED"}:
+                return
+            if self.jobs.is_cancel_requested(job_id):
+                self.jobs.upsert(job_id, "CANCELLED", error=str(exc)[:500])
+            else:
+                self.jobs.upsert(job_id, "FAILED", error=str(exc)[:800])
+            return
+        current = self.jobs.get(job_id)
+        if current is not None and current["state"] == "RUNNING":
+            self.jobs.upsert(job_id, "COMPLETED", report=report)
+
+    def _config_from_payload(self, payload: dict):
+        from videoclean.application.use_cases.manage_jobs import pipeline_config_from_dict
+
+        return pipeline_config_from_dict(payload)

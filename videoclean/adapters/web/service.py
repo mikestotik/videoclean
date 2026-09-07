@@ -145,6 +145,59 @@ def queue_clean_job(
     return state.manage.submit(payload, dest, output_path, prompt, job_id=job_id)
 
 
+def queue_preview_job(
+    state: AppState,
+    src: Path,
+    prompt: str,
+    request: dict[str, Any],
+    original_name: str = "",
+) -> str:
+    prompt = (prompt or "").strip()
+    mode = str((request or {}).get("mode") or "parse")
+    if mode not in {"parse", "detect"}:
+        raise PipelineError("preview mode must be parse | detect")
+    if mode == "parse" and not prompt:
+        raise PipelineError("prompt is required for mode=parse")
+    if mode == "detect" and not request.get("targets"):
+        raise PipelineError("targets are required for mode=detect")
+    if src is None or not src.is_file():
+        raise PipelineError("upload a video file first")
+    job_id = new_job_id()
+    dest_dir = Path(state.data_dir) / "uploads" / job_id / "input"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    name = original_name or src.name
+    dest = dest_dir / Path(name).name
+    if src.resolve() != dest.resolve():
+        shutil.copy2(src, dest)
+    payload = dict(request or {})
+    payload["kind"] = "preview"
+    payload["input_path"] = str(dest)
+    payload["prompt"] = prompt
+    output_dir = Path(state.data_dir) / "jobs" / job_id / "output"
+    payload["output_path"] = str(output_dir / "preview")
+    return state.manage.submit(payload, dest, output_dir, prompt, job_id=job_id)
+
+
+def preview_artifact_path(state: AppState, job_id: str, name: str) -> Path | None:
+    """Resolve a preview artifact; reject traversal and unknown names."""
+    if not name or "/" in name or "\\" in name or ".." in name:
+        return None
+    allowed = {"preview.json"}
+    stem = name.rsplit(".", 1)[-1].lower()
+    is_img = name.endswith(".jpg")
+    is_mp4 = name.endswith(".mp4")
+    if not is_img and not is_mp4 and name not in allowed:
+        return None
+    row = state.jobs.get(job_id)
+    if row is None:
+        return None
+    root = Path(state.data_dir) / "jobs" / job_id / "preview"
+    path = root / name
+    if not path.is_file() or path.parent != root:
+        return None
+    return path
+
+
 def job_dict(state: AppState, row) -> dict[str, Any]:
     job_id = row["id"]
     progress = _as_dict(row["progress_json"] if "progress_json" in row.keys() else None)
@@ -167,6 +220,7 @@ def job_dict(state: AppState, row) -> dict[str, Any]:
         "detail": progress.get("detail") or "",
         "eta": eta_label(row),
         "stages": _stage_marks(progress.get("stage") or ""),
+        "kind": _as_dict(row["request_json"] if "request_json" in row.keys() else None).get("kind") or "run",
         "request": {
             "device": request.get("device"),
             "detector": request.get("detector"),
