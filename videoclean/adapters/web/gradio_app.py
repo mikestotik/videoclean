@@ -25,7 +25,7 @@ from videoclean.application.config import (
     SEGMENTERS,
 )
 from videoclean.application.errors import PipelineError
-from videoclean.progress import STAGES
+from videoclean.progress import STAGES, _fmt_seconds
 from videoclean.store import JobIndex, new_job_id
 
 NONE_READY = "(none ready — see Models)"
@@ -157,7 +157,7 @@ def format_models_table(statuses) -> list[list]:
     return rows
 
 
-def format_active_progress(row) -> str:
+def format_active_progress(row, now: datetime | None = None) -> str:
     if row is None:
         return "No running job."
     job_id = _row_get(row, "id") or "—"
@@ -172,9 +172,13 @@ def format_active_progress(row) -> str:
     titles = {key: title for key, title, _weight in STAGES}
     title = titles.get(stage, stage)
     pct = f"{max(0.0, min(frac, 1.0)) * 100:.1f}%"
+    headline = f"{pct} · {title}" + (f" — {detail}" if detail else "")
+    eta = eta_label(row, now=now)
+    if eta:
+        headline = f"{headline} · {eta}"
     lines = [
         f"**{job_id}** `{state}`",
-        f"{pct} · {title}" + (f" — {detail}" if detail else ""),
+        headline,
         "",
     ]
     for key, stage_title, _weight in STAGES:
@@ -184,6 +188,27 @@ def format_active_progress(row) -> str:
     if error:
         lines.extend(["", f"Error: {error}"])
     return "\n".join(lines)
+
+
+def eta_label(row, now: datetime | None = None) -> str:
+    if row is None:
+        return ""
+    payload = _as_dict(_row_get(row, "progress_json"))
+    try:
+        frac = float(payload.get("fraction") or 0.0)
+    except (TypeError, ValueError):
+        frac = 0.0
+    started = _parse_ts(payload.get("started_at")) or _parse_ts(_row_get(row, "created_at"))
+    if started is None:
+        return "ETA —"
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    elapsed = max(0.0, (current - started).total_seconds())
+    if frac < 0.08:
+        return "ETA —"
+    remaining = max(0.0, elapsed / max(frac, 1e-6) - elapsed)
+    return f"ETA {_fmt_seconds(remaining)}"
 
 
 def as_path(value: Any) -> Path | None:
@@ -632,7 +657,7 @@ def build_ui(state: AppState):
             outputs=jobs_outputs,
         )
         delete_btn.click(
-            lambda job_id, filt: _act(_delete_job, job_id, filt),
+            lambda job_id, filt: _act(delete_job, job_id, filt),
             inputs=[job_id_box, state_filter],
             outputs=jobs_outputs,
         )
@@ -641,18 +666,15 @@ def build_ui(state: AppState):
             inputs=[job_id_box, state_filter],
             outputs=jobs_outputs,
         )
-        timer.tick(_jobs_refresh, inputs=[state_filter, job_id_box], outputs=jobs_outputs)
-
         def _on_load(current_det, current_seg, current_inp, filter_val, selected_id):
             models = _on_refresh_models(current_det, current_seg, current_inp)
             jobs = _jobs_refresh(filter_val, selected_id)
             return (*models, *jobs)
 
-        demo.load(
-            _on_load,
-            inputs=[detector, segmenter, inpainter, state_filter, job_id_box],
-            outputs=[*model_outputs, *jobs_outputs],
-        )
+        tick_inputs = [detector, segmenter, inpainter, state_filter, job_id_box]
+        tick_outputs = [*model_outputs, *jobs_outputs]
+        timer.tick(_on_load, inputs=tick_inputs, outputs=tick_outputs)
+        demo.load(_on_load, inputs=tick_inputs, outputs=tick_outputs)
     return demo
 
 
@@ -810,17 +832,61 @@ def _retry_job(state: AppState, job_id: str) -> str:
     return f"Queued retry {new_id} (from {job_id})."
 
 
-def _delete_job(state: AppState, job_id: str) -> str:
+def delete_job(state: AppState, job_id: str) -> str:
     if not job_id:
         return "Enter a job id."
     row = state.jobs.get(job_id)
     if row is None:
         return f"Unknown job {job_id}."
+    input_path = row["input_path"] or ""
     state.manage.delete(job_id, state.data_dir)
-    upload_dir = Path(state.data_dir) / "uploads" / job_id
-    if upload_dir.exists():
-        shutil.rmtree(upload_dir, ignore_errors=True)
+    _maybe_remove_upload(state, input_path)
     return f"Deleted {job_id}."
+
+
+def _maybe_remove_upload(state: AppState, input_path: str) -> None:
+    upload_dir = upload_root_for(state.data_dir, input_path)
+    if upload_dir is None or not upload_dir.exists():
+        return
+    if input_still_referenced(state.jobs, input_path):
+        return
+    shutil.rmtree(upload_dir, ignore_errors=True)
+
+
+def upload_root_for(data_dir: Path, input_path: str | Path | None) -> Path | None:
+    if not input_path:
+        return None
+    uploads = (Path(data_dir) / "uploads").resolve()
+    try:
+        resolved = Path(input_path).resolve()
+        rel = resolved.relative_to(uploads)
+    except (OSError, ValueError):
+        return None
+    if not rel.parts:
+        return None
+    return uploads / rel.parts[0]
+
+
+def input_still_referenced(jobs: JobIndex, input_path: str | Path | None) -> bool:
+    if not input_path:
+        return False
+    wanted = {str(input_path), str(Path(input_path))}
+    try:
+        wanted.add(str(Path(input_path).resolve()))
+    except OSError:
+        pass
+    for row in jobs.list_jobs(limit=10_000):
+        other = row["input_path"] or ""
+        if not other:
+            continue
+        if other in wanted:
+            return True
+        try:
+            if str(Path(other).resolve()) in wanted:
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def _mark_failed_job(state: AppState, job_id: str) -> str:
@@ -899,6 +965,19 @@ def _truncate(text: str, n: int) -> str:
 
 def _short_ts(value: str) -> str:
     return (value or "").replace("T", " ")[:19]
+
+
+def _parse_ts(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        ts = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts
 
 
 def _progress_label(raw: str) -> str:

@@ -9,6 +9,8 @@ from videoclean.adapters.web.gradio_app import (
     as_path,
     auth_from_env,
     default_device,
+    delete_job,
+    eta_label,
     format_active_progress,
     format_jobs_table,
     format_models_table,
@@ -162,9 +164,8 @@ def test_queue_clean_job_paths(tmp_path: Path):
     input_path = Path(row["input_path"])
     assert input_path.is_file()
     assert input_path.read_bytes() == b"fake-video"
-    assert input_path.parts[-3:] == ("uploads", job_id, "input") or input_path.parent == (
-        tmp_path / "uploads" / job_id / "input"
-    )
+    assert input_path.parent == tmp_path / "uploads" / job_id / "input"
+    assert input_path.name == "clip.mp4"
     assert Path(row["output_path"]) == tmp_path / "jobs" / job_id / "output" / "cleaned.mp4"
     request = json.loads(row["request_json"])
     assert request["allow_download"] is False
@@ -201,19 +202,44 @@ def test_format_models_table():
 
 
 def test_format_active_progress_running():
+    now = datetime(2026, 1, 1, 0, 1, 0, tzinfo=timezone.utc)
     text = format_active_progress(
         {
             "id": "job-1",
             "state": "RUNNING",
+            "created_at": "2026-01-01T00:00:00+00:00",
             "progress_json": json.dumps(
                 {"stage": "inpaint", "fraction": 0.55, "detail": "frame 10"}
             ),
-        }
+        },
+        now=now,
     )
     assert "job-1" in text
     assert "55" in text
     assert "inpaint" in text.lower() or "Inpaint" in text or "inpaint" in text
     assert "frame 10" in text
+    assert "ETA" in text
+
+
+def test_eta_label_too_early():
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    row = {
+        "state": "RUNNING",
+        "created_at": (now - timedelta(seconds=2)).isoformat(),
+        "progress_json": json.dumps({"fraction": 0.02}),
+    }
+    assert eta_label(row, now=now) == "ETA —"
+
+
+def test_eta_label_from_elapsed_fraction():
+    now = datetime(2026, 1, 1, 0, 1, 40, tzinfo=timezone.utc)
+    row = {
+        "state": "RUNNING",
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "progress_json": json.dumps({"fraction": 0.5}),
+    }
+    # 100s elapsed at 50% → ~100s remaining
+    assert eta_label(row, now=now) == "ETA 01:40"
 
 
 def test_format_active_progress_idle():
@@ -242,10 +268,51 @@ def test_default_device_is_cpu_or_cuda():
     assert default_device() in {"cpu", "cuda"}
 
 
-def test_build_ui_constructs(tmp_path: Path):
+def test_delete_keeps_shared_upload(tmp_path: Path):
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"shared")
+    state = build_app_state(tmp_path, worker=False)
+    payload = serialize_clean_form(device="cpu", detector="owlvit", inpainter="opencv-telea")
+    original = queue_clean_job(state, video, "remove logo", payload)
+    retry = state.manage.retry(original)
+    upload = tmp_path / "uploads" / original / "input" / "clip.mp4"
+    assert upload.is_file()
+    assert Path(state.jobs.get(retry)["input_path"]) == upload
+
+    msg = delete_job(state, original)
+    assert "Deleted" in msg
+    assert state.jobs.get(original) is None
+    assert upload.is_file()
+    assert Path(state.jobs.get(retry)["input_path"]).is_file()
+
+    delete_job(state, retry)
+    assert state.jobs.get(retry) is None
+    assert not upload.exists()
+
+
+def test_delete_unique_upload(tmp_path: Path):
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"solo")
+    state = build_app_state(tmp_path, worker=False)
+    payload = serialize_clean_form(device="cpu", detector="owlvit", inpainter="opencv-telea")
+    job_id = queue_clean_job(state, video, "remove logo", payload)
+    upload_dir = tmp_path / "uploads" / job_id
+    assert upload_dir.is_dir()
+    delete_job(state, job_id)
+    assert not upload_dir.exists()
+
+
+def test_build_ui_timer_refreshes_models(tmp_path: Path):
     pytest.importorskip("gradio")
     from videoclean.adapters.web.gradio_app import build_ui
 
     state = build_app_state(tmp_path, worker=False, catalog=FakeCat())
     demo = build_ui(state)
-    assert demo is not None
+    tick_fns = [
+        handler
+        for handler in demo.fns.values()
+        if handler.fn and any(target[1] == "tick" for target in (handler.targets or []))
+    ]
+    assert tick_fns, "expected a Timer.tick handler"
+    # jobs-only was 4 outputs; catalog + selects + jobs is more
+    assert any(len(handler.outputs) >= 10 for handler in tick_fns)
