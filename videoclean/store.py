@@ -229,6 +229,23 @@ class JobIndex:
                 )
             )
 
+    def list_jobs_full(self, limit: int = 100, state: str | None = None) -> list[sqlite3.Row]:
+        """One-query full rows for UI tables (avoids N+1 get())."""
+        with self._connect() as con:
+            if state is None:
+                return list(
+                    con.execute(
+                        "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?",
+                        (limit,),
+                    )
+                )
+            return list(
+                con.execute(
+                    "SELECT * FROM jobs WHERE state = ? ORDER BY created_at DESC LIMIT ?",
+                    (state, limit),
+                )
+            )
+
     def get(self, job_id: str) -> sqlite3.Row | None:
         with self._connect() as con:
             return con.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()

@@ -42,9 +42,17 @@ _PORT_NAMES: dict[str, tuple[str, ...]] = {
 }
 
 _CSS = """
-.gradio-container { max-width: 1200px !important; }
-#vc-progress textarea, #vc-doctor textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.gradio-container { max-width: 1100px !important; }
+footer { display: none !important; }
+#vc-progress textarea, #vc-doctor textarea, #vc-download-msg textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px !important;
+}
+.tab-nav button { font-weight: 600 !important; }
 """
+
+_doctor_cache: tuple[float, str] | None = None
+_DOCTOR_TTL_S = 60.0
 
 
 def ready_choices(port: str, catalog) -> list[str]:
@@ -300,21 +308,33 @@ def queue_clean_job(state: AppState, video: Any, prompt: str, request: dict[str,
 
 
 def list_full_jobs(jobs: JobIndex, state: str | None = None, limit: int = 100) -> list:
-    listed = jobs.list_jobs(limit=limit, state=state)
-    rows = []
-    for row in listed:
-        full = jobs.get(row["id"])
-        if full is not None:
-            rows.append(full)
-    return rows
+    return list(jobs.list_jobs_full(limit=limit, state=state))
 
 
-def format_doctor_text() -> str:
+def format_doctor_text(*, force: bool = False) -> str:
+    """Cached — torch/cuda probe is ~1s cold and must not run on every Timer tick."""
+    global _doctor_cache
+    import time
+
+    now = time.monotonic()
+    if not force and _doctor_cache is not None and (now - _doctor_cache[0]) < _DOCTOR_TTL_S:
+        return _doctor_cache[1]
     from videoclean.composition import machine_facts
 
     facts = machine_facts()
     order = ("python", "ffmpeg", "ffprobe", "opencv", "torch", "cuda", "mps")
-    return "\n".join(f"{key}: {facts.get(key, '—')}" for key in order)
+    text = "\n".join(f"{key}: {facts.get(key, '—')}" for key in order)
+    _doctor_cache = (now, text)
+    return text
+
+
+def _ui_busy(state: AppState) -> bool:
+    if _active_downloads(state):
+        return True
+    for st in ("RUNNING", "QUEUED"):
+        if state.jobs.list_jobs(state=st, limit=1):
+            return True
+    return False
 
 
 def build_ui(state: AppState):
@@ -434,6 +454,7 @@ def build_ui(state: AppState):
                     value=_download_message(state),
                     lines=2,
                     interactive=False,
+                    elem_id="vc-download-msg",
                 )
                 gr.Markdown("Download a component (one at a time; OK during a cleanup job):")
                 download_buttons: dict[str, Any] = {}
@@ -476,7 +497,8 @@ def build_ui(state: AppState):
                 jobs_status = gr.Markdown()
                 output_file = gr.File(label="Download output", interactive=False)
 
-        timer = gr.Timer(1.0)
+        # Idle by default. User clicks must not sit behind a 1Hz full-UI rewrite.
+        timer = gr.Timer(1.0, active=_ui_busy(state))
 
         def _refresh_clean_selects(current_det, current_seg, current_inp):
             d = _choice_list(ready_choices("detector", state.catalog), "grounding-dino", current_det)
@@ -563,7 +585,7 @@ def build_ui(state: AppState):
                 current_det, current_seg, current_inp
             )
             # Always clear the bar on cancel — do not keep a mid-download %.
-            return (table, 0.0, msg, doctor, *selects)
+            return (table, 0.0, msg, doctor, *selects, gr.update(active=_ui_busy(state)))
         def _jobs_refresh(filter_val, selected_id):
             st = None if not filter_val or filter_val == "all" else str(filter_val)
             table = format_jobs_table(list_full_jobs(state.jobs, state=st))
@@ -597,8 +619,113 @@ def build_ui(state: AppState):
             _on_max_quality,
             outputs=[device, detector, segmenter, inpainter],
         )
+
+        # Full refresh (includes Clean selects) — only on button / download actions.
+        model_outputs = [
+            models_table,
+            download_bar,
+            download_msg,
+            doctor,
+            detector,
+            segmenter,
+            inpainter,
+            det_hint,
+            seg_hint,
+            inp_hint,
+            max_btn,
+        ]
+        # Lightweight poll: progress text + bar. Heavy Dataframes/doctor only while busy.
+        # Timer is an output so it can sleep when the queue is idle (keeps tabs snappy).
+        poll_outputs = [
+            download_bar,
+            download_msg,
+            live_progress,
+            models_table,
+            jobs_table,
+            jobs_status,
+            timer,
+        ]
+        refresh_models.click(
+            _on_refresh_models,
+            inputs=[detector, segmenter, inpainter],
+            outputs=model_outputs,
+        )
+        # queue=False: cancel must run even if a download/poll event is in flight.
+        cancel_dl.click(
+            _on_cancel_download,
+            inputs=[detector, segmenter, inpainter],
+            outputs=[*model_outputs, timer],
+            queue=False,
+        )
+        for cid, btn in download_buttons.items():
+            btn.click(
+                make_download_click_handler(state, cid),
+                inputs=[detector, segmenter, inpainter],
+                outputs=[*model_outputs, timer],
+            )
+
+        jobs_outputs = [jobs_table, jobs_status, output_file, live_progress]
+        refresh_jobs.click(_jobs_refresh, inputs=[state_filter, job_id_box], outputs=jobs_outputs)
+        state_filter.change(_jobs_refresh, inputs=[state_filter, job_id_box], outputs=jobs_outputs)
+        jobs_table.select(_on_job_select, outputs=[job_id_box])
+
+        def _on_poll(filter_val, selected_id):
+            frac, msg = _download_progress(state)
+            live = _live_progress_text(state)
+            busy = _ui_busy(state)
+            if _active_downloads(state):
+                models = format_models_table(_safe_list_status(state.catalog))
+            else:
+                models = gr.update()
+            if any(state.jobs.list_jobs(state=st, limit=1) for st in ("RUNNING", "QUEUED")):
+                st = None if not filter_val or filter_val == "all" else str(filter_val)
+                jobs = format_jobs_table(list_full_jobs(state.jobs, state=st))
+                status = f"{len(jobs)} job(s)." if jobs else "No jobs yet."
+            else:
+                jobs = gr.update()
+                status = gr.update()
+            return frac, msg, live, models, jobs, status, gr.update(active=busy)
+
+        def _wrap_job_act(fn):
+            def _inner(job_id, filt):
+                return (*_act(fn, job_id, filt), gr.update(active=_ui_busy(state)))
+
+            return _inner
+
+        cancel_btn.click(
+            _wrap_job_act(_cancel_job),
+            inputs=[job_id_box, state_filter],
+            outputs=[*jobs_outputs, timer],
+        )
+        retry_btn.click(
+            _wrap_job_act(_retry_job),
+            inputs=[job_id_box, state_filter],
+            outputs=[*jobs_outputs, timer],
+        )
+        delete_btn.click(
+            lambda job_id, filt: _act(delete_job, job_id, filt),
+            inputs=[job_id_box, state_filter],
+            outputs=jobs_outputs,
+        )
+        fail_btn.click(
+            lambda job_id, filt: _act(_mark_failed_job, job_id, filt),
+            inputs=[job_id_box, state_filter],
+            outputs=jobs_outputs,
+        )
+
+        timer.tick(
+            _on_poll,
+            inputs=[state_filter, job_id_box],
+            outputs=poll_outputs,
+            show_progress="hidden",
+            concurrency_limit=1,
+        )
+        # No heavy demo.load refresh — build_ui already filled tables/selects.
+        # A full post-login reload was blocking the Gradio queue for seconds.
+
+        # Submit wakes the timer while a job is queued/running.
         submit_btn.click(
-            _on_submit,
+            lambda *args: (*_on_submit(*args), gr.update(active=True)),
             inputs=[
                 video,
                 prompt,
@@ -617,100 +744,7 @@ def build_ui(state: AppState):
                 prompt_frame_max,
                 overwrite,
             ],
-            outputs=[submit_status, live_progress],
-        )
-
-        # Full refresh (includes Clean selects) — only on button / download actions.
-        model_outputs = [
-            models_table,
-            download_bar,
-            download_msg,
-            doctor,
-            detector,
-            segmenter,
-            inpainter,
-            det_hint,
-            seg_hint,
-            inp_hint,
-            max_btn,
-        ]
-        # Timer poll: progress panels only. Updating dropdown choices every 2s
-        # was causing Gradio queue 422s, so the UI never refreshed download %.
-        poll_outputs = [
-            models_table,
-            download_bar,
-            download_msg,
-            doctor,
-            jobs_table,
-            jobs_status,
-            output_file,
-            live_progress,
-        ]
-        refresh_models.click(
-            _on_refresh_models,
-            inputs=[detector, segmenter, inpainter],
-            outputs=model_outputs,
-        )
-        # queue=False: cancel must run even if a download/poll event is in flight.
-        # Streaming generators previously blocked the queue so Cancel never fired.
-        cancel_dl.click(
-            _on_cancel_download,
-            inputs=[detector, segmenter, inpainter],
-            outputs=model_outputs,
-            queue=False,
-        )
-        for cid, btn in download_buttons.items():
-            btn.click(
-                make_download_click_handler(state, cid),
-                inputs=[detector, segmenter, inpainter],
-                outputs=model_outputs,
-            )
-
-        jobs_outputs = [jobs_table, jobs_status, output_file, live_progress]
-        refresh_jobs.click(_jobs_refresh, inputs=[state_filter, job_id_box], outputs=jobs_outputs)
-        state_filter.change(_jobs_refresh, inputs=[state_filter, job_id_box], outputs=jobs_outputs)
-        jobs_table.select(_on_job_select, outputs=[job_id_box])
-        cancel_btn.click(
-            lambda job_id, filt: _act(_cancel_job, job_id, filt),
-            inputs=[job_id_box, state_filter],
-            outputs=jobs_outputs,
-        )
-        retry_btn.click(
-            lambda job_id, filt: _act(_retry_job, job_id, filt),
-            inputs=[job_id_box, state_filter],
-            outputs=jobs_outputs,
-        )
-        delete_btn.click(
-            lambda job_id, filt: _act(delete_job, job_id, filt),
-            inputs=[job_id_box, state_filter],
-            outputs=jobs_outputs,
-        )
-        fail_btn.click(
-            lambda job_id, filt: _act(_mark_failed_job, job_id, filt),
-            inputs=[job_id_box, state_filter],
-            outputs=jobs_outputs,
-        )
-
-        def _on_poll(filter_val, selected_id):
-            models = _models_status_panel()
-            jobs = _jobs_refresh(filter_val, selected_id)
-            return (*models, *jobs)
-
-        def _on_load(current_det, current_seg, current_inp, filter_val, selected_id):
-            models = _on_refresh_models(current_det, current_seg, current_inp)
-            jobs = _jobs_refresh(filter_val, selected_id)
-            return (*models, *jobs)
-
-        timer.tick(
-            _on_poll,
-            inputs=[state_filter, job_id_box],
-            outputs=poll_outputs,
-            show_progress="hidden",
-        )
-        demo.load(
-            _on_load,
-            inputs=[detector, segmenter, inpainter, state_filter, job_id_box],
-            outputs=[*model_outputs, *jobs_outputs],
+            outputs=[submit_status, live_progress, timer],
         )
     return demo
 
@@ -735,6 +769,8 @@ def launch_ui(state: AppState, host: str, port: int, auth: tuple[str, str] | Non
             "Set VIDEOCLEAN_UI_PASSWORD and pass auth=(user, password)."
         )
     user = str(auth[0] or "admin") if auth else "admin"
+    # Warm torch/cuda probe once so the first Models paint is not a 1s hitch.
+    format_doctor_text(force=True)
     demo = build_ui(state)
     demo.launch(
         server_name=host,
@@ -956,13 +992,14 @@ def make_download_click_handler(state: AppState, component_id: str):
         if msg.startswith("Starting"):
             state.last_download_frac = 0.01
             state.last_download_msg = msg
+            wake = gr.update(active=True)
         else:
             frac, _ = _download_progress(state)
             state.last_download_msg = msg
-        return (table, frac, msg, doctor, *hold)
+            wake = gr.update(active=_ui_busy(state))
+        return (table, frac, msg, doctor, *hold, wake)
 
     return _handler
-
 
 def _cancel_download(state: AppState) -> str:
     cancelled = []

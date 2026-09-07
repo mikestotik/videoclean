@@ -21,11 +21,10 @@ def _data_dir_model_path() -> Path:
 
 
 def _torch_hub_model_path() -> Path:
-    try:
-        from torch.hub import get_dir
-    except ImportError:
-        return Path.home() / ".cache" / "torch" / "hub" / "checkpoints" / "big-lama.pt"
-    return Path(get_dir()) / "checkpoints" / "big-lama.pt"
+    # Do not import torch here — cold import is ~1s and catalog status probes this path.
+    torch_home = (os.environ.get("TORCH_HOME") or "").strip()
+    root = Path(torch_home).expanduser() if torch_home else (Path.home() / ".cache" / "torch")
+    return root / "hub" / "checkpoints" / "big-lama.pt"
 
 
 def _default_model_path() -> Path:

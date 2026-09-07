@@ -31,18 +31,29 @@ def hf_hub_dir(model_id: str) -> Path:
 
 
 def hf_cached(model_id: str) -> bool:
+    """True when a local hub snapshot exists and no in-flight *.incomplete blobs.
+
+    Do not rglob the whole tree — hub caches are large and this runs on UI paint.
+    """
     root = hf_hub_dir(model_id)
     if not root.is_dir():
-        return False
-    if any(root.rglob("*.incomplete")):
         return False
     snaps = root / "snapshots"
     if not snaps.is_dir():
         return False
     try:
-        return any(snaps.iterdir())
+        if not any(p.is_dir() for p in snaps.iterdir()):
+            return False
     except OSError:
         return False
+    blobs = root / "blobs"
+    if blobs.is_dir():
+        try:
+            if any(blobs.glob("*.incomplete")):
+                return False
+        except OSError:
+            return False
+    return True
 
 
 def download_hint(model_id: str) -> str:

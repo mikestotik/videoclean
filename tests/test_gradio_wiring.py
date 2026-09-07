@@ -19,6 +19,7 @@ from videoclean.adapters.web.gradio_app import (
     is_job_stale,
     launch_from_env,
     launch_ui,
+    list_full_jobs,
     max_quality_ready,
     missing_hint,
     queue_clean_job,
@@ -425,8 +426,8 @@ def test_build_ui_timer_refreshes_models(tmp_path: Path):
         if handler.fn and any(target[1] == "tick" for target in (handler.targets or []))
     ]
     assert tick_fns, "expected a Timer.tick handler"
-    # Poll updates catalog/download/jobs panels (8 outputs), not Clean dropdowns.
-    assert any(len(handler.outputs) >= 8 for handler in tick_fns)
+    # Lightweight poll: bar/msg/live + conditional tables + timer active flag.
+    assert any(len(handler.outputs) == 7 for handler in tick_fns)
     assert all(handler.fn.__name__ == "_on_poll" for handler in tick_fns)
 
 
@@ -524,7 +525,41 @@ def test_download_click_handler_returns_tuple_without_blocking(tmp_path: Path):
     result = handler(None, None, "opencv-telea")
     assert not isinstance(result, types.GeneratorType)
     assert isinstance(result, tuple)
-    assert len(result) == 11
+    assert len(result) == 12  # model_outputs + timer wake
     assert result[2].startswith("Starting")
     assert started.wait(timeout=1)
     release.set()
+
+def test_doctor_text_is_cached(monkeypatch):
+    import videoclean.adapters.web.gradio_app as ga
+
+    ga._doctor_cache = None
+    calls = {"n": 0}
+
+    def fake_facts():
+        calls["n"] += 1
+        return {
+            "python": "3",
+            "ffmpeg": "f",
+            "ffprobe": "p",
+            "opencv": "o",
+            "torch": "t",
+            "cuda": "no",
+            "mps": "no",
+        }
+
+    monkeypatch.setattr("videoclean.composition.machine_facts", fake_facts)
+    assert "python: 3" in ga.format_doctor_text()
+    assert "python: 3" in ga.format_doctor_text()
+    assert calls["n"] == 1
+    assert "python: 3" in ga.format_doctor_text(force=True)
+    assert calls["n"] == 2
+
+
+def test_list_full_jobs_one_query(tmp_path: Path):
+    jobs = JobIndex(tmp_path / "j.sqlite")
+    jobs.upsert("a", "QUEUED", prompt="one")
+    jobs.upsert("b", "RUNNING", prompt="two")
+    rows = list_full_jobs(jobs)
+    assert {r["id"] for r in rows} == {"a", "b"}
+    assert rows[0]["prompt"] in {"one", "two"}

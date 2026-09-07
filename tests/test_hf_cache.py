@@ -50,3 +50,14 @@ def test_owlvit_status_uses_hf_home(monkeypatch, tmp_path: Path):
     ready = OwlVitDetector(model_id=model_id, device="cpu").status()
     assert "ready" in ready
     assert model_id in ready
+
+
+def test_hf_cached_false_when_blob_incomplete(monkeypatch, tmp_path: Path):
+    _clear_hf_env(monkeypatch)
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "hub"))
+    model_id = "org/model"
+    _write_snapshot(tmp_path / "hub", model_id)
+    blobs = tmp_path / "hub" / "models--org--model" / "blobs"
+    blobs.mkdir(parents=True)
+    (blobs / "abc.incomplete").write_bytes(b"x")
+    assert hf_cached(model_id) is False
