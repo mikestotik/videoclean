@@ -120,6 +120,8 @@ class LlmPromptParser:
         prompt: str | None,
         frame: np.ndarray | None = None,
         frames: list[np.ndarray] | None = None,
+        frame_indices: list[int] | None = None,
+        parse_chunk_frames: int = 0,
     ) -> Intent:
         raw = (prompt or "").strip()
         if not raw:
@@ -133,7 +135,12 @@ class LlmPromptParser:
             sample.append(frame)
 
         if sample:
-            intent = self._try_vision(raw, sample)
+            intent = self._try_vision(
+                raw,
+                sample,
+                frame_indices=frame_indices,
+                parse_chunk_frames=parse_chunk_frames,
+            )
             if intent is not None:
                 return intent
         return self._parse_text(raw)
@@ -144,11 +151,52 @@ class LlmPromptParser:
         intent.parse_mode = "llm"
         return intent
 
-    def _try_vision(self, raw: str, frames: list[np.ndarray]) -> Intent | None:
+    def _try_vision(
+        self,
+        raw: str,
+        frames: list[np.ndarray],
+        frame_indices: list[int] | None = None,
+        parse_chunk_frames: int = 0,
+    ) -> Intent | None:
         try:
             jpegs = [bgr_to_jpeg(f) for f in frames]
         except Exception:  # noqa: BLE001
             return None
+        idxs = list(frame_indices) if frame_indices is not None else list(range(len(frames)))
+        if parse_chunk_frames and parse_chunk_frames > 0 and len(jpegs) > parse_chunk_frames:
+            return self._scoped_vision(raw, jpegs, idxs, parse_chunk_frames)
+        targets, modes = self._vision_targets(raw, jpegs)
+        if not targets:
+            return None
+        intent = Intent(targets=targets, raw=raw, defaulted=False)
+        intent.parse_mode = "llm-vision-bridged" if modes and all(m == "llm-vision-bridged" for m in modes) else "llm-vision"
+        return intent
+
+    def _scoped_vision(
+        self, raw: str, jpegs: list[bytes], idxs: list[int], chunk: int
+    ) -> Intent | None:
+        from dataclasses import replace as _replace
+
+        from videoclean.domain.intent import merge_scoped_targets
+
+        scoped: list[Target] = []
+        for s in range(0, len(jpegs), chunk):
+            chunk_jpegs = jpegs[s : s + chunk]
+            chunk_idxs = idxs[s : s + chunk]
+            if not chunk_jpegs:
+                continue
+            start, end = min(chunk_idxs), max(chunk_idxs) + 1
+            targets, _modes = self._vision_targets(raw, chunk_jpegs)
+            for t in targets:
+                scoped.append(_replace(t, frames=(start, end)))
+        if not scoped:
+            return None
+        intent = Intent(targets=merge_scoped_targets(scoped), raw=raw, defaulted=False)
+        intent.parse_mode = "llm-vision-scoped"
+        return intent
+
+    def _vision_targets(self, raw: str, jpegs: list[bytes]) -> tuple[list[Target], list[str]]:
+        """Run vision batches over jpegs; returns (deduped targets, per-batch modes)."""
         targets: list[Target] = []
         modes: list[str] = []
         for i in range(0, len(jpegs), self.vision_batch):
@@ -158,8 +206,6 @@ class LlmPromptParser:
                 continue
             targets.extend(batch_intent.targets)
             modes.append(batch_intent.parse_mode)
-        if not targets:
-            return None
         deduped: list[Target] = []
         seen: set[tuple] = set()
         for t in targets:
@@ -168,9 +214,7 @@ class LlmPromptParser:
                 continue
             seen.add(key)
             deduped.append(t)
-        intent = Intent(targets=deduped, raw=raw, defaulted=False)
-        intent.parse_mode = "llm-vision-bridged" if modes and all(m == "llm-vision-bridged" for m in modes) else "llm-vision"
-        return intent
+        return deduped, modes
 
     def _vision_batch(self, raw: str, jpegs: list[bytes]) -> Intent | None:
         # Small VLMs (llava-phi3) often ignore system; put the contract in user text.

@@ -152,7 +152,12 @@ class RunCleanup:
         if sample_idxs:
             detail += f"  vision frames={len(sample_idxs)} stride={cfg.prompt_frame_stride}"
         self.progress.start("parse", detail=detail)
-        intent = self.parser.parse(req.prompt, frames=sample_frames)
+        intent = self.parser.parse(
+            req.prompt,
+            frames=sample_frames,
+            frame_indices=sample_idxs,
+            parse_chunk_frames=cfg.parse_chunk_frames,
+        )
         (paths.root / "analysis" / "prompt.json").write_text(
             json.dumps(
                 {

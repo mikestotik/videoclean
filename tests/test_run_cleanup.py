@@ -56,7 +56,7 @@ class FakeParser:
     def status(self) -> str:
         return "ready (fake)"
 
-    def parse(self, prompt: str | None, frame=None, frames=None) -> Intent:
+    def parse(self, prompt: str | None, frame=None, frames=None, frame_indices=None, parse_chunk_frames=0) -> Intent:
         return Intent(targets=[Target(kind="object", query="mug")], raw=prompt or "")
 
 
@@ -280,7 +280,7 @@ class CountingDetector:
 class BoxedParser:
     name = "llm"
 
-    def parse(self, prompt: str | None, frame=None, frames=None):
+    def parse(self, prompt: str | None, frame=None, frames=None, frame_indices=None, parse_chunk_frames=0):
         return Intent(
             targets=[Target(kind="object", query="mug", box=(0.1, 0.1, 0.4, 0.4))],
             parse_mode="llm",
@@ -372,7 +372,7 @@ class OrderParser(FakeParser):
     def __init__(self, events: list[str]):
         self.events = events
 
-    def parse(self, prompt: str | None, frame=None, frames=None) -> Intent:
+    def parse(self, prompt: str | None, frame=None, frames=None, frame_indices=None, parse_chunk_frames=0) -> Intent:
         self.events.append("parse")
         return super().parse(prompt, frame)
 

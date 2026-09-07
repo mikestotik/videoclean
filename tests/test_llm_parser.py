@@ -266,3 +266,101 @@ def test_system_prompt_does_not_hand_canned_overlay_lists():
         assert '"query":"news title"' not in blob
         assert '"query":"caption banner"' not in blob
         assert '"query":"side label"' not in blob
+
+
+def test_chunked_parse_assigns_frame_windows():
+    import numpy as np
+
+    llm = FakeLlm(
+        replies=[
+            '{"targets":[{"kind":"text_overlay","query":"text","motion":"any"}]}',
+            '{"targets":[{"kind":"object","query":"ball","motion":"floating"}]}',
+        ]
+    )
+    parser = LlmPromptParser(llm, vision_batch=4)
+    frames = [np.zeros((16, 16, 3), dtype=np.uint8) for _ in range(8)]
+    indices = list(range(8))
+    intent = parser.parse(
+        "убери текст и мяч", frames=frames, frame_indices=indices, parse_chunk_frames=4
+    )
+    assert intent.parse_mode == "llm-vision-scoped"
+    by_query = {t.query: t for t in intent.targets}
+    assert by_query["text"].frames == (0, 4)
+    assert by_query["ball"].frames == (4, 8)
+
+
+def test_chunked_parse_merges_adjacent_identical_targets():
+    import numpy as np
+
+    llm = FakeLlm(
+        replies=[
+            '{"targets":[{"kind":"text_overlay","query":"text","motion":"any"}]}',
+            '{"targets":[{"kind":"text_overlay","query":"text","motion":"any"}]}',
+            '{"targets":[{"kind":"text_overlay","query":"caption","motion":"static"}]}',
+        ]
+    )
+    parser = LlmPromptParser(llm, vision_batch=4)
+    frames = [np.zeros((16, 16, 3), dtype=np.uint8) for _ in range(12)]
+    intent = parser.parse(
+        "убери текст", frames=frames, frame_indices=list(range(12)), parse_chunk_frames=4
+    )
+    text = [t for t in intent.targets if t.query == "text"]
+    assert len(text) == 1
+    assert text[0].frames == (0, 8)
+    logo = [t for t in intent.targets if t.query == "caption"]
+    assert logo[0].frames == (8, 12)
+
+
+def test_single_chunk_keeps_legacy_mode_and_no_windows():
+    import numpy as np
+
+    llm = FakeLlm(reply='{"targets":[{"kind":"text_overlay","query":"text","motion":"any"}]}')
+    parser = LlmPromptParser(llm, vision_batch=2)
+    frames = [np.zeros((16, 16, 3), dtype=np.uint8) for _ in range(4)]
+    intent = parser.parse(
+        "убери текст", frames=frames, frame_indices=list(range(4)), parse_chunk_frames=0
+    )
+    assert intent.parse_mode == "llm-vision"
+    assert all(t.frames is None for t in intent.targets)
+
+
+def test_chunk_parse_calls_use_chunk_frames_only():
+    import numpy as np
+
+    llm = FakeLlm(
+        replies=[
+            '{"targets":[{"kind":"object","query":"mug","motion":"any"}]}',
+            '{"targets":[{"kind":"object","query":"ball","motion":"any"}]}',
+        ]
+    )
+    parser = LlmPromptParser(llm, vision_batch=4)
+    frames = [np.full((16, 16, 3), i, dtype=np.uint8) for i in range(8)]
+    intent = parser.parse(
+        "x", frames=frames, frame_indices=list(range(8)), parse_chunk_frames=4
+    )
+    # two calls, each with 4 images (one batch of 4 per chunk)
+    assert llm.calls[0][2] == 4
+    assert llm.calls[1][2] == 4
+    by_query = {t.query: t for t in intent.targets}
+    assert by_query["mug"].frames == (0, 4)
+    assert by_query["ball"].frames == (4, 8)
+
+
+def test_frame_indices_offset_windows_use_real_indices():
+    import numpy as np
+
+    llm = FakeLlm(
+        replies=[
+            '{"targets":[{"kind":"object","query":"mug","motion":"any"}]}',
+            '{"targets":[{"kind":"object","query":"ball","motion":"any"}]}',
+        ]
+    )
+    parser = LlmPromptParser(llm, vision_batch=4)
+    frames = [np.zeros((16, 16, 3), dtype=np.uint8) for _ in range(8)]
+    indices = [40, 41, 42, 43, 100, 101, 102, 103]
+    intent = parser.parse(
+        "x", frames=frames, frame_indices=indices, parse_chunk_frames=4
+    )
+    by_query = {t.query: t for t in intent.targets}
+    assert by_query["mug"].frames == (40, 44)
+    assert by_query["ball"].frames == (100, 104)

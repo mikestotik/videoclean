@@ -169,6 +169,9 @@ class PipelineConfig:
     # Vision prompt parse: send every Nth frame (0 = text-only). Cap keeps Ollama payloads small.
     prompt_frame_stride: int = 4
     prompt_frame_max: int = 8
+    # Scoped parse: split the sampled timeline into chunks of this many frames and parse
+    # each chunk separately; targets get frame windows. 0 = one chunk for the whole clip.
+    parse_chunk_frames: int = 0
     # Frames per vision-LLM request. Small VLMs (llava-phi3) degrade past 1-2; stronger
     # multi-image models can take more. Raise --vision-batch only for models proven multi-image.
     vision_batch: int = 2
@@ -195,6 +198,8 @@ class PipelineConfig:
             raise PipelineError(f"--prompt-frame-stride must be >= 0, got {self.prompt_frame_stride}")
         if self.prompt_frame_max < 1:
             raise PipelineError(f"--prompt-frame-max must be >= 1, got {self.prompt_frame_max}")
+        if self.parse_chunk_frames < 0:
+            raise PipelineError(f"--parse-chunk-frames must be >= 0, got {self.parse_chunk_frames}")
         if self.vision_batch < 1:
             raise PipelineError(f"--vision-batch must be >= 1, got {self.vision_batch}")
         if self.detector_keyframes is not None and self.detector_keyframes < 1:
