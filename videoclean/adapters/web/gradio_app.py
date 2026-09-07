@@ -714,10 +714,16 @@ def install_serve_signal_handlers(state: AppState, join_s: float = 30):
     }
 
     def handler(signum, frame):
-        shutdown_serve(state, join_s=join_s)
+        # Keep handler work short: cancel + bounded join, then exit.
+        shutdown_serve(state, join_s=min(float(join_s), 5.0))
         prev = previous.get(signum)
         if callable(prev):
             prev(signum, frame)
+            return
+        # SIG_DFL / SIG_IGN are not callable — re-arm default and re-raise so
+        # Docker/RunPod SIGTERM actually terminates the process.
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
 
     signal.signal(signal.SIGINT, handler)
     signal.signal(signal.SIGTERM, handler)

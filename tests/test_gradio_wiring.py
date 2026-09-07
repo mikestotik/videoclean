@@ -175,6 +175,7 @@ def test_install_serve_signal_handlers_wires_sigterm(monkeypatch, tmp_path: Path
     jobs = JobIndex(tmp_path / "jobs.sqlite")
     jobs.upsert("r1", "RUNNING")
     handlers: dict[int, object] = {}
+    killed: list[tuple[int, int]] = []
 
     def fake_signal(sig, handler):
         handlers[sig] = handler
@@ -182,6 +183,7 @@ def test_install_serve_signal_handlers_wires_sigterm(monkeypatch, tmp_path: Path
 
     monkeypatch.setattr(ga.signal, "signal", fake_signal)
     monkeypatch.setattr(ga.signal, "getsignal", lambda sig: signal.SIG_DFL)
+    monkeypatch.setattr(ga.os, "kill", lambda pid, sig: killed.append((pid, sig)))
 
     class FakeWorker:
         def stop(self, timeout=5):
@@ -200,7 +202,8 @@ def test_install_serve_signal_handlers_wires_sigterm(monkeypatch, tmp_path: Path
     assert signal.SIGINT in handlers
     handlers[signal.SIGTERM](signal.SIGTERM, None)
     assert jobs.is_cancel_requested("r1") is True
-    assert worker.timeout == 30
+    assert worker.timeout == 5  # signal path caps join at 5s
+    assert killed and killed[0][1] == signal.SIGTERM
     restore()
 
 
