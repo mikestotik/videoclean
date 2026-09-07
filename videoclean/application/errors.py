@@ -15,3 +15,7 @@ class AdapterUnavailable(PipelineError):
 
 class DeviceUnavailable(PipelineError):
     """--device requested a backend torch cannot use here."""
+
+
+class JobCancelled(PipelineError):
+    """Cleanup job was cancelled before or during a run."""

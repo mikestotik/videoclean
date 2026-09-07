@@ -220,6 +220,11 @@ class JobIndex:
         with self._connect() as con:
             return con.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
 
+    def delete(self, job_id: str) -> bool:
+        with self._connect() as con:
+            cur = con.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+            return cur.rowcount > 0
+
     def request_cancel(self, job_id: str) -> bool:
         now = utc_now().isoformat()
         with self._connect() as con:

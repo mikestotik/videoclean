@@ -27,6 +27,7 @@ from videoclean.application.config import (
 from videoclean.application.errors import AdapterUnavailable, DeviceUnavailable, PipelineError
 from videoclean.application.ports.detector import Detector
 from videoclean.application.ports.progress import ProgressPort
+from videoclean.application.jobs.worker import JobWorker
 from videoclean.application.use_cases.package_media import PackageMedia
 from videoclean.application.use_cases.run_cleanup import RunCleanup
 from videoclean.store import JobIndex, JobPaths, new_job_id, utc_now
@@ -218,6 +219,20 @@ def build_run_cleanup(
 
 def build_packager() -> PackageMedia:
     return PackageMedia(FFmpegMedia())
+
+
+def build_job_worker(data_dir: Path, jobs: JobIndex) -> JobWorker:
+    from videoclean.adapters.web.progress_bridge import ProgressBridge
+
+    def factory(cfg, progress, jobs, job_id):
+        return build_run_cleanup(
+            cfg,
+            progress or ProgressBridge(jobs, job_id),
+            jobs,
+            job_id=job_id,
+        )
+
+    return JobWorker(data_dir=data_dir, jobs=jobs, build_runner=factory)
 
 
 def estimate_seconds(frame_count: int, width: int, height: int, device: str = "cpu") -> float:
