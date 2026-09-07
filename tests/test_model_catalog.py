@@ -333,14 +333,19 @@ def test_git_clone_honours_cancel(monkeypatch, tmp_path: Path):
             self.terminated = True
             self.returncode = -9
 
-        def communicate(self):
-            return "", ""
-
     proc = FakeProc()
-    monkeypatch.setattr(d.subprocess, "Popen", lambda *a, **k: proc)
+    seen: dict = {}
+
+    def fake_popen(*args, **kwargs):
+        seen.update(kwargs)
+        return proc
+
+    monkeypatch.setattr(d.subprocess, "Popen", fake_popen)
     dest = tmp_path / "ProPainter"
     dest.mkdir()
     with pytest.raises(DownloadCancelled):
         d._git_clone("https://github.com/sczhou/ProPainter.git", dest, is_cancelled=lambda: True)
     assert proc.terminated
     assert not dest.exists()
+    assert seen["stdout"] is subprocess.DEVNULL
+    assert seen["stderr"] is subprocess.DEVNULL

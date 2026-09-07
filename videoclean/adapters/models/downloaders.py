@@ -200,9 +200,8 @@ def _git_clone(url: str, dest: Path, is_cancelled: IsCancelled | None = None) ->
     try:
         proc = subprocess.Popen(
             ["git", "clone", "--depth", "1", url, str(dest)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             env=env,
         )
     except FileNotFoundError as exc:
@@ -214,7 +213,6 @@ def _git_clone(url: str, dest: Path, is_cancelled: IsCancelled | None = None) ->
                 proc.wait(timeout=0.25)
             except subprocess.TimeoutExpired:
                 continue
-        stdout, stderr = proc.communicate()
     except DownloadCancelled:
         proc.terminate()
         try:
@@ -226,8 +224,7 @@ def _git_clone(url: str, dest: Path, is_cancelled: IsCancelled | None = None) ->
             shutil.rmtree(dest, ignore_errors=True)
         raise
     if proc.returncode:
-        err = ((stderr or "") + (stdout or "")).strip()[:300] or f"exit {proc.returncode}"
-        raise PipelineError(f"git clone failed: {err}")
+        raise PipelineError(f"git clone failed: exit {proc.returncode}")
 
 
 def _propainter_vendor_dest() -> Path:
