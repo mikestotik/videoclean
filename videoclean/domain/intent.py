@@ -27,6 +27,7 @@ class Target:
     ordinal: int | None = None  # 1-based, e.g. third
     from_side: str | None = None  # left | right, with ordinal
     box: tuple[float, float, float, float] | None = None  # unused by run; debug only
+    frames: tuple[int, int] | None = None  # [start, end) validity window; None = whole clip
 
 
 @dataclass

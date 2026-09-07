@@ -16,15 +16,47 @@ def select_tracks(
     height: int,
     relax: bool = False,
 ) -> list[Track]:
-    chosen = _select_once(tracks, intent, width, height)
+    _scoped = _apply_frames_windows(tracks, intent)
+    chosen = _select_once(_scoped, intent, width, height)
     if chosen or not relax or not tracks:
         return chosen
     no_ord = _strip_intent(intent, ordinal=True)
-    chosen = _select_once(tracks, no_ord, width, height)
+    chosen = _select_once(_scoped, no_ord, width, height)
     if chosen:
         return chosen
     no_where = _strip_intent(intent, ordinal=True, where=True)
-    return _select_once(tracks, no_where, width, height)
+    return _select_once(_scoped, no_where, width, height)
+
+
+def _apply_frames_windows(tracks: list[Track], intent: Intent) -> list[Track]:
+    """Zero out track boxes that fall outside every target window with that query.
+
+    A target with frames=(a, b) only hunts on frames [a, b). Tracks whose boxes live
+    outside all matching windows are dropped entirely. Targets without windows keep
+    the whole clip. Mutates nothing: tracks are copied with clipped box lists.
+    """
+    windows = [(t.query.casefold(), t.frames) for t in intent.targets if t.frames is not None]
+    if not windows:
+        return tracks
+    out: list[Track] = []
+    for tr in tracks:
+        q = (tr.label or "").casefold()
+        relevant = [w for wq, w in windows if wq and (wq in q or q in wq)]
+        if not relevant:
+            out.append(tr)
+            continue
+        boxes = list(tr.boxes)
+        for i, box in enumerate(boxes):
+            if box is None:
+                continue
+            if not any(a <= i < b for a, b in relevant):
+                boxes[i] = None
+        if not any(b is not None for b in boxes):
+            continue
+        clipped = replace(tr, boxes=boxes)
+        clipped.motion = tr.motion
+        out.append(clipped)
+    return out
 
 
 def _select_once(

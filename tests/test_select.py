@@ -87,3 +87,61 @@ def test_ordinal_picks_third_from_the_left():
     chosen = select_tracks([right, left, mid], intent, width=300, height=100)
     assert len(chosen) == 1
     assert chosen[0].track_id == 3
+
+
+def _mk_track(tid: int, boxes: list, motion: str = "static") -> Track:
+    return Track(
+        track_id=tid,
+        label="object",
+        boxes=boxes,
+        scores=[0.8] * len(boxes),
+        motion=motion,
+    )
+
+
+def test_scoped_target_zeroes_boxes_outside_window():
+    """Track boxes outside the target window must be dropped before interpolation."""
+    n = 10
+    # Track lives on frames 0..9; window covers only frames 5..9.
+    boxes = [(10 * i, 10, 10 * i + 20, 30) for i in range(n)]
+    tr = _mk_track(1, boxes)
+    intent = Intent(
+        targets=[Target(kind="object", query="object", frames=(5, 10))],
+    )
+    out = select_tracks([tr], intent, width=100, height=100)
+    assert len(out) == 1
+    kept = out[0]
+    assert all(b is None for b in kept.boxes[:5])
+    assert all(b is not None for b in kept.boxes[5:])
+
+
+def test_scoped_target_none_means_whole_clip():
+    n = 4
+    boxes = [(10, 10, 20, 20)] * n
+    tr = _mk_track(1, boxes)
+    intent = Intent(targets=[Target(kind="object", query="object", frames=None)])
+    out = select_tracks([tr], intent, width=100, height=100)
+    assert out[0].boxes == boxes
+
+
+def test_track_entirely_outside_window_is_dropped():
+    tr = _mk_track(1, [(10, 10, 20, 20)] * 6)
+    intent = Intent(targets=[Target(kind="object", query="object", frames=(7, 9))])
+    out = select_tracks([tr], intent, width=100, height=100)
+    assert out == []
+
+
+def test_scoped_targets_from_different_windows_both_pass():
+    n = 12
+    a = _mk_track(1, [(10, 10, 20, 20)] * 6 + [None] * 6)  # frames 0..5
+    b = _mk_track(2, [None] * 6 + [(30, 30, 50, 50)] * 6)  # frames 6..11
+    intent = Intent(
+        targets=[
+            Target(kind="object", query="object", frames=(0, 6)),
+            Target(kind="object", query="object", frames=(6, 12)),
+        ]
+    )
+    out = select_tracks([a, b], intent, width=100, height=100)
+    assert len(out) == 2
+    assert all(x is not None for x in out[0].boxes[:6])
+    assert all(x is not None for x in out[1].boxes[6:])
