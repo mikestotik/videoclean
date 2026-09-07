@@ -122,12 +122,13 @@ class ModelCatalog:
 
     def list_status(self) -> list[ComponentStatus]:
         active, failed = self._download_overlay()
+        tags = ollama_tags()
         rows: list[ComponentStatus] = []
         for info in COMPONENTS:
             if info.id in active:
                 rows.append(ComponentStatus(info, "downloading", active[info.id] or "downloading"))
                 continue
-            state, message = self._probe(info)
+            state, message = self._probe(info, tags)
             if state != "ready" and info.id in failed:
                 rows.append(ComponentStatus(info, "error", failed[info.id] or message))
                 continue
@@ -138,10 +139,11 @@ class ModelCatalog:
         info = COMPONENT_BY_ID.get(component_id)
         if info is None:
             return False
-        state, _ = self._probe(info)
+        tags = ollama_tags() if info.kind == "llm" else None
+        state, _ = self._probe(info, tags)
         return state == "ready"
 
-    def _probe(self, info: ComponentInfo) -> tuple[str, str]:
+    def _probe(self, info: ComponentInfo, tags: set[str] | None) -> tuple[str, str]:
         if info.kind in {"detector", "segmenter"}:
             if hf_cached(info.model_ref):
                 return "ready", f"{info.model_ref} cached"
@@ -163,7 +165,6 @@ class ModelCatalog:
                 return "missing", "; ".join(missing)
             return "ready", "vendor+weights on disk"
         if info.kind == "llm":
-            tags = ollama_tags()
             if tags is None:
                 return "error", "unavailable: start ollama"
             if info.model_ref in tags:

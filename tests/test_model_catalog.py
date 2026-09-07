@@ -7,6 +7,11 @@ from videoclean.application.errors import DownloadCancelled, PipelineError
 from videoclean.store import JobIndex
 
 
+@pytest.fixture(autouse=True)
+def _mock_ollama_tags(monkeypatch):
+    monkeypatch.setattr("videoclean.adapters.models.catalog.ollama_tags", lambda: None)
+
+
 def test_registry_ids():
     assert "detector:grounding-dino" in COMPONENT_IDS
     assert "inpainter:propainter" in COMPONENT_IDS
@@ -81,6 +86,23 @@ def test_list_status_downloading(monkeypatch, tmp_path: Path):
     by_id = {r.info.id: r for r in cat.list_status()}
     assert by_id["detector:owlvit"].state == "downloading"
     assert "fetch" in by_id["detector:owlvit"].message
+
+
+def test_list_status_caches_ollama_tags(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    calls = {"n": 0}
+
+    def fake_tags():
+        calls["n"] += 1
+        return None
+
+    monkeypatch.setattr("videoclean.adapters.models.catalog.ollama_tags", fake_tags)
+    rows = ModelCatalog().list_status()
+    assert calls["n"] == 1
+    assert rows
+    llm = {r.info.id: r for r in rows}
+    assert llm["llm:ollama-llama3.2"].state == "error"
+    assert "start ollama" in llm["llm:ollama-llama3.2"].message
 
 
 def test_download_component_records_progress(tmp_path: Path):
@@ -237,7 +259,7 @@ def test_download_propainter_clones_then_weights(monkeypatch, tmp_path: Path):
     cloned: list[tuple[str, Path]] = []
     hf: list[str] = []
     monkeypatch.setattr(
-        d, "_git_clone", lambda url, dest: cloned.append((url, dest))
+        d, "_git_clone", lambda url, dest, **kw: cloned.append((url, dest))
     )
     monkeypatch.setattr(
         d, "download_hf", lambda repo_id, **kw: hf.append(repo_id + "|" + str(kw.get("local_dir")))
@@ -247,3 +269,78 @@ def test_download_propainter_clones_then_weights(monkeypatch, tmp_path: Path):
     assert cloned[0][1] == tmp_path / ".videoclean" / "vendor" / "ProPainter"
     assert hf[0].startswith("camenduru/ProPainter|")
     assert str(tmp_path / ".videoclean" / "weights" / "propainter") in hf[0]
+
+
+def test_progress_tqdm_matches_thread_map_api():
+    import io
+
+    from tqdm.contrib.concurrent import thread_map
+
+    from videoclean.adapters.models.downloaders import _make_tqdm
+
+    ticks: list[float] = []
+    cls = _make_tqdm(lambda f, m="", **k: ticks.append(f), is_cancelled=lambda: False)
+    lock = cls.get_lock()
+    cls.set_lock(lock)
+    items = ["a", "b", "c"]
+    sink = io.StringIO()
+    out = list(cls(items, desc="files", file=sink, miniters=1, mininterval=0, delay=0))
+    assert out == items
+    assert ticks
+
+    ticks.clear()
+    doubled = thread_map(
+        lambda x: x + x,
+        items,
+        max_workers=2,
+        tqdm_class=cls,
+        file=sink,
+        miniters=1,
+        mininterval=0,
+    )
+    assert doubled == ["aa", "bb", "cc"]
+    assert ticks
+
+    cancelled = _make_tqdm(None, is_cancelled=lambda: True)
+    with pytest.raises(DownloadCancelled):
+        with cancelled(total=1, file=sink) as bar:
+            bar.update()
+
+
+def test_git_clone_honours_cancel(monkeypatch, tmp_path: Path):
+    import subprocess
+
+    from videoclean.adapters.models import downloaders as d
+
+    class FakeProc:
+        def __init__(self):
+            self.returncode = None
+            self.terminated = False
+
+        def poll(self):
+            return 0 if self.terminated else None
+
+        def wait(self, timeout=None):
+            if not self.terminated:
+                raise subprocess.TimeoutExpired(cmd="git", timeout=timeout)
+            return self.returncode
+
+        def terminate(self):
+            self.terminated = True
+            self.returncode = -15
+
+        def kill(self):
+            self.terminated = True
+            self.returncode = -9
+
+        def communicate(self):
+            return "", ""
+
+    proc = FakeProc()
+    monkeypatch.setattr(d.subprocess, "Popen", lambda *a, **k: proc)
+    dest = tmp_path / "ProPainter"
+    dest.mkdir()
+    with pytest.raises(DownloadCancelled):
+        d._git_clone("https://github.com/sczhou/ProPainter.git", dest, is_cancelled=lambda: True)
+    assert proc.terminated
+    assert not dest.exists()

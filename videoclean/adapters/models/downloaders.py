@@ -108,7 +108,7 @@ def download_propainter(
     if vendor is None:
         dest = _propainter_vendor_dest()
         _emit(on_progress, 0.05, "cloning ProPainter")
-        _git_clone(PROPAINTER_GIT, dest)
+        _git_clone(PROPAINTER_GIT, dest, is_cancelled=is_cancelled)
         _check(is_cancelled)
     weights_dest = _propainter_weights_dest()
     weights_dest.mkdir(parents=True, exist_ok=True)
@@ -191,25 +191,43 @@ def _http_open(req: urllib.request.Request, timeout: float | None = None):
     return urllib.request.urlopen(req, timeout=timeout)
 
 
-def _git_clone(url: str, dest: Path) -> None:
+def _git_clone(url: str, dest: Path, is_cancelled: IsCancelled | None = None) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists():
         shutil.rmtree(dest)
     env = os.environ.copy()
     env["GIT_TERMINAL_PROMPT"] = "0"
     try:
-        subprocess.run(
+        proc = subprocess.Popen(
             ["git", "clone", "--depth", "1", url, str(dest)],
-            check=True,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             env=env,
         )
     except FileNotFoundError as exc:
         raise PipelineError("git is required to clone ProPainter") from exc
-    except subprocess.CalledProcessError as exc:
-        err = (exc.stderr or exc.stdout or str(exc)).strip()[:300]
-        raise PipelineError(f"git clone failed: {err}") from exc
+    try:
+        while proc.poll() is None:
+            _check(is_cancelled)
+            try:
+                proc.wait(timeout=0.25)
+            except subprocess.TimeoutExpired:
+                continue
+        stdout, stderr = proc.communicate()
+    except DownloadCancelled:
+        proc.terminate()
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=1)
+        if dest.exists():
+            shutil.rmtree(dest, ignore_errors=True)
+        raise
+    if proc.returncode:
+        err = ((stderr or "") + (stdout or "")).strip()[:300] or f"exit {proc.returncode}"
+        raise PipelineError(f"git clone failed: {err}")
 
 
 def _propainter_vendor_dest() -> Path:
@@ -244,57 +262,22 @@ def _emit(
 
 
 def _make_tqdm(on_progress: OnProgress | None, is_cancelled: IsCancelled | None):
-    class ProgressTqdm:
-        def __init__(self, *args, total=None, desc=None, initial=0, disable=False, **kwargs):
-            if total is None and args and isinstance(args[0], (int, float)):
-                total = args[0]
-            self.total = total or 0
-            self.n = initial or 0
-            self.desc = desc or ""
-            self.disable = disable
+    from tqdm.auto import tqdm as BaseTqdm
 
+    class ProgressTqdm(BaseTqdm):
         def update(self, n=1):
             _check(is_cancelled)
-            self.n += n or 0
+            result = super().update(n)
             total = self.total or 0
-            frac = (self.n / total) if total else 0.0
+            current = self.n or 0
+            frac = (current / total) if total else 0.0
             _emit(
                 on_progress,
                 min(max(frac, 0.0), 0.99),
                 self.desc or "downloading",
-                bytes_done=int(self.n),
+                bytes_done=int(current),
                 bytes_total=int(total) if total else None,
             )
-
-        def close(self):
-            return None
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            self.close()
-            return False
-
-        def set_postfix(self, *args, **kwargs):
-            return None
-
-        def set_description(self, desc=None, refresh=True):
-            if desc is not None:
-                self.desc = desc
-
-        def refresh(self):
-            return None
-
-        def clear(self):
-            return None
-
-        def display(self, *args, **kwargs):
-            return None
-
-        def reset(self, total=None):
-            if total is not None:
-                self.total = total
-            self.n = 0
+            return result
 
     return ProgressTqdm
