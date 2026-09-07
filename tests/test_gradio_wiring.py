@@ -424,5 +424,26 @@ def test_build_ui_timer_refreshes_models(tmp_path: Path):
         if handler.fn and any(target[1] == "tick" for target in (handler.targets or []))
     ]
     assert tick_fns, "expected a Timer.tick handler"
-    # jobs-only was 4 outputs; catalog + selects + jobs is more
-    assert any(len(handler.outputs) >= 10 for handler in tick_fns)
+    # Poll updates catalog/download/jobs panels (8 outputs), not Clean dropdowns.
+    assert any(len(handler.outputs) >= 8 for handler in tick_fns)
+    assert all(handler.fn.__name__ == "_on_poll" for handler in tick_fns)
+
+
+def test_download_progress_reads_running_row(tmp_path: Path):
+    from videoclean.adapters.web.gradio_app import _download_progress
+
+    state = build_app_state(tmp_path, worker=False, catalog=FakeCat(), downloader=False)
+    state.jobs.upsert_download(
+        "d1",
+        "detector:grounding-dino",
+        "running",
+        progress=0.42,
+        bytes_done=3,
+        bytes_total=9,
+        message="files",
+    )
+    frac, msg = _download_progress(state)
+    assert frac == pytest.approx(0.42)
+    assert "42%" in msg
+    assert "3/9" in msg
+    assert "detector:grounding-dino" in msg

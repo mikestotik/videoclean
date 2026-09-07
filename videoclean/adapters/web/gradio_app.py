@@ -427,9 +427,14 @@ def build_ui(state: AppState):
                     maximum=1,
                     value=0,
                     interactive=False,
-                    label="Active download",
+                    label="Active download %",
                 )
-                download_msg = gr.Markdown(_download_message(state))
+                download_msg = gr.Textbox(
+                    label="Download status",
+                    value=_download_message(state),
+                    lines=2,
+                    interactive=False,
+                )
                 gr.Markdown("Download a component (one at a time; OK during a cleanup job):")
                 download_buttons: dict[str, Any] = {}
                 with gr.Column():
@@ -542,27 +547,46 @@ def build_ui(state: AppState):
                 _live_progress_text(state),
             )
 
-        def _on_refresh_models(current_det, current_seg, current_inp):
-            selects = _refresh_clean_selects(current_det, current_seg, current_inp)
+        def _models_status_panel():
+            """Catalog + download progress + doctor. No dropdown updates (avoids Gradio 422)."""
             table = format_models_table(_safe_list_status(state.catalog))
             frac, msg = _download_progress(state)
-            return (table, frac, msg, format_doctor_text(), *selects)
+            return table, frac, msg, format_doctor_text()
+
+        def _on_refresh_models(current_det, current_seg, current_inp):
+            selects = _refresh_clean_selects(current_det, current_seg, current_inp)
+            return (*_models_status_panel(), *selects)
 
         def _on_download(component_id: str, current_det, current_seg, current_inp):
-            msg = _start_download(state, component_id)
-            rest = _on_refresh_models(current_det, current_seg, current_inp)
-            return (msg, *rest)
+            started = _start_download(state, component_id)
+            table, frac, msg, doctor, *selects = _on_refresh_models(
+                current_det, current_seg, current_inp
+            )
+            # Race: worker may not have upserted the row yet — keep the start line.
+            if started.startswith("Started") and "Downloading" not in msg:
+                msg = started
+                frac = max(frac, 0.01)
+            elif not started.startswith("Started"):
+                msg = started
+            return (table, frac, msg, doctor, *selects)
 
         def _on_cancel_download(current_det, current_seg, current_inp):
-            msg = _cancel_download(state)
-            rest = _on_refresh_models(current_det, current_seg, current_inp)
-            return (msg, *rest)
+            started = _cancel_download(state)
+            table, frac, msg, doctor, *selects = _on_refresh_models(
+                current_det, current_seg, current_inp
+            )
+            if started.startswith("Cancel") or started.startswith("No running"):
+                msg = started
+            return (table, frac, msg, doctor, *selects)
 
         def _jobs_refresh(filter_val, selected_id):
             st = None if not filter_val or filter_val == "all" else str(filter_val)
             table = format_jobs_table(list_full_jobs(state.jobs, state=st))
             status = f"{len(table)} job(s)." if table else "No jobs yet."
             out = _output_file(state, selected_id)
+            # gr.File rejects bare None in some Gradio 6 queue validations.
+            if out is None:
+                out = gr.update(value=None)
             return table, status, out, _live_progress_text(state)
 
         def _on_job_select(evt: SelectData):
@@ -611,6 +635,7 @@ def build_ui(state: AppState):
             outputs=[submit_status, live_progress],
         )
 
+        # Full refresh (includes Clean selects) — only on button / download actions.
         model_outputs = [
             models_table,
             download_bar,
@@ -624,6 +649,18 @@ def build_ui(state: AppState):
             inp_hint,
             max_btn,
         ]
+        # Timer poll: progress panels only. Updating dropdown choices every 2s
+        # was causing Gradio queue 422s, so the UI never refreshed download %.
+        poll_outputs = [
+            models_table,
+            download_bar,
+            download_msg,
+            doctor,
+            jobs_table,
+            jobs_status,
+            output_file,
+            live_progress,
+        ]
         refresh_models.click(
             _on_refresh_models,
             inputs=[detector, segmenter, inpainter],
@@ -632,7 +669,7 @@ def build_ui(state: AppState):
         cancel_dl.click(
             _on_cancel_download,
             inputs=[detector, segmenter, inpainter],
-            outputs=[download_msg, *model_outputs],
+            outputs=model_outputs,
         )
         for cid, btn in download_buttons.items():
             btn.click(
@@ -640,7 +677,7 @@ def build_ui(state: AppState):
                     component_id, current_det, current_seg, current_inp
                 ),
                 inputs=[detector, segmenter, inpainter],
-                outputs=[download_msg, *model_outputs],
+                outputs=model_outputs,
             )
 
         jobs_outputs = [jobs_table, jobs_status, output_file, live_progress]
@@ -667,19 +704,40 @@ def build_ui(state: AppState):
             inputs=[job_id_box, state_filter],
             outputs=jobs_outputs,
         )
+
+        def _on_poll(filter_val, selected_id):
+            models = _models_status_panel()
+            jobs = _jobs_refresh(filter_val, selected_id)
+            return (*models, *jobs)
+
         def _on_load(current_det, current_seg, current_inp, filter_val, selected_id):
             models = _on_refresh_models(current_det, current_seg, current_inp)
             jobs = _jobs_refresh(filter_val, selected_id)
             return (*models, *jobs)
 
-        tick_inputs = [detector, segmenter, inpainter, state_filter, job_id_box]
-        tick_outputs = [*model_outputs, *jobs_outputs]
-        timer.tick(_on_load, inputs=tick_inputs, outputs=tick_outputs)
-        demo.load(_on_load, inputs=tick_inputs, outputs=tick_outputs)
+        timer.tick(
+            _on_poll,
+            inputs=[state_filter, job_id_box],
+            outputs=poll_outputs,
+            show_progress="hidden",
+        )
+        demo.load(
+            _on_load,
+            inputs=[detector, segmenter, inpainter, state_filter, job_id_box],
+            outputs=[*model_outputs, *jobs_outputs],
+        )
     return demo
 
 
 def launch_ui(state: AppState, host: str, port: int, auth: tuple[str, str] | None) -> None:
+    import warnings
+
+    # Gradio 6 + current Starlette spam this on every Timer tick; not actionable.
+    warnings.filterwarnings(
+        "ignore",
+        message=".*HTTP_422_UNPROCESSABLE_ENTITY.*",
+        category=DeprecationWarning,
+    )
     password = "" if auth is None else str(auth[1] or "")
     if not password.strip():
         raise RuntimeError(
@@ -801,23 +859,33 @@ def _safe_list_status(catalog) -> list:
         return []
 
 
+def _active_downloads(state: AppState) -> list:
+    rows: list = []
+    for st in ("running", "queued"):
+        rows.extend(state.jobs.list_downloads(limit=20, state=st))
+    return rows
+
+
 def _download_progress(state: AppState) -> tuple[float, str]:
-    for row in state.jobs.list_downloads(limit=20):
-        if row["state"] in {"running", "queued"}:
-            try:
-                frac = float(row["progress"] or 0.0)
-            except (TypeError, ValueError):
-                frac = 0.0
-            frac = max(0.0, min(frac, 1.0))
-            msg = row["message"] or ""
-            return frac, f"{row['component_id']}: {int(frac * 100)}% {msg}".strip()
+    for row in _active_downloads(state):
+        try:
+            frac = float(row["progress"] or 0.0)
+        except (TypeError, ValueError):
+            frac = 0.0
+        frac = max(0.0, min(frac, 1.0))
+        msg = (row["message"] or "").strip()
+        bd = row["bytes_done"]
+        bt = row["bytes_total"]
+        counts = ""
+        if bd is not None and bt not in (None, 0):
+            counts = f" ({bd}/{bt})"
+        return frac, f"{row['component_id']}: {int(round(frac * 100))}%{counts} {msg}".strip()
     return 0.0, _download_message(state)
 
 
 def _download_message(state: AppState) -> str:
-    for row in state.jobs.list_downloads(limit=20):
-        if row["state"] in {"running", "queued"}:
-            return f"Downloading {row['component_id']}…"
+    for row in _active_downloads(state):
+        return f"Downloading {row['component_id']}…"
     return "No download in progress."
 
 
