@@ -3,7 +3,7 @@ import os
 import sys
 from pathlib import Path
 
-from videoclean.adapters.detectors.owlvit import OwlVitDetector
+from videoclean.adapters.detectors.grounding_dino import GroundingDinoDetector
 from videoclean.adapters.hf_cache import (
     hf_cached,
     hf_hub_cache_root,
@@ -47,17 +47,17 @@ def test_hf_hub_cache_overrides_hf_home(monkeypatch, tmp_path: Path):
     assert hf_cached("a/b") is True
 
 
-def test_owlvit_status_uses_hf_home(monkeypatch, tmp_path: Path):
+def test_grounding_dino_status_uses_hf_home(monkeypatch, tmp_path: Path):
     _clear_hf_env(monkeypatch)
-    hf_home = tmp_path / "owl-hf"
+    hf_home = tmp_path / "dino-hf"
     monkeypatch.setenv("HF_HOME", str(hf_home))
-    model_id = "google/owlvit-base-patch32"
-    missing = OwlVitDetector(model_id=model_id, device="cpu").status()
+    model_id = "IDEA-Research/grounding-dino-tiny"
+    missing = GroundingDinoDetector(model_id=model_id, device="cpu").status()
     assert "unavailable" in missing
     _write_snapshot(hf_home / "hub", model_id)
-    ready = OwlVitDetector(model_id=model_id, device="cpu").status()
+    ready = GroundingDinoDetector(model_id=model_id, device="cpu").status()
     assert "ready" in ready
-    assert model_id in ready
+    assert "weights=disk" in ready
 
 
 def test_relax_hf_transfer_flag_clears_env_without_package(monkeypatch):
