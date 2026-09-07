@@ -215,9 +215,11 @@ def _phrases(queries: list[str]) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
     for q in queries:
-        p = " ".join((q or "").split())
-        if not p or p.casefold() in seen:
+        p = " ".join((q or "").split()).casefold()
+        if not p or p in seen:
             continue
-        seen.add(p.casefold())
+        if not p.endswith("."):
+            p = p + "."
+        seen.add(p)
         out.append(p)
     return out

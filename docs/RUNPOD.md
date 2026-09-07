@@ -1,6 +1,6 @@
 # RunPod (RTX 4090)
 
-Gradio UI on port **7860**. The image has CUDA torch, FFmpeg, and extras (`gpu`, `lama`, `web`). It does **not** bake Hugging Face weights, so the first `serve` is minutes after pull — not a multi-GB model download.
+Web UI (FastAPI) on port **7860**. The image has CUDA torch, FFmpeg, and extras (`gpu`, `lama`, `web`). It does **not** bake Hugging Face weights, so the first `serve` is minutes after pull, not a multi-GB model download.
 
 Auth is required: `VIDEOCLEAN_UI_USER` + `VIDEOCLEAN_UI_PASSWORD`. Serve refuses to start without a password.
 
@@ -52,9 +52,11 @@ Proxy URL:
 https://<POD_ID>-7860.proxy.runpod.net
 ```
 
-Log in with the UI user/password. First load can take a minute while Gradio starts; there is no model fetch until you click Download.
+Log in with the UI user/password (HTTP Basic). There is no model fetch until you click Download on **Конфиг**.
 
-## 5. Models tab — download order
+API for other services: `POST /api/jobs` (multipart `video` + `prompt`), then poll `GET /api/jobs/{id}` and download `GET /api/jobs/{id}/output`. Auth: `Authorization: Bearer $VIDEOCLEAN_API_TOKEN` (or the UI password if the token is unset). Endpoint map: `GET /api`.
+
+## 5. Config — download order
 
 `opencv-telea` is always ready. Everything else is opt-in.
 
@@ -75,9 +77,9 @@ Ollama rows stay unavailable unless you run Ollama yourself. Cloud LLM: set `XAI
 
 Do not start a second cleanup while one is RUNNING — it queues FIFO.
 
-## 6. Clean
+## 6. Workspace
 
-Upload a short mp4, prompt required (e.g. `remove the channel logo`). Device should default to `cuda`. Submit → Jobs tab. Download the output when COMPLETED.
+Upload a short mp4, prompt required (e.g. `remove the channel logo`). Device should default to `cuda`. Run on the workspace screen. Download the output when state is `COMPLETED`.
 
 ## Local GPU (`docker compose`)
 

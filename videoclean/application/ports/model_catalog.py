@@ -11,6 +11,8 @@ class ComponentInfo:
     kind: str
     model_ref: str
     size_hint: str
+    backend: str = ""
+    source: str = "builtin"
 
 
 @dataclass(frozen=True)

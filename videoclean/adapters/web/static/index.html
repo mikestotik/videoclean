@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>videoclean</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            paper: "#13151A",
+            panel: "#1A1D24",
+            ink: "#F2F3F5",
+            mute: "#8D939E",
+            line: "#2C313C",
+            accent: "#FF5A1F",
+            ready: "#3DCF8E",
+            fail: "#F05365",
+            run: "#5B9BD4",
+            queue: "#D4A84B",
+          },
+          fontFamily: {
+            sans: ["Instrument Sans", "system-ui", "sans-serif"],
+            mono: ["IBM Plex Mono", "ui-monospace", "monospace"],
+          },
+        },
+      },
+    };
+  </script>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="min-h-screen bg-paper text-ink font-sans antialiased">
+  <div id="login" class="hidden fixed inset-0 z-20 grid place-items-center bg-paper/95">
+    <form id="login-form" class="w-[min(22rem,92vw)] grid gap-3">
+      <p class="font-mono text-sm tracking-wide">videoclean</p>
+      <label class="grid gap-1 text-sm text-mute">Пользователь
+        <input id="login-user" class="field" autocomplete="username" value="admin">
+      </label>
+      <label class="grid gap-1 text-sm text-mute">Пароль
+        <input id="login-pass" class="field" type="password" autocomplete="current-password" required>
+      </label>
+      <button type="submit" class="btn-primary">Войти</button>
+      <p id="login-msg" class="hidden text-sm text-fail"></p>
+    </form>
+  </div>
+
+  <header class="h-14 px-5 flex items-center gap-8 border-b border-line">
+    <a class="font-mono text-sm tracking-wide text-ink no-underline" href="/">videoclean</a>
+    <nav class="flex gap-5 text-[15px]">
+      <a href="/" data-view="work" class="nav-link">Рабочая</a>
+      <a href="/config" data-view="config" class="nav-link">Конфиг</a>
+    </nav>
+    <p class="ml-auto m-0 font-mono text-xs text-mute" id="device-pill"></p>
+  </header>
+
+  <main id="view-work" class="hidden lg:grid lg:grid-cols-[252px_minmax(0,1fr)_328px] min-h-[calc(100vh-3.5rem)]">
+    <aside class="border-b lg:border-b-0 lg:border-r border-line flex flex-col min-h-0" aria-label="История">
+      <div class="flex items-center justify-between gap-2 px-3.5 pt-4 pb-2">
+        <h1 class="m-0 text-[13px] font-medium text-mute">История</h1>
+        <select id="job-filter" class="field py-1 text-xs w-auto">
+          <option value="all">все</option>
+          <option value="RUNNING">RUNNING</option>
+          <option value="QUEUED">QUEUED</option>
+          <option value="COMPLETED">COMPLETED</option>
+          <option value="FAILED">FAILED</option>
+          <option value="CANCELLED">CANCELLED</option>
+        </select>
+      </div>
+      <ul id="job-list" class="list-none m-0 p-0 overflow-auto flex-1 pb-4"></ul>
+    </aside>
+
+    <section class="p-4 lg:p-5 flex flex-col gap-3.5 min-w-0" aria-label="Видео">
+      <div class="bg-black border border-line rounded-xl overflow-hidden min-h-[320px]">
+        <div class="flex gap-4 px-4 pt-3">
+          <button type="button" id="tab-src" class="tab is-on">Исходник</button>
+          <button type="button" id="tab-out" class="tab">Результат</button>
+        </div>
+        <div class="p-3 pt-2">
+          <label class="drop" id="drop">
+            <input id="file" type="file" accept="video/mp4,video/quicktime,video/x-matroska,video/webm,.mp4,.mov,.mkv,.webm">
+            <span id="drop-label">Перетащи видео или кликни. mp4, mov, mkv, webm.</span>
+          </label>
+          <video id="player" class="w-full max-h-[52vh] bg-black hidden" controls playsinline></video>
+        </div>
+      </div>
+      <div>
+        <div class="h-[3px] bg-line rounded-full overflow-hidden"><i id="frac-bar" class="block h-full w-0 bg-accent"></i></div>
+        <div class="flex items-center justify-between gap-3">
+          <p id="live-line" class="m-0 py-2 font-mono text-xs text-mute">Нет активной задачи.</p>
+          <a id="dl-live" class="btn-ghost hidden text-sm">Скачать</a>
+        </div>
+        <ol id="stages" class="list-none m-0 p-0 flex flex-wrap gap-x-3.5 gap-y-1 text-xs text-mute"></ol>
+      </div>
+    </section>
+
+    <form class="border-t lg:border-t-0 lg:border-l border-line p-4 pb-8 flex flex-col gap-2.5 overflow-auto" id="clean-form">
+      <label class="lbl">Что убрать
+        <textarea id="prompt" class="field min-h-[4.5rem]" rows="3" required placeholder="логотип в правом нижнем углу"></textarea>
+      </label>
+      <div class="grid grid-cols-2 gap-2">
+        <label class="lbl">Устройство
+          <select id="device" class="field"></select>
+        </label>
+        <label class="lbl">Формат
+          <select id="fmt" class="field">
+            <option>mp4</option>
+            <option>mov</option>
+            <option>mkv</option>
+            <option>webm</option>
+          </select>
+        </label>
+      </div>
+      <label class="lbl">Детектор
+        <select id="detector" class="field"></select>
+      </label>
+      <label class="lbl">Веса детектора
+        <select id="detector_model" class="field"></select>
+      </label>
+      <label class="lbl">Сегментатор
+        <select id="segmenter" class="field"></select>
+      </label>
+      <label class="lbl">Веса SAM2
+        <select id="segmenter_model" class="field"></select>
+      </label>
+      <label class="lbl">Инпейнтер
+        <select id="inpainter" class="field"></select>
+      </label>
+      <div class="grid grid-cols-2 gap-2">
+        <label class="lbl">LLM
+          <select id="llm_place" class="field">
+            <option value="auto">auto</option>
+            <option value="local">local</option>
+            <option value="cloud">cloud</option>
+          </select>
+        </label>
+        <label class="lbl">Модель LLM
+          <select id="llm_model" class="field"></select>
+        </label>
+      </div>
+      <details class="border-t border-line pt-2">
+        <summary class="cursor-pointer text-sm text-mute">Дополнительно</summary>
+        <div class="grid gap-2 pt-2">
+          <label class="lbl">Порог детектора <input id="detector_threshold" class="field" type="number" min="0.01" max="0.9" step="0.01" value="0.15"></label>
+          <label class="lbl">Dilate маски, px <input id="mask_dilate_px" class="field" type="number" min="0" max="32" step="1" value="3"></label>
+          <label class="lbl">TELEA radius <input id="telea_radius" class="field" type="number" min="1" max="21" step="1" value="9"></label>
+          <label class="lbl">Кадры для vision, шаг <input id="prompt_frame_stride" class="field" type="number" min="0" step="1" value="4"></label>
+          <label class="lbl">Кадры, максимум <input id="prompt_frame_max" class="field" type="number" min="1" step="1" value="8"></label>
+          <label class="flex items-center gap-2 text-sm text-mute"><input id="verify" type="checkbox" checked> Проверять leftover</label>
+        </div>
+      </details>
+      <div class="flex gap-2 pt-1">
+        <button type="button" id="max-btn" class="btn-ghost" disabled>Max quality</button>
+        <button type="submit" id="run-btn" class="btn-primary flex-1">Запустить</button>
+      </div>
+      <p id="form-msg" class="hidden text-sm"></p>
+      <div class="flex flex-wrap gap-1.5">
+        <a id="dl-btn" class="btn-ghost hidden">Скачать результат</a>
+        <button type="button" id="cancel-btn" class="btn-ghost">Стоп</button>
+        <button type="button" id="retry-btn" class="btn-ghost">Повтор</button>
+        <button type="button" id="delete-btn" class="btn-ghost">Удалить</button>
+      </div>
+    </form>
+  </main>
+
+  <main id="view-config" class="hidden px-6 py-6 pb-16 grid gap-8 max-w-[1100px]">
+    <section class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-x-4 gap-y-3" id="doctor"></section>
+    <section class="max-w-xl" id="providers"></section>
+    <section class="flex flex-col gap-10" id="catalog"></section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

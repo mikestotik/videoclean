@@ -90,7 +90,7 @@ def test_jobs_help_has_control_commands():
 
 
 def test_serve_calls_launch_from_env(monkeypatch, tmp_path: Path):
-    pytest.importorskip("gradio")
+    pytest.importorskip("fastapi")
     seen: dict = {}
 
     def fake_launch(*, host, port, data_dir, env=None):
@@ -100,7 +100,7 @@ def test_serve_calls_launch_from_env(monkeypatch, tmp_path: Path):
         seen["env"] = env
 
     monkeypatch.setenv("VIDEOCLEAN_DATA_DIR", str(tmp_path))
-    monkeypatch.setattr("videoclean.adapters.web.gradio_app.launch_from_env", fake_launch)
+    monkeypatch.setattr("videoclean.adapters.web.fastapi_app.launch_from_env", fake_launch)
     result = runner.invoke(app, ["serve", "--host", "127.0.0.1", "--port", "7999"])
     assert result.exit_code == 0, result.output
     assert seen["host"] == "127.0.0.1"
@@ -109,7 +109,7 @@ def test_serve_calls_launch_from_env(monkeypatch, tmp_path: Path):
 
 
 def test_serve_missing_password_exits(monkeypatch, tmp_path: Path):
-    pytest.importorskip("gradio")
+    pytest.importorskip("fastapi")
     monkeypatch.setenv("VIDEOCLEAN_DATA_DIR", str(tmp_path))
     monkeypatch.delenv("VIDEOCLEAN_UI_PASSWORD", raising=False)
     result = runner.invoke(app, ["serve", "--host", "127.0.0.1", "--port", "7860"])
@@ -119,7 +119,7 @@ def test_serve_missing_password_exits(monkeypatch, tmp_path: Path):
 
 
 def test_serve_busy_port_message(monkeypatch, tmp_path: Path):
-    pytest.importorskip("gradio")
+    pytest.importorskip("fastapi")
 
     def boom(*, host, port, data_dir, env=None):
         raise OSError(
@@ -128,7 +128,7 @@ def test_serve_busy_port_message(monkeypatch, tmp_path: Path):
 
     monkeypatch.setenv("VIDEOCLEAN_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("VIDEOCLEAN_UI_PASSWORD", "x")
-    monkeypatch.setattr("videoclean.adapters.web.gradio_app.launch_from_env", boom)
+    monkeypatch.setattr("videoclean.adapters.web.fastapi_app.launch_from_env", boom)
     result = runner.invoke(app, ["serve", "--host", "127.0.0.1", "--port", "7860"])
     assert result.exit_code != 0
     text = result.output + str(result.exception or "")

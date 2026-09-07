@@ -500,11 +500,11 @@ def serve(
     host: str = typer.Option("0.0.0.0", "--host"),
     port: int | None = typer.Option(None, "--port", help="Default VIDEOCLEAN_PORT or 7860"),
 ) -> None:
-    """Launch the Gradio UI and background job worker."""
+    """Launch the web UI (FastAPI) and background job worker."""
     try:
-        from videoclean.adapters.web.gradio_app import launch_from_env
+        from videoclean.adapters.web.fastapi_app import launch_from_env
     except ImportError:
-        _die("Gradio UI is not installed. Install with: uv sync --extra web")
+        _die("Web UI is not installed. Install with: uv sync --extra web")
     port_i = port if port is not None else default_serve_port()
     try:
         launch_from_env(host=host, port=port_i, data_dir=data_dir())

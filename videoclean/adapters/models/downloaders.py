@@ -11,7 +11,7 @@ from pathlib import Path
 
 from videoclean.adapters.inpainters.lama import LAMA_MODEL_URL, _default_model_path
 from videoclean.adapters.inpainters.propainter import DEFAULT_HF_REPO, find_vendor
-from videoclean.adapters.models.catalog import COMPONENT_BY_ID, OLLAMA_API
+from videoclean.adapters.models.catalog import OLLAMA_API, resolve_component
 from videoclean.application.errors import DownloadCancelled, PipelineError
 from videoclean.store import resolve_data_dir
 
@@ -26,10 +26,13 @@ def run_download(
     on_progress: OnProgress | None = None,
     is_cancelled: IsCancelled | None = None,
 ) -> None:
-    info = COMPONENT_BY_ID.get(component_id)
+    info = resolve_component(component_id)
     if info is None:
         raise PipelineError(f"unknown component {component_id!r}")
     _check(is_cancelled)
+    if info.id == "inpainter:opencv-telea":
+        _emit(on_progress, 1.0, "built-in")
+        return
     if info.kind in {"detector", "segmenter"}:
         download_hf(info.model_ref, on_progress=on_progress, is_cancelled=is_cancelled)
         return
@@ -41,6 +44,9 @@ def run_download(
         return
     if info.kind == "llm":
         download_ollama(info.model_ref, on_progress=on_progress, is_cancelled=is_cancelled)
+        return
+    if info.kind == "inpainter":
+        download_hf(info.model_ref, on_progress=on_progress, is_cancelled=is_cancelled)
         return
     raise PipelineError(f"no downloader for {component_id!r}")
 

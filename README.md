@@ -160,9 +160,9 @@ uv run huggingface-cli download camenduru/ProPainter \
 
 Большой SAM2: `--segmenter-model facebook/sam2-hiera-large` (ориентир 24 GB VRAM).
 
-## UI (Gradio) и RunPod
+## UI (FastAPI) и RunPod
 
-Порт `7860` (`VIDEOCLEAN_PORT`). Логин: `VIDEOCLEAN_UI_USER` + `VIDEOCLEAN_UI_PASSWORD` (пароль обязателен).
+Порт `7860` (`VIDEOCLEAN_PORT`). Логин HTTP Basic: `VIDEOCLEAN_UI_USER` + `VIDEOCLEAN_UI_PASSWORD` (пароль обязателен). Два экрана: рабочая (видео, prompt, параметры, история) и конфиг (doctor, модели по категориям).
 
 ```bash
 uv sync --extra web
@@ -170,7 +170,9 @@ VIDEOCLEAN_UI_USER=admin VIDEOCLEAN_UI_PASSWORD=change-me \
   uv run videoclean serve --host 127.0.0.1 --port 7860
 ```
 
-Docker и деплой на RTX 4090: [docs/RUNPOD.md](docs/RUNPOD.md). Веса Hugging Face в образ не входят — качаются с вкладки Models после старта.
+Внешний API (тот же процесс): `POST /api/jobs` multipart `video` + `prompt`, статус `GET /api/jobs/{id}`, файл `GET /api/jobs/{id}/output`. Заголовок `Authorization: Bearer $VIDEOCLEAN_API_TOKEN` (если токен не задан, сработает пароль UI). Карта: `GET /api`.
+
+Docker и деплой на RTX 4090: [docs/RUNPOD.md](docs/RUNPOD.md). Веса Hugging Face в образ не входят — качаются с экрана Конфиг после старта.
 
 ## Код
 

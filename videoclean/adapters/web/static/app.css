@@ -1,0 +1,107 @@
+.hidden { display: none !important; }
+
+.field {
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  color: #f2f3f5;
+  background: #1a1d24;
+  border: 1px solid #2c313c;
+  border-radius: 0.375rem;
+  font: inherit;
+}
+.field:focus-visible,
+.btn-primary:focus-visible,
+.btn-ghost:focus-visible,
+.nav-link:focus-visible,
+.tab:focus-visible {
+  outline: 2px solid #ff5a1f;
+  outline-offset: 2px;
+}
+
+.lbl {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.8125rem;
+  color: #8d939e;
+}
+
+.btn-primary {
+  background: #ff5a1f;
+  color: #140a06;
+  border: 1px solid #ff5a1f;
+  border-radius: 0.375rem;
+  font-weight: 600;
+  padding: 0.55rem 0.9rem;
+  cursor: pointer;
+}
+.btn-primary:disabled,
+.btn-ghost:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.btn-ghost {
+  background: transparent;
+  color: #f2f3f5;
+  border: 1px solid #2c313c;
+  border-radius: 0.375rem;
+  padding: 0.55rem 0.75rem;
+  cursor: pointer;
+  text-decoration: none;
+}
+.btn-ghost[hidden] { display: none !important; }
+
+.nav-link {
+  color: #8d939e;
+  text-decoration: none;
+  padding-bottom: 0.15rem;
+}
+.nav-link.is-on {
+  color: #f2f3f5;
+  box-shadow: inset 0 -2px 0 #ff5a1f;
+}
+
+.tab {
+  background: transparent;
+  border: 0;
+  color: #8d939e;
+  padding: 0.15rem 0 0.4rem;
+  cursor: pointer;
+  font: inherit;
+}
+.tab.is-on {
+  color: #f2f3f5;
+  box-shadow: inset 0 -2px 0 #ff5a1f;
+}
+
+.drop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 260px;
+  border: 1px dashed #2c313c;
+  border-radius: 0.5rem;
+  color: #8d939e;
+  text-align: center;
+  padding: 1.25rem;
+  cursor: pointer;
+}
+.drop.is-hot {
+  border-color: #ff5a1f;
+  color: #f2f3f5;
+}
+.drop input { display: none; }
+
+.st-RUNNING { color: #5b9bd4; }
+.st-QUEUED { color: #d4a84b; }
+.st-COMPLETED { color: #3dcf8e; }
+.st-FAILED { color: #f05365; }
+.st-CANCELLED { color: #8d939e; }
+
+#stages li.done { color: #3dcf8e; }
+#stages li.current { color: #f2f3f5; }
+
+#player.is-on { display: block; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
