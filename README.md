@@ -160,6 +160,18 @@ uv run huggingface-cli download camenduru/ProPainter \
 
 Большой SAM2: `--segmenter-model facebook/sam2-hiera-large` (ориентир 24 GB VRAM).
 
+## UI (Gradio) и RunPod
+
+Порт `7860` (`VIDEOCLEAN_PORT`). Логин: `VIDEOCLEAN_UI_USER` + `VIDEOCLEAN_UI_PASSWORD` (пароль обязателен).
+
+```bash
+uv sync --extra web
+VIDEOCLEAN_UI_USER=admin VIDEOCLEAN_UI_PASSWORD=change-me \
+  uv run videoclean serve --host 127.0.0.1 --port 7860
+```
+
+Docker и деплой на RTX 4090: [docs/RUNPOD.md](docs/RUNPOD.md). Веса Hugging Face в образ не входят — качаются с вкладки Models после старта.
+
 ## Код
 
 ```

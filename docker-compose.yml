@@ -1,0 +1,23 @@
+services:
+  videoclean:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: videoclean:local
+    ports:
+      - "${VIDEOCLEAN_PORT:-7860}:7860"
+    env_file:
+      - .env.example
+    environment:
+      VIDEOCLEAN_DATA_DIR: /root/.videoclean
+      HF_HOME: /root/.cache/huggingface
+      VIDEOCLEAN_PORT: "7860"
+    volumes:
+      - videoclean-data:/root/.videoclean
+      - hf-cache:/root/.cache/huggingface
+    gpus: all
+    restart: unless-stopped
+
+volumes:
+  videoclean-data:
+  hf-cache:
