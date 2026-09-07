@@ -85,7 +85,8 @@ class GroundingDinoDetector:
                     f"{self.name} keyframe {n}/{n_keys}  frame {i + 1}/{len(frames)}",
                 )
             for hit in self._detect_frame(frames[i], phrases):
-                per_frame[i].append((hit.label, hit.score, hit.xyxy))
+                label = hit.label or "object"
+                per_frame[i].append((label, hit.score, hit.xyxy))
         if on_progress:
             on_progress(n_keys, n_keys, f"{self.name} template-track")
         tracks: list[Track] = []
@@ -153,12 +154,21 @@ class GroundingDinoDetector:
             return False, self._load_error
 
     def _detect_frame(self, bgr: np.ndarray, phrases: list[str]) -> list[BoxHit]:
+        hits: list[BoxHit] = []
+        for phrase in phrases:
+            name = phrase.rstrip(".").strip() or "object"
+            for hit in self._detect_caption(bgr, phrase):
+                hit.label = name
+                hits.append(hit)
+        return _nms(hits)
+
+    def _detect_caption(self, bgr: np.ndarray, caption: str) -> list[BoxHit]:
         import torch
         from PIL import Image
 
         rgb = Image.fromarray(bgr[:, :, ::-1])
-        caption = " . ".join(phrases) + " ."
-        inputs = self._processor(images=rgb, text=caption, return_tensors="pt")
+        cap = caption if caption.endswith(".") else caption + " ."
+        inputs = self._processor(images=rgb, text=cap, return_tensors="pt")
         inputs = {k: v.to(self.device) if hasattr(v, "to") else v for k, v in inputs.items()}
         with torch.no_grad():
             outputs = self._model(**inputs)
@@ -182,7 +192,6 @@ class GroundingDinoDetector:
         hits: list[BoxHit] = []
         boxes = results.get("boxes")
         scores = results.get("scores")
-        labels = results.get("labels") or results.get("text_labels") or []
         if boxes is None:
             return []
         for i, box in enumerate(boxes):
@@ -192,13 +201,8 @@ class GroundingDinoDetector:
             if not keep_detection_box((x1, y1, x2, y2), w, h):
                 continue
             score = float(scores[i]) if scores is not None and i < len(scores) else 0.0
-            raw = labels[i] if i < len(labels) else "object"
-            name = str(raw).strip() or "object"
-            if name.startswith("##"):
-                continue
-            name = " ".join(name.replace("-", " ").split()) or "object"
-            hits.append(BoxHit(label=name, score=score, xyxy=(x1, y1, x2, y2)))
-        return _nms(hits)
+            hits.append(BoxHit(label="object", score=score, xyxy=(x1, y1, x2, y2)))
+        return hits
 
 
 def _nms(hits: list[BoxHit], iou_thr: float = 0.3) -> list[BoxHit]:

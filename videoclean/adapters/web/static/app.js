@@ -146,7 +146,16 @@ function renderLive() {
   stages.innerHTML = (job.stages || [])
     .map((s) => `<li class="${s.mark}">${esc(s.title)}</li>`)
     .join("");
-  if (job.error) line.textContent += `  ${job.error}`;
+  const errEl = $("live-error");
+  if (errEl) {
+    if (job.error) {
+      errEl.classList.remove("hidden");
+      errEl.textContent = "Ошибка: " + job.error;
+    } else {
+      errEl.classList.add("hidden");
+      errEl.textContent = "";
+    }
+  }
   dl.hidden = !job.has_output;
   dlLive.hidden = !job.has_output;
   if (job.has_output) {

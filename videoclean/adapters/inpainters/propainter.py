@@ -122,8 +122,8 @@ class ProPainterInpainter:
             return True, ""
         except Exception as exc:  # noqa: BLE001
             self._load_error = (
-                f"{type(exc).__name__}: {exc}"[:240]
-                + ". Install ProPainter deps on the GPU box: uv pip install scipy einops timm"
+                f"{type(exc).__name__}: {exc}"[:400]
+                + ". ProPainter needs: uv pip install matplotlib scipy einops timm imageio"
             )
             return False, self._load_error
 
@@ -354,6 +354,9 @@ def _download_weights(model_id: str) -> Path | None:
     try:
         from huggingface_hub import snapshot_download
 
+        from videoclean.adapters.hf_cache import relax_hf_transfer_flag
+
+        relax_hf_transfer_flag()
         snapshot_download(repo_id=model_id, local_dir=str(dest))
     except Exception:  # noqa: BLE001
         return None

@@ -1,13 +1,35 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from videoclean.domain.intent import CROP_PARTS, Intent, Target
 from videoclean.domain.tracks import Track, box_center, interpolate_gaps
+
+_GENERIC_LABELS = {"object", "thing", "stuff", "label", "entity", ""}
 
 
 def select_tracks(
     tracks: list[Track],
     intent: Intent,
     *,
+    width: int,
+    height: int,
+    relax: bool = False,
+) -> list[Track]:
+    chosen = _select_once(tracks, intent, width, height)
+    if chosen or not relax or not tracks:
+        return chosen
+    no_ord = _strip_intent(intent, ordinal=True)
+    chosen = _select_once(tracks, no_ord, width, height)
+    if chosen:
+        return chosen
+    no_where = _strip_intent(intent, ordinal=True, where=True)
+    return _select_once(tracks, no_where, width, height)
+
+
+def _select_once(
+    tracks: list[Track],
+    intent: Intent,
     width: int,
     height: int,
 ) -> list[Track]:
@@ -33,6 +55,19 @@ def select_tracks(
                 tr.notes.append(f"part={tr.part}")
             chosen.append(tr)
     return chosen
+
+
+def _strip_intent(intent: Intent, *, ordinal: bool = False, where: bool = False) -> Intent:
+    targets = []
+    for t in intent.targets:
+        kw: dict = {}
+        if ordinal:
+            kw["ordinal"] = None
+            kw["from_side"] = None
+        if where:
+            kw["where"] = None
+        targets.append(replace(t, **kw) if kw else t)
+    return replace(intent, targets=targets)
 
 
 def _matches(
@@ -75,7 +110,10 @@ def _pick_ordinal(tracks: list[Track], target: Target) -> list[Track]:
 
 
 def _query_ok(tr: Track, target: Target) -> bool:
-    return _overlap((tr.label or "").casefold(), (target.query or "").casefold())
+    lab = (tr.label or "").casefold().strip()
+    if target.kind in {"text_overlay", "watermark"} and lab in _GENERIC_LABELS:
+        return True
+    return _overlap(lab, (target.query or "").casefold())
 
 
 def _overlap(label: str, query: str) -> bool:
@@ -120,4 +158,56 @@ def _where_ok(tr: Track, where: str | None, width: int, height: int) -> bool:
     if where == "bottom-left":
         return nx <= 0.45 and ny >= 0.55
     return True
+
+
+def region_name(tr: Track, width: int, height: int) -> str:
+    boxes = tr.observed_boxes()
+    if not boxes:
+        return "unknown"
+    xs, ys = zip(*(box_center(b) for b in boxes))
+    nx, ny = (sum(xs) / len(xs)) / max(1, width), (sum(ys) / len(ys)) / max(1, height)
+    vert = "top" if ny <= 0.38 else "bottom" if ny >= 0.62 else "middle"
+    horz = "left" if nx <= 0.38 else "right" if nx >= 0.62 else "center"
+    if vert == "middle" and horz == "center":
+        return "center"
+    if horz == "center":
+        return vert
+    if vert == "middle":
+        return horz
+    return f"{vert}-{horz}"
+
+
+def explain_unmatched(tracks: list[Track], intent: Intent, width: int, height: int) -> str:
+    want = "; ".join(_want(t) for t in intent.targets) or "no targets"
+    parts = [f"kept 0 of {len(tracks)} detected box(es) for {want}."]
+    for tr in tracks[:6]:
+        why = _drop_reason(tr, intent, width, height)
+        parts.append(f"box label={tr.label!r} at {region_name(tr, width, height)}: {why}.")
+    extra = len(tracks) - 6
+    if extra > 0:
+        parts.append(f"plus {extra} more box(es).")
+    parts.append("Hint: Grounding DINO often labels overlays as 'object'; we match those to text/logo queries. If region is wrong, say top/bottom/corner in the prompt.")
+    return " ".join(parts)
+
+
+def _want(t: Target) -> str:
+    loc = t.where or "any-region"
+    extra = f" ordinal={t.ordinal} from {t.from_side or 'left'}" if t.ordinal else ""
+    return f"{t.query!r} ({t.kind}, {loc}{extra})"
+
+
+def _drop_reason(tr: Track, intent: Intent, width: int, height: int) -> str:
+    reasons: list[str] = []
+    for t in intent.targets:
+        if not _query_ok(tr, t):
+            reasons.append(f"label does not overlap {t.query!r}")
+            continue
+        if not _where_ok(tr, t.where, width, height):
+            reasons.append(f"outside where={t.where}")
+            continue
+        if t.ordinal:
+            reasons.append(f"not ordinal {t.ordinal} from {t.from_side or 'left'}")
+            continue
+        reasons.append(f"would match {t.query!r}")
+    return "; ".join(reasons) if reasons else "no target accepted it"
 

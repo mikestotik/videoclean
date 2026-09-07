@@ -1,7 +1,15 @@
+import builtins
+import os
+import sys
 from pathlib import Path
 
 from videoclean.adapters.detectors.owlvit import OwlVitDetector
-from videoclean.adapters.hf_cache import hf_cached, hf_hub_cache_root, hf_hub_dir
+from videoclean.adapters.hf_cache import (
+    hf_cached,
+    hf_hub_cache_root,
+    hf_hub_dir,
+    relax_hf_transfer_flag,
+)
 
 
 def _clear_hf_env(monkeypatch) -> None:
@@ -50,6 +58,21 @@ def test_owlvit_status_uses_hf_home(monkeypatch, tmp_path: Path):
     ready = OwlVitDetector(model_id=model_id, device="cpu").status()
     assert "ready" in ready
     assert model_id in ready
+
+
+def test_relax_hf_transfer_flag_clears_env_without_package(monkeypatch):
+    monkeypatch.setenv("HF_HUB_ENABLE_HF_TRANSFER", "1")
+    monkeypatch.delitem(sys.modules, "hf_transfer", raising=False)
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "hf_transfer":
+            raise ImportError("missing")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    relax_hf_transfer_flag()
+    assert os.environ.get("HF_HUB_ENABLE_HF_TRANSFER") == "0"
 
 
 def test_hf_cached_false_when_blob_incomplete(monkeypatch, tmp_path: Path):

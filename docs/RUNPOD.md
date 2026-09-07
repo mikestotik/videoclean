@@ -4,13 +4,84 @@ Web UI (FastAPI) on port **7860**. The image has CUDA torch, FFmpeg, and extras 
 
 Auth is required: `VIDEOCLEAN_UI_USER` + `VIDEOCLEAN_UI_PASSWORD`. Serve refuses to start without a password.
 
+## 0. Without publishing a Docker image (git clone + uv)
+
+Use a stock RunPod **PyTorch** template, Python **3.11 or 3.12** (not 3.13), CUDA 12.4+. Official image example:
+
+`runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04`
+
+Pod settings:
+
+- GPU: RTX 4090
+- Expose **HTTP** port `7860` (not only TCP)
+- Container disk: **40 GB**
+- Network volume **50 GB+**, mount **`/workspace`**
+- Env:
+
+| Variable | Value |
+|---|---|
+| `VIDEOCLEAN_UI_USER` | `admin` |
+| `VIDEOCLEAN_UI_PASSWORD` | a real password |
+| `VIDEOCLEAN_PORT` | `7860` |
+| `VIDEOCLEAN_DATA_DIR` | `/workspace/.videoclean` |
+| `HF_HOME` | `/workspace/.cache/huggingface` |
+| `SAM2_BUILD_CUDA` | `0` |
+
+Start command (clone once, then serve). Repo is public: `https://github.com/mikestotik/videoclean.git`.
+
+```bash
+bash -lc '
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+export VIDEOCLEAN_PORT="${VIDEOCLEAN_PORT:-7860}"
+export VIDEOCLEAN_DATA_DIR="${VIDEOCLEAN_DATA_DIR:-/workspace/.videoclean}"
+export HF_HOME="${HF_HOME:-/workspace/.cache/huggingface}"
+export HF_HUB_CACHE="${HF_HUB_CACHE:-$HF_HOME/hub}"
+export SAM2_BUILD_CUDA="${SAM2_BUILD_CUDA:-0}"
+export PATH="/root/.local/bin:/usr/local/bin:$PATH"
+
+apt-get update
+apt-get install -y --no-install-recommends ffmpeg git curl ca-certificates python3.11 python3.11-venv || apt-get install -y --no-install-recommends ffmpeg git curl ca-certificates
+
+curl -fsSL https://astral.sh/uv/install.sh | sh
+export PATH="/root/.local/bin:$PATH"
+
+if ! command -v ollama >/dev/null 2>&1; then
+  curl -fsSL https://ollama.com/install.sh | sh
+fi
+nohup ollama serve >/workspace/ollama.log 2>&1 &
+
+mkdir -p /workspace
+cd /workspace
+if [ ! -d videoclean/.git ]; then
+  git clone https://github.com/mikestotik/videoclean.git videoclean
+fi
+cd videoclean
+git fetch --depth 1 origin main
+git checkout -B main origin/main
+
+uv python pin 3.11 || true
+uv sync --extra gpu --extra lama --extra web --no-dev
+uv pip install --python .venv/bin/python --index-url https://download.pytorch.org/whl/cu124 --upgrade "torch>=2.5" torchvision
+uv pip install --python .venv/bin/python "git+https://github.com/facebookresearch/sam2.git" hf-transfer matplotlib imageio
+
+mkdir -p "$VIDEOCLEAN_DATA_DIR" "$HF_HOME"
+uv run videoclean doctor --device cuda || true
+exec uv run videoclean serve --host 0.0.0.0 --port "$VIDEOCLEAN_PORT"
+'
+```
+
+First boot: several minutes (`uv sync` + CUDA torch + sam2). Weights are **not** downloaded here. After the UI is up, open `https://<POD_ID>-7860.proxy.runpod.net`, log in, **Конфиг**, download `grounding-dino`, `sam2-tiny`, then `propainter` for max quality. Ollama: if the process is up, models appear under LLM; pull a tag there (for example `llama3.2`).
+
+Local LLM without Ollama will stay grey. Cloud LLM: set `XAI_API_KEY` or `OPENAI_API_KEY` and pick `cloud`.
+
 ## 1. Build and push the image
 
 From this repo (linux/amd64; RunPod cannot pull a Mac ARM image):
 
 ```bash
-docker build --platform linux/amd64 -t YOUR_DOCKERHUB_USER/videoclean:runpod .
-docker push YOUR_DOCKERHUB_USER/videoclean:runpod
+docker build --platform linux/amd64 -t mikestotik/videoclean:runpod .
+docker push mikestotik/videoclean:runpod
 ```
 
 ## 2. Create a GPU pod
@@ -18,7 +89,7 @@ docker push YOUR_DOCKERHUB_USER/videoclean:runpod
 1. [RunPod console → Pods](https://www.runpod.io/console/pods) → **Deploy**.
 2. GPU: **RTX 4090** (24 GB). CUDA 12.4 drivers are fine.
 3. **Edit template**:
-   - Container image: `YOUR_DOCKERHUB_USER/videoclean:runpod`
+   - Container image: `mikestotik/videoclean:runpod`
    - Expose **HTTP** port `7860` (not only TCP).
    - Container disk: **40 GB** (torch + extras; weights go on the volume).
    - Volume: **50 GB+** (models, jobs, uploads). Mount path **`/workspace`**.

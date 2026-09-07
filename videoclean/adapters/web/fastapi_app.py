@@ -405,6 +405,9 @@ def launch_from_env(
     env: dict[str, str] | None = None,
 ) -> None:
     env_map = os.environ if env is None else env
+    from videoclean.adapters.hf_cache import relax_hf_transfer_flag
+
+    relax_hf_transfer_flag()
     auth_from_env(env_map)
     port_i = int(port if port is not None else env_map.get("VIDEOCLEAN_PORT") or 7860)
     root = Path(data_dir or env_map.get("VIDEOCLEAN_DATA_DIR") or (Path.home() / ".videoclean"))

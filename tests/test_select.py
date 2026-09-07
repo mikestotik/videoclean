@@ -55,6 +55,28 @@ def test_object_word_still_matches_a_longer_query():
     assert [t.track_id for t in chosen] == [1]
 
 
+def test_generic_object_label_matches_text_overlay():
+    top = _track(1, "object", (10, 5, 80, 20))
+    bottom = _track(2, "object", (10, 80, 80, 99))
+    intent = Intent(targets=[Target(kind="text_overlay", query="text", where="top")])
+    chosen = select_tracks([top, bottom], intent, width=100, height=100)
+    assert [t.track_id for t in chosen] == [1]
+
+
+def test_generic_object_label_does_not_match_physical_object_query():
+    blob = _track(0, "object", (10, 10, 40, 40))
+    intent = Intent(targets=[Target(kind="object", query="mug")])
+    assert select_tracks([blob], intent, width=200, height=100) == []
+
+
+def test_relax_drops_bad_where_when_nothing_matches():
+    mid = _track(1, "text", (40, 40, 60, 60))
+    intent = Intent(targets=[Target(kind="text_overlay", query="text", where="bottom-right")])
+    assert select_tracks([mid], intent, width=100, height=100) == []
+    chosen = select_tracks([mid], intent, width=100, height=100, relax=True)
+    assert [t.track_id for t in chosen] == [1]
+
+
 def test_ordinal_picks_third_from_the_left():
     left = _track(1, "red mug", (10, 10, 40, 40))
     mid = _track(2, "red mug", (80, 10, 110, 40))

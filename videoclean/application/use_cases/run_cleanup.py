@@ -17,7 +17,7 @@ from videoclean.application.ports.prompt import PromptParser
 from videoclean.application.ports.segmenter import Segmenter
 from videoclean.application.frames_sample import sample_frame_indices
 from videoclean.application.frames import LazyFrames
-from videoclean.application.select import select_tracks
+from videoclean.application.select import explain_unmatched, select_tracks
 from videoclean.domain.formats import resolve_dest
 from videoclean.domain.tracks import Detection, tracks_to_json
 
@@ -108,7 +108,7 @@ class RunCleanup:
                 paths.report_file.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
             except OSError:
                 pass
-            self.jobs.upsert(job_id, "FAILED", report=report, error=str(exc)[:500])
+            self.jobs.upsert(job_id, "FAILED", report=report, error=str(exc)[:1500])
             raise
 
     def _run(self, req: RunCleanupRequest, cfg: PipelineConfig, job_id: str, paths, manifest, report: dict) -> dict:
@@ -179,14 +179,16 @@ class RunCleanup:
 
         self.progress.start("detect", total=len(frames), detail="read frames")
         used_detector, attempts, raw_tracks = self._discover(images, intent.queries, stage="detect")
-        tracks = select_tracks(raw_tracks, intent, width=w, height=h)
+        tracks = select_tracks(raw_tracks, intent, width=w, height=h, relax=True)
         if raw_tracks and not tracks:
-            labels = sorted({(tr.label or "?") for tr in raw_tracks})
             raise PipelineError(
-                f"detector found {len(raw_tracks)} tracks labeled {labels} "
-                f"but none matched queries {intent.queries} "
+                explain_unmatched(raw_tracks, intent, w, h) + f" detectors tried: {attempts}"
+            )
+        if not raw_tracks:
+            raise PipelineError(
+                f"detector found no boxes for queries {intent.queries} "
                 f"({', '.join(_target_label(t) for t in intent.targets)}). "
-                f"where/ordinal may have dropped them. detectors tried: {attempts}"
+                f"detectors tried: {attempts}"
             )
         (paths.root / "analysis" / "tracks_raw.json").write_text(
             json.dumps(tracks_to_json(raw_tracks), indent=2),
@@ -237,7 +239,7 @@ class RunCleanup:
             cleaned = LazyFrames(cleaned_paths, self._read_image, cache_size=cache_n)
             self.progress.tick("verify", 0, 1, "re-detect leftover")
             _, v_attempts, leftover = self._discover(cleaned, intent.queries, stage="verify")
-            leftover = select_tracks(leftover, intent, width=w, height=h)
+            leftover = select_tracks(leftover, intent, width=w, height=h, relax=True)
             v_masks = self.segmenter.masks(cleaned, leftover) if leftover else []
             still = float(np.mean([np.count_nonzero(m) / m.size for m in v_masks])) if v_masks else 0.0
             cap = max(cfg.verify_max_coverage, mean_cov * 1.5)

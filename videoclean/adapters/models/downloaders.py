@@ -187,6 +187,9 @@ def download_ollama(
 def _snapshot_download(repo_id: str, **kwargs):
     from huggingface_hub import snapshot_download
 
+    from videoclean.adapters.hf_cache import relax_hf_transfer_flag
+
+    relax_hf_transfer_flag()
     return snapshot_download(repo_id=repo_id, **kwargs)
 
 

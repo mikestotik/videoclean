@@ -7,6 +7,7 @@ import numpy as np
 
 from videoclean.adapters.prompt.frames import bgr_to_jpeg
 from videoclean.adapters.prompt.locations import normalize_where, part_or_where
+from videoclean.adapters.prompt.refine import refine_intent
 from videoclean.application.errors import AdapterUnavailable, PipelineError
 from videoclean.domain.intent import Intent, Target
 
@@ -17,7 +18,6 @@ BAD_QUERIES = {
     "the",
     "a",
     "an",
-    "text",
     "overlay",
     "image",
     "frame",
@@ -25,10 +25,6 @@ BAD_QUERIES = {
     "object",
     "thing",
     "stuff",
-    "надписи",
-    "текст",
-    "on-screen text",
-    "on screen text",
 }
 
 SYSTEM = """You turn a user's removal request into detector queries for Grounding DINO / OWL-ViT.
@@ -38,8 +34,10 @@ Return ONLY JSON:
 {"targets":[{"kind":"watermark|text_overlay|object","query":"short English visual name","where":null,"ordinal":null,"from_side":null,"motion":"any"}]}
 
 Rules:
-- query: short English name the detector can search. Never Russian. Never vague ("text", "overlay", "on-screen text", "stuff").
+- query: short English name the detector can search. Never Russian. Never vague ("overlay", "stuff").
+- For letters on screen use "text" / "caption" / "title". Do NOT OCR the overlay into the query (not the words written on screen).
 - Derive queries from what the USER named (translate/paraphrase into English visuals). If they named specific text, describe that kind of overlay, not a generic pack.
+- where follows the USER's location words. Do not point at a different overlay you noticed.
 - If the request is vague and you have no frame notes, ask yourself what concrete English queries could match — but do NOT paste a canned list. Prefer fewer honest targets over a fake full HUD inventory.
 - kind: watermark = logo/© mark; text_overlay = letters/captions; object = physical thing.
 - where: only if the user named a region (top|bottom|left|right|top-left|top-right|bottom-left|bottom-right), else null.
@@ -56,7 +54,8 @@ Return ONLY JSON:
 
 Rules:
 - Look at the frames. Emit a target only for something you can see that matches the user's ask.
-- query: short English visual name (what it looks like / what kind of overlay), never Russian, never a vague dump.
+- query: short English visual name of the overlay TYPE ("text", "caption", "logo"), never Russian, never the words written on screen.
+- where follows the USER's location words, not some other overlay in the frame.
 - Do NOT output a canned set like title+caption+side+watermark unless those are actually visible and requested.
 - where from what you see (top|bottom|left|right|corners) or null.
 - ordinal/from_side only if the user said so.
@@ -70,7 +69,7 @@ Use ONLY overlays mentioned in the notes that match the request. Do NOT invent a
 Return ONLY JSON:
 {"targets":[{"kind":"watermark|text_overlay|object","query":"short English visual name","where":null,"ordinal":null,"from_side":null,"motion":"any"}]}
 
-query must be English, concrete, searchable by Grounding DINO. No Russian. No vague "text"/"overlay".
+query must be English, concrete, searchable by Grounding DINO. No Russian. Overlay type ("text","caption","logo"), not OCR of the letters.
 """
 
 
@@ -222,7 +221,7 @@ def intent_from_llm_json(text: str, *, raw: str) -> Intent:
         )
     if not targets:
         raise PipelineError("prompt-parser llm JSON had no usable targets")
-    return Intent(targets=targets, parse_mode="llm", raw=raw, defaulted=False)
+    return refine_intent(Intent(targets=targets, parse_mode="llm", raw=raw, defaulted=False))
 
 
 def _query_ok(query: str) -> bool:

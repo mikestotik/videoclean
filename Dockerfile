@@ -29,7 +29,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.12.7 /uv /usr/local/bin/uv
 
 WORKDIR /app
 
-COPY pyproject.toml README.md ./
+COPY pyproject.toml uv.lock README.md ./
 COPY videoclean ./videoclean
 COPY scripts/start.sh ./scripts/start.sh
 
