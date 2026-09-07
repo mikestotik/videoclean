@@ -733,10 +733,14 @@ def launch_ui(state: AppState, host: str, port: int, auth: tuple[str, str] | Non
     import warnings
 
     # Gradio 6 + current Starlette spam this on every Timer tick; not actionable.
+    try:
+        from starlette.exceptions import StarletteDeprecationWarning
+    except ImportError:  # pragma: no cover
+        StarletteDeprecationWarning = UserWarning  # type: ignore[misc, assignment]
     warnings.filterwarnings(
         "ignore",
         message=".*HTTP_422_UNPROCESSABLE_ENTITY.*",
-        category=DeprecationWarning,
+        category=StarletteDeprecationWarning,
     )
     password = "" if auth is None else str(auth[1] or "")
     if not password.strip():
