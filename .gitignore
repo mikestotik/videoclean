@@ -10,3 +10,6 @@ output/
 .DS_Store
 uv.lock
 .python-version
+
+.worktrees/
+.superpowers/
