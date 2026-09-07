@@ -64,7 +64,7 @@ def indices_from_request(req: PreviewRequest, n_video: int) -> list[int]:
     start = max(0, int(req.start or 0))
     count = max(1, int(req.count or 16))
     stride = max(1, int(req.stride or 1)) if req.stride else 1
-    return [i for i in range(start, n_video, stride)][:count]
+    return [i for i in range(start, min(n_video, start + count * stride), stride)][:count]
 
 
 def targets_from_json(data: list[dict]) -> list[Target]:

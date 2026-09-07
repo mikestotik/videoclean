@@ -13,14 +13,14 @@ class FakeRun:
 
     def __call__(self, cmd: list[str], log_file: Path) -> None:
         self.calls.append(cmd)
-        # Simulate ffmpeg output: create files for every requested frame index.
+        # Simulate real ffmpeg: selected outputs are numbered sequentially.
         out = Path(cmd[-1])
         out.parent.mkdir(parents=True, exist_ok=True)
         vf = cmd[cmd.index("-vf") + 1]
         inner = vf.split("select=")[1].strip("'")
         idxs = [int(tok) for tok in inner.replace("eq(n,", "").replace(")", "").split("+") if tok]
-        for i in idxs:
-            (out.parent / f"frame_{i:06d}.jpg").write_bytes(b"\xff\xd8fake")
+        for k in range(len(idxs)):
+            (out.parent / f"frame_{k + 1:06d}.jpg").write_bytes(b"\xff\xd8fake")
 
 
 @pytest.fixture

@@ -83,7 +83,11 @@ class FFmpegMedia:
     def extract_frames_subset(
         self, src: Path, indices: list[int], dest_dir: Path, log_file: Path
     ) -> list[Path]:
-        """Extract only the requested frame numbers. Output order matches sorted indices."""
+        """Extract only the requested frame numbers. Output order matches sorted indices.
+
+        ffmpeg names selected outputs sequentially (frame_000001 = first selected),
+        so files are renamed to their source frame numbers afterwards.
+        """
         idxs = sorted({int(i) for i in indices})
         if not idxs:
             raise PipelineError("extract_frames_subset: no frame indices requested")
@@ -106,22 +110,22 @@ class FFmpegMedia:
             ],
             log_file,
         )
-        frames: list[Path] = []
-        missing: list[int] = []
-        for i in idxs:
-            p = dest_dir / f"frame_{i:06d}.jpg"
-            if p.is_file():
-                frames.append(p)
-            else:
-                missing.append(i)
-        if not frames:
+        produced = sorted(dest_dir.glob("frame_*.jpg"))
+        if not produced:
             raise PipelineError("FFmpeg produced no frames for the requested subset")
-        if missing:
+        if len(produced) != len(idxs):
             raise PipelineError(
-                f"FFmpeg missed {len(missing)} of {len(idxs)} requested frames "
-                f"(first missing: {missing[0]})"
+                f"FFmpeg produced {len(produced)} of {len(idxs)} requested frames"
             )
-        return frames
+        # Sequential output k-th file == k-th requested source frame index.
+        staged: list[tuple[Path, Path]] = []
+        for p, i in zip(produced, idxs):
+            target = dest_dir / f"frame_{i:06d}.jpg"
+            if p != target:
+                staged.append((p, target))
+        for src_p, target in staged:
+            src_p.rename(target)
+        return [dest_dir / f"frame_{i:06d}.jpg" for i in idxs]
 
     def encode_mezzanine(
         self,
