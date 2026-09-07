@@ -97,6 +97,24 @@
         <p id="live-error" class="hidden m-0 mt-1 px-2 py-2 rounded border border-red-900/60 bg-red-950/40 font-mono text-sm text-red-300 whitespace-pre-wrap"></p>
         <ol id="stages" class="list-none m-0 p-0 flex flex-wrap gap-x-3.5 gap-y-1 text-xs text-mute"></ol>
       </div>
+      <details id="preview-panel" class="border border-line rounded-xl px-4 py-3">
+        <summary class="cursor-pointer text-sm text-mute">Превью: маски без инпейнта</summary>
+        <div class="grid gap-2.5 pt-3">
+          <div class="grid grid-cols-4 gap-2">
+            <label class="lbl">Старт <input id="pv-start" class="field" type="number" min="0" value="0"></label>
+            <label class="lbl">Кадры <input id="pv-count" class="field" type="number" min="1" value="16"></label>
+            <label class="lbl">Шаг <input id="pv-stride" class="field" type="number" min="1" value="1"></label>
+            <label class="lbl">Индексы <input id="pv-indices" class="field" placeholder="3,7,15"></label>
+          </div>
+          <p class="m-0 text-xs text-mute">Превью показывает боксы и маски на выбранных кадрах. Проверяй покрытие — качество заливки не его задача.</p>
+          <div class="flex gap-2">
+            <button type="button" id="pv-parse-btn" class="btn-ghost flex-1">Превью: разбор + маски</button>
+            <button type="button" id="pv-detect-btn" class="btn-ghost flex-1">Маски по таргетам</button>
+          </div>
+          <div id="pv-targets" class="grid gap-1.5"></div>
+          <button type="button" id="pv-run-full" class="btn-primary hidden">Запустить полный прогон с этими таргетами</button>
+        </div>
+      </details>
     </section>
 
     <form class="border-t lg:border-t-0 lg:border-l border-line p-4 pb-8 flex flex-col gap-2.5 overflow-auto" id="clean-form">

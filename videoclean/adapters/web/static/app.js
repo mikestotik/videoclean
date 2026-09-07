@@ -17,6 +17,8 @@ let state = {
   file: null,
   srcUrl: null,
   showing: "src",
+  pvJobId: null,
+  pvTargets: [],
 };
 
 document.querySelectorAll(".nav-link").forEach((a) => {
@@ -479,6 +481,211 @@ if (view === "work") {
     state.selected = null;
     tick();
   });
+
+  // ---- Preview panel ----
+  function previewFormFields() {
+    const ids = ["device", "detector", "detector_model", "detector_threshold", "detector_keyframes",
+      "detector_nms_iou", "detector_max_box_area", "tracker_min_score", "tracker_max_template_area",
+      "segmenter", "segmenter_model", "mask_dilate_px", "prompt_frame_stride", "prompt_frame_max", "vision_batch"];
+    const fd = new FormData();
+    ids.forEach((id) => {
+      const el = $(id);
+      if (el && el.value !== "") fd.append(id, el.value);
+    });
+    return fd;
+  }
+
+  function previewFrameData() {
+    const indices = $("pv-indices").value.trim();
+    if (indices) return { indices };
+    return { start: $("pv-start").value, count: $("pv-count").value, stride: $("pv-stride").value };
+  }
+
+  async function submitPreview(mode, targets) {
+    const msg = $("form-msg");
+    if (!state.file) {
+      msg.hidden = false;
+      msg.classList.add("text-fail");
+      msg.textContent = "Сначала видео.";
+      return;
+    }
+    const fd = previewFormFields();
+    fd.append("video", state.file, state.file.name);
+    fd.append("mode", mode);
+    fd.append("prompt", $("prompt").value);
+    Object.entries(previewFrameData()).forEach(([k, v]) => {
+      if (v !== "" && v !== null) fd.append(k, v);
+    });
+    if (targets) fd.append("targets", JSON.stringify(targets));
+    const job = await api("/api/preview", { method: "POST", body: fd });
+    state.pvJobId = job.id;
+    state.selected = job.id;
+    msg.hidden = false;
+    msg.classList.remove("text-fail");
+    msg.textContent = `превью в очереди ${job.id}`;
+    tick();
+  }
+
+  $("pv-parse-btn").addEventListener("click", async () => {
+    try {
+      await submitPreview("parse", null);
+    } catch (err) {
+      $("form-msg").hidden = false;
+      $("form-msg").classList.add("text-fail");
+      $("form-msg").textContent = err.message;
+    }
+  });
+
+  $("pv-detect-btn").addEventListener("click", async () => {
+    try {
+      const targets = readTargetsFromDom();
+      if (!targets.length) {
+        $("form-msg").hidden = false;
+        $("form-msg").classList.add("text-fail");
+        $("form-msg").textContent = "Нет таргетов: сначала сделай разбор.";
+        return;
+      }
+      await submitPreview("detect", targets);
+    } catch (err) {
+      $("form-msg").hidden = false;
+      $("form-msg").classList.add("text-fail");
+      $("form-msg").textContent = err.message;
+    }
+  });
+
+  $("pv-run-full").addEventListener("click", async () => {
+    try {
+      const targets = readTargetsFromDom();
+      if (!targets.length) return;
+      const fd = new FormData();
+      fd.append("video", state.file, state.file.name);
+      ["device", "detector", "segmenter", "inpainter", "llm_place", "llm_model", "fmt",
+        "detector_model", "segmenter_model", "detector_threshold", "detector_keyframes",
+        "detector_nms_iou", "detector_max_box_area", "tracker_min_score", "tracker_max_template_area",
+        "mask_dilate_px", "telea_radius", "vision_batch", "propainter_mask_dilation",
+        "propainter_ref_stride", "propainter_neighbor_length", "propainter_subvideo_length",
+        "propainter_raft_iter"].forEach((id) => {
+        const el = $(id);
+        if (el && el.value !== "") fd.append(id, el.value);
+      });
+      fd.append("targets_override", JSON.stringify(targets));
+      fd.append("prompt", $("prompt").value);
+      const job = await api("/api/jobs", { method: "POST", body: fd });
+      state.selected = job.id;
+      tick();
+    } catch (err) {
+      $("form-msg").hidden = false;
+      $("form-msg").classList.add("text-fail");
+      $("form-msg").textContent = err.message;
+    }
+  });
+
+  function readTargetsFromDom() {
+    const rows = document.querySelectorAll("#pv-targets .pv-target");
+    const out = [];
+    rows.forEach((row) => {
+      const q = row.querySelector(".pv-query").value.trim();
+      if (!q) return;
+      out.push({
+        kind: row.querySelector(".pv-kind").value,
+        query: q,
+        where: row.querySelector(".pv-where").value || null,
+        motion: "any",
+      });
+    });
+    return out;
+  }
+
+  function renderTargetsFromPreview(preview) {
+    const wrap = $("pv-targets");
+    wrap.innerHTML = "";
+    const targets = (preview.targets || []).map((t) => ({
+      kind: t.kind || "object",
+      query: t.query || "",
+      where: t.where || "",
+    }));
+    if (!targets.length) {
+      const p = document.createElement("p");
+      p.className = "m-0 text-xs text-mute";
+      p.textContent = "LLM не нашёл таргетов. Впиши запросы руками или перепарси.";
+      wrap.appendChild(p);
+    }
+    targets.forEach((t) => wrap.appendChild(targetRow(t)));
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "btn-ghost text-xs py-1 px-2 justify-self-start";
+    add.textContent = "+ таргет";
+    add.addEventListener("click", () => wrap.appendChild(targetRow({ kind: "object", query: "", where: "" })));
+    wrap.appendChild(add);
+    $("pv-run-full").classList.toggle("hidden", !targets.length);
+  }
+
+  function targetRow(t) {
+    const row = document.createElement("div");
+    row.className = "pv-target grid grid-cols-[7rem_minmax(0,1fr)_7rem] gap-1.5";
+    row.innerHTML = `
+      <select class="field pv-kind text-xs">
+        ${["object", "text_overlay", "watermark"].map((k) => `<option value="${k}" ${k === t.kind ? "selected" : ""}>${k}</option>`).join("")}
+      </select>
+      <input class="field pv-query text-xs" placeholder="запрос (en)" value="${esc(t.query)}">
+      <select class="field pv-where text-xs">
+        <option value="" ${!t.where ? "selected" : ""}>—</option>
+        ${["top", "bottom", "left", "right", "top-left", "top-right", "bottom-left", "bottom-right"]
+          .map((w) => `<option value="${w}" ${w === t.where ? "selected" : ""}>${w}</option>`)
+          .join("")}
+      </select>`;
+    return row;
+  }
+
+  function renderPreviewGallery(job) {
+    let host = $("pv-gallery");
+    if (!host) {
+      host = document.createElement("div");
+      host.id = "pv-gallery";
+      host.className = "grid gap-2 pt-2";
+      $("preview-panel").querySelector(".grid").appendChild(host);
+    }
+    host.innerHTML = "";
+    const meta = document.createElement("p");
+    meta.className = "m-0 text-xs text-mute";
+    meta.textContent = `превью ${job.id} · ${job.state}`;
+    host.appendChild(meta);
+    if (job.state === "COMPLETED") {
+      api(`/api/jobs/${job.id}/preview/preview.json`)
+        .then((pv) => {
+          if (pv.state === "COMPLETED") renderTargetsFromPreview(pv);
+          const grid = document.createElement("div");
+          grid.className = "grid grid-cols-4 gap-1.5";
+          (pv.frames || []).forEach((f) => {
+            const idx = String(f.index).padStart(6, "0");
+            const cell = document.createElement("div");
+            cell.className = "grid gap-0.5";
+            cell.innerHTML = `
+              <img class="w-full rounded border border-line cursor-zoom-in" title="кадр ${f.index}, покрытие ${(f.maskCoverage * 100).toFixed(1)}%" src="/api/jobs/${job.id}/preview/${idx}_mask.jpg" loading="lazy">
+              <span class="font-mono text-[10px] text-mute">${f.index} · ${(f.maskCoverage * 100).toFixed(1)}%</span>`;
+            cell.querySelector("img").addEventListener("click", () => {
+              window.open(`/api/jobs/${job.id}/preview/${idx}_boxes.jpg`, "_blank");
+            });
+            grid.appendChild(cell);
+          });
+          host.appendChild(grid);
+        })
+        .catch(() => {});
+    }
+  }
+
+  const pvHook = setInterval(() => {
+    if (view !== "work") return;
+    const panel = $("preview-panel");
+    if (!panel || !panel.open || !state.pvJobId) return;
+    const job = state.jobs.find((j) => j.id === state.pvJobId);
+    if (!job) return;
+    if (job.state === "COMPLETED" && !$("pv-gallery")) renderPreviewGallery(job);
+    else if (job.state !== "COMPLETED" && job.state !== "FAILED") {
+      const host = $("pv-gallery");
+      if (host) host.innerHTML = `<p class="m-0 text-xs text-mute">превью ${job.id}: ${job.state}…</p>`;
+    } else if (job.state === "FAILED") renderPreviewGallery(job);
+  }, 1000);
 }
 
 $("login-form").addEventListener("submit", async (ev) => {
