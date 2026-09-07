@@ -9,7 +9,7 @@
 | Флаг CLI | WebUI | Дефолт | Что делает | Когда крутить |
 |---|---|---|---|---|
 | `--device` | Устройство | `cpu` (WebUI: авто) | Где крутятся нейросети: `cpu`/`cuda`/`mps` | На GPU-машине всегда `cuda` |
-| `--detector` | Детектор | `grounding-dino` | `grounding-dino` или `owlvit`, цепочка через запятую (первый готовый ищет, если пусто — второй) | dino обычно точнее на тексте; owlivit быстрее грузится |
+| `--detector` | Детектор | `grounding-dino` | Единственный детектор: grounding-dino |
 | `--detector-model` | Модель детектора | `IDEA-Research/grounding-dino-tiny` | HF id модели | См. docs/MODELS.md |
 | `--detector-threshold` | Порог детектора | `0.15` | Минимальный скор бокса | Ничего не находит → `0.10`–`0.12`; мусорные боксы → `0.20`+ |
 | `--segmenter` / `--segmenter-model` | Сегментатор | `sam2` / `facebook/sam2-hiera-tiny` | Боксы → маски. `sam2` — покадрово, `sam2-video` — пропагация через клип (нужен torch≥2.5) | `sam2-video` лучше для движущихся объектов на CUDA |

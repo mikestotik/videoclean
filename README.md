@@ -32,16 +32,16 @@ flowchart TB
 
 LLM parser достаёт из `--prompt` короткие запросы (`red mug`, `channel logo`). Detector ищет их на кадрах. Select оставляет нужный экземпляр (`where`, «третья слева»). Segmenter режет маску, inpainter заливает. `verify` ещё раз гоняет detector; `--no-verify` выключает. `--prompt` обязателен.
 
-`--device` задаёт устройство для Grounding DINO, OWL-ViT, SAM2, LaMa и ProPainter. `opencv-telea` всегда на CPU. FFmpeg читает и пишет файлы на любой машине.
+`--device` задаёт устройство для Grounding DINO, SAM2, LaMa и ProPainter. `opencv-telea` всегда на CPU. FFmpeg читает и пишет файлы на любой машине.
 
 ## Флаги
 
 | Флаг | Что делает | Значения |
 |---|---|---|
 | `--device` | устройство нейросетей | `cpu`, `cuda`, `mps` |
-| `--detector` | запросы → боксы | `grounding-dino` (по умолчанию), `owlvit`; цепочка через запятую |
-| `--detector-model` | id модели на Hugging Face | `google/owlvit-base-patch32`, `IDEA-Research/grounding-dino-tiny` |
-| `--detector-threshold` | порог бокса, без скрытого пола | по умолчанию `0.15` для grounding-dino и owlvit |
+| `--detector` | запросы → боксы | `grounding-dino` |
+| `--detector-model` | id модели на Hugging Face | `IDEA-Research/grounding-dino-tiny` |
+| `--detector-threshold` | порог бокса | по умолчанию `0.15` |
 | `--mask-dilate` | расширение SAM-маски | по умолчанию `3` px |
 | `--telea-radius` | радиус TELEA | по умолчанию `9` |
 | `--min-mask-coverage` | минимум доли маски | по умолчанию `0.0004` |
@@ -57,7 +57,7 @@ LLM parser достаёт из `--prompt` короткие запросы (`red 
 | `--prompt-frame-max` | потолок кадров в vision LLM | по умолчанию `8` |
 | `--vision-batch` | кадров на один vision-запрос. llava-phi3 — строго `2` | по умолчанию `2` |
 | `--prompt-templates` | каталог со своими промптами (`system.md`, `vision_system.md`, `bridge_system.md`) | встроенные |
-| `--detector-keyframes` | сколько кадров реально детектить (остальные добирает трекинг) | dino `8`, owlvit `12` |
+| `--detector-keyframes` | сколько кадров реально детектить (остальные добирает трекинг) | dino `8` |
 | `--detector-nms-iou` | схлопывание дублей боксов | по умолчанию `0.3` |
 | `--detector-max-box-area` | отсечка боксов > доли кадра | по умолчанию `0.25` |
 | `--tracker-min-score` | порог шаблонного трекинга | по умолчанию `0.55` |
@@ -160,7 +160,6 @@ uv run videoclean package \
 ## Веса
 
 ```bash
-uv run huggingface-cli download google/owlvit-base-patch32
 uv run huggingface-cli download IDEA-Research/grounding-dino-tiny
 uv run huggingface-cli download facebook/sam2-hiera-tiny
 uv run huggingface-cli download facebook/sam2-hiera-large
@@ -189,7 +188,7 @@ Docker и деплой на RTX 4090: [docs/RUNPOD.md](docs/RUNPOD.md). Веса
 ```
 videoclean/domain/          Intent, Track, форматы
 videoclean/application/     порты и use case
-videoclean/adapters/        ffmpeg, grounding_dino, owlvit, sam2, sam2_video, opencv-telea, lama, propainter
+videoclean/adapters/        ffmpeg, grounding_dino, sam2, sam2_video, opencv-telea, lama, propainter
 videoclean/composition.py   флаг CLI → класс адаптера
 videoclean/cli.py           Typer
 ```

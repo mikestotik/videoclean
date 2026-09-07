@@ -141,7 +141,7 @@ Then **Clean** works: grounding-dino + sam2 + opencv-telea.
 **Max quality on 4090** (enable the Max quality preset):
 
 3. `inpainter:propainter` (~400 MB + git clone of vendor)
-4. Optional: `inpainter:lama`, `detector:owlvit`
+4. Optional: `inpainter:lama`
 5. Last / hungry: `segmenter:sam2-large` (~900 MB weights, ~24 GB VRAM — easy OOM on 4090; prefer tiny)
 
 Ollama rows stay unavailable unless you run Ollama yourself. Cloud LLM: set `XAI_API_KEY` or `OPENAI_API_KEY` and pick `cloud` on Clean.
