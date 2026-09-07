@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import gradio as gr
-from videoclean.adapters.models.catalog import COMPONENTS, backend_ready
+from videoclean.adapters.models.catalog import COMPONENTS, backend_ready, ollama_model_names
 from videoclean.adapters.web.app_state import AppState, build_app_state
 from videoclean.application.config import (
     DEFAULT_DETECTOR_MODEL,
@@ -435,9 +435,12 @@ def build_ui(state: AppState):
                                 choices=list(LLM_PLACES),
                                 value="auto",
                             )
-                            llm_model = gr.Textbox(
-                                label="LLM model",
-                                placeholder="llama3.2 / llava-phi3 / empty for default",
+                            _llm_choices = _llm_model_choices()
+                            llm_model = gr.Dropdown(
+                                label="LLM model (from ollama)",
+                                choices=_llm_choices,
+                                value=_preferred_llm_model(_llm_choices),
+                                allow_custom_value=False,
                             )
                         with gr.Accordion("Advanced", open=False):
                             detector_threshold = gr.Slider(
@@ -466,6 +469,13 @@ def build_ui(state: AppState):
                         submit_status = gr.Markdown()
                     with gr.Column(scale=2):
                         gr.Markdown("### Live job")
+                        job_bar = gr.Slider(
+                            minimum=0,
+                            maximum=1,
+                            value=_live_job_frac(state),
+                            interactive=False,
+                            label="Job progress",
+                        )
                         live_progress = gr.Markdown(
                             value=_live_progress_text(state),
                             elem_id="vc-progress",
@@ -543,8 +553,9 @@ def build_ui(state: AppState):
                     )
                 )
                 output_file = gr.File(label="Download output", interactive=False)
-        # Idle by default. User clicks must not sit behind a 1Hz full-UI rewrite.
-        timer = gr.Timer(1.0, active=_ui_busy(state))
+        # Always tick: sleep-on-idle broke Live job updates (active=True via update is flaky).
+        # Poll is cheap now (markdown + two floats).
+        timer = gr.Timer(1.0, active=True)
 
         def _refresh_clean_selects(current_det, current_seg, current_inp):
             d = _choice_list(ready_choices("detector", state.catalog), "grounding-dino", current_det)
@@ -607,12 +618,12 @@ def build_ui(state: AppState):
             except Exception as exc:  # noqa: BLE001 — surface as UI text, not traceback
                 return (
                     _ui_error(exc),
+                    _live_job_frac(state),
                     _live_progress_text(state),
                     gr.update(),
                     gr.update(),
                     gr.update(),
                     gr.update(),
-                    gr.update(active=False),
                 )
             extra = ""
             running = state.jobs.list_jobs(state="RUNNING", limit=1)
@@ -627,12 +638,12 @@ def build_ui(state: AppState):
                     f"Open the **Jobs** tab → it is pre-selected there. "
                     f"When state is `COMPLETED`, use **Download output**.{extra}"
                 ),
+                _live_job_frac(state),
                 _live_progress_text(state),
                 format_jobs_table(rows),
                 gr.update(choices=choices, value=pick),
                 job_id,
                 _job_detail(state, job_id),
-                gr.update(active=True),
             )
 
         def _models_status_panel():
@@ -651,7 +662,7 @@ def build_ui(state: AppState):
                 current_det, current_seg, current_inp
             )
             # Always clear the bar on cancel — do not keep a mid-download %.
-            return (table, 0.0, msg, doctor, *selects, gr.update(active=_ui_busy(state)))
+            return (table, 0.0, msg, doctor, *selects)
         def _jobs_refresh(filter_val, selected_id):
             st = None if not filter_val or filter_val == "all" else str(filter_val)
             rows = list_full_jobs(state.jobs, state=st)
@@ -711,16 +722,14 @@ def build_ui(state: AppState):
             inp_hint,
             max_btn,
         ]
-        # Lightweight poll: progress text + bar. Heavy Dataframes/doctor only while busy.
-        # Timer is an output so it can sleep when the queue is idle (keeps tabs snappy).
         poll_outputs = [
             download_bar,
             download_msg,
+            job_bar,
             live_progress,
             models_table,
             jobs_table,
             jobs_status,
-            timer,
         ]
         refresh_models.click(
             _on_refresh_models,
@@ -731,14 +740,14 @@ def build_ui(state: AppState):
         cancel_dl.click(
             _on_cancel_download,
             inputs=[detector, segmenter, inpainter],
-            outputs=[*model_outputs, timer],
+            outputs=model_outputs,
             queue=False,
         )
         for cid, btn in download_buttons.items():
             btn.click(
                 make_download_click_handler(state, cid),
                 inputs=[detector, segmenter, inpainter],
-                outputs=[*model_outputs, timer],
+                outputs=model_outputs,
             )
 
         jobs_outputs = [jobs_table, job_pick, job_id_box, jobs_status, output_file, live_progress]
@@ -747,9 +756,9 @@ def build_ui(state: AppState):
         job_pick.change(_on_job_pick, inputs=[job_pick], outputs=[job_id_box, jobs_status, output_file])
 
         def _on_poll(filter_val, selected_id):
-            frac, msg = _download_progress(state)
+            dl_frac, dl_msg = _download_progress(state)
+            job_frac = _live_job_frac(state)
             live = _live_progress_text(state)
-            busy = _ui_busy(state)
             if _active_downloads(state):
                 models = format_models_table(_safe_list_status(state.catalog))
             else:
@@ -762,25 +771,20 @@ def build_ui(state: AppState):
                     f"{len(rows)} job(s)." if rows else "No jobs yet."
                 )
             else:
+                # Still refresh Jobs detail when the selected job finishes.
                 jobs = gr.update()
-                status = gr.update()
-            return frac, msg, live, models, jobs, status, gr.update(active=busy)
-
-        def _wrap_job_act(fn):
-            def _inner(job_id, filt):
-                return (*_act(fn, job_id, filt), gr.update(active=_ui_busy(state)))
-
-            return _inner
+                status = _job_detail(state, selected_id) if selected_id else gr.update()
+            return dl_frac, dl_msg, job_frac, live, models, jobs, status
 
         cancel_btn.click(
-            _wrap_job_act(_cancel_job),
+            lambda job_id, filt: _act(_cancel_job, job_id, filt),
             inputs=[job_id_box, state_filter],
-            outputs=[*jobs_outputs, timer],
+            outputs=jobs_outputs,
         )
         retry_btn.click(
-            _wrap_job_act(_retry_job),
+            lambda job_id, filt: _act(_retry_job, job_id, filt),
             inputs=[job_id_box, state_filter],
-            outputs=[*jobs_outputs, timer],
+            outputs=jobs_outputs,
         )
         delete_btn.click(
             lambda job_id, filt: _act(delete_job, job_id, filt),
@@ -806,17 +810,19 @@ def build_ui(state: AppState):
             table, pick, jid, detail, out, live = _jobs_refresh(filter_val, selected_id)
             frac, msg = _download_progress(state)
             models = format_models_table(_safe_list_status(state.catalog))
+            llm_choices = _llm_model_choices()
             return (
                 models,
                 frac,
                 msg,
+                _live_job_frac(state),
                 table,
                 pick,
                 jid,
                 detail,
                 out,
                 live,
-                gr.update(active=_ui_busy(state)),
+                gr.update(choices=llm_choices, value=_preferred_llm_model(llm_choices)),
             )
 
         demo.load(
@@ -826,8 +832,9 @@ def build_ui(state: AppState):
                 models_table,
                 download_bar,
                 download_msg,
+                job_bar,
                 *jobs_outputs,
-                timer,
+                llm_model,
             ],
         )
 
@@ -853,12 +860,12 @@ def build_ui(state: AppState):
             ],
             outputs=[
                 submit_status,
+                job_bar,
                 live_progress,
                 jobs_table,
                 job_pick,
                 job_id_box,
                 jobs_status,
-                timer,
             ],
         )
     return demo
@@ -980,6 +987,35 @@ def _validate_backend_choice(port: str, name: str, catalog) -> None:
 
 def _ui_error(exc: BaseException) -> str:
     return str(exc)[:400]
+
+
+def _llm_model_choices() -> list[str]:
+    names = ollama_model_names()
+    return list(names) if names else []
+
+
+def _preferred_llm_model(choices: list[str]) -> str | None:
+    if not choices:
+        return None
+    for prefer in ("llama3.2:latest", "llama3.2", "llava-phi3:latest", "llava-phi3"):
+        if prefer in choices:
+            return prefer
+        base = prefer.split(":")[0]
+        hit = next((c for c in choices if c == base or c.startswith(base + ":")), None)
+        if hit:
+            return hit
+    return choices[0]
+
+
+def _live_job_frac(state: AppState) -> float:
+    running = list_full_jobs(state.jobs, state="RUNNING", limit=1)
+    if not running:
+        return 0.0
+    payload = _as_dict(_row_get(running[0], "progress_json"))
+    try:
+        return max(0.0, min(float(payload.get("fraction") or 0.0), 1.0))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _live_progress_text(state: AppState) -> str:
@@ -1121,12 +1157,10 @@ def make_download_click_handler(state: AppState, component_id: str):
         if msg.startswith("Starting"):
             state.last_download_frac = 0.01
             state.last_download_msg = msg
-            wake = gr.update(active=True)
         else:
             frac, _ = _download_progress(state)
             state.last_download_msg = msg
-            wake = gr.update(active=_ui_busy(state))
-        return (table, frac, msg, doctor, *hold, wake)
+        return (table, frac, msg, doctor, *hold)
 
     return _handler
 

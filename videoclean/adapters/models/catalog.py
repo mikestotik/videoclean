@@ -198,6 +198,18 @@ class ModelCatalog:
 
 
 def ollama_tags() -> set[str] | None:
+    names = ollama_model_names()
+    if names is None:
+        return None
+    out: set[str] = set()
+    for name in names:
+        out.add(name)
+        out.add(name.split(":")[0])
+    return out
+
+
+def ollama_model_names() -> list[str] | None:
+    """Exact names from `ollama list` /api/tags (for UI dropdowns). None if unreachable."""
     global _ollama_neg_until
     now = time.monotonic()
     with _ollama_neg_lock:
@@ -212,13 +224,15 @@ def ollama_tags() -> set[str] | None:
         with _ollama_neg_lock:
             _ollama_neg_until = time.monotonic() + OLLAMA_NEG_TTL_S
         return None
-    names: set[str] = set()
+    names: list[str] = []
+    seen: set[str] = set()
     for model in payload.get("models") or []:
         name = str(model.get("name") or model.get("model") or "").strip()
-        if not name:
+        if not name or name in seen:
             continue
-        names.add(name)
-        names.add(name.split(":")[0])
+        seen.add(name)
+        names.append(name)
+    names.sort()
     with _ollama_neg_lock:
         _ollama_neg_until = 0.0
     return names

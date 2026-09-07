@@ -524,7 +524,7 @@ def test_download_click_handler_returns_tuple_without_blocking(tmp_path: Path):
     result = handler(None, None, "opencv-telea")
     assert not isinstance(result, types.GeneratorType)
     assert isinstance(result, tuple)
-    assert len(result) == 12  # model_outputs + timer wake
+    assert len(result) == 11  # model_outputs only
     assert result[2].startswith("Starting")
     assert started.wait(timeout=1)
     release.set()
