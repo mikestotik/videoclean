@@ -6,7 +6,10 @@ readme = "README.md"
 requires-python = ">=3.11,<3.13"
 dependencies = [
   "numpy>=1.26,<2",
-  "opencv-python-headless>=4.9,<5",
+  # Use full opencv-python (not headless): simple-lama-inpainting pulls
+  # opencv-python, and uninstalling that extra previously left a broken
+  # opencv-python-headless metadata with no cv2/ module on disk.
+  "opencv-python>=4.9,<5",
   "pillow>=12.3.0",
   "rich>=13.7,<15",
   "torch==2.2.2",
