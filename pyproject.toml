@@ -37,6 +37,10 @@ local-llm = [
 lama = [
     "simple-lama-inpainting>=0.1.0",
 ]
+web = [
+    "gradio>=4,<7",  # 4.x/5.x need pillow<12; core pins pillow>=12.3
+    "huggingface-hub>=0.23",
+]
 
 [dependency-groups]
 dev = ["pytest>=8,<9"]

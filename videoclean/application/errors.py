@@ -19,3 +19,7 @@ class DeviceUnavailable(PipelineError):
 
 class JobCancelled(PipelineError):
     """Cleanup job was cancelled before or during a run."""
+
+
+class DownloadCancelled(PipelineError):
+    """Model download was cancelled before it finished."""
