@@ -80,6 +80,49 @@ class FFmpegMedia:
             raise PipelineError("FFmpeg produced no frames")
         return frames
 
+    def extract_frames_subset(
+        self, src: Path, indices: list[int], dest_dir: Path, log_file: Path
+    ) -> list[Path]:
+        """Extract only the requested frame numbers. Output order matches sorted indices."""
+        idxs = sorted({int(i) for i in indices})
+        if not idxs:
+            raise PipelineError("extract_frames_subset: no frame indices requested")
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        selector = "+".join(f"eq(n,{i})" for i in idxs)
+        _run(
+            [
+                _ffmpeg(),
+                "-y",
+                "-hide_banner",
+                "-i",
+                str(src),
+                "-vf",
+                f"select='{selector}'",
+                "-vsync",
+                "0",
+                "-q:v",
+                "2",
+                str(dest_dir / "frame_%06d.jpg"),
+            ],
+            log_file,
+        )
+        frames: list[Path] = []
+        missing: list[int] = []
+        for i in idxs:
+            p = dest_dir / f"frame_{i:06d}.jpg"
+            if p.is_file():
+                frames.append(p)
+            else:
+                missing.append(i)
+        if not frames:
+            raise PipelineError("FFmpeg produced no frames for the requested subset")
+        if missing:
+            raise PipelineError(
+                f"FFmpeg missed {len(missing)} of {len(idxs)} requested frames "
+                f"(first missing: {missing[0]})"
+            )
+        return frames
+
     def encode_mezzanine(
         self,
         frames_dir: Path,

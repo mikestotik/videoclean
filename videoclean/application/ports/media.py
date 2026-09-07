@@ -15,6 +15,10 @@ class MediaGateway(Protocol):
 
     def extract_frames(self, src: Path, dest_dir: Path, log_file: Path) -> list[Path]: ...
 
+    def extract_frames_subset(
+        self, src: Path, indices: list[int], dest_dir: Path, log_file: Path
+    ) -> list[Path]: ...
+
     def encode_mezzanine(
         self,
         frames_dir: Path,
