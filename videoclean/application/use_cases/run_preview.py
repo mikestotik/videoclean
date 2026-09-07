@@ -93,6 +93,44 @@ def targets_from_json(data: list[dict]) -> list[Target]:
     return out
 
 
+_TEXT_WORDS = {"text", "caption", "title", "subtitle", "headline", "lettering", "inscription"}
+_MARK_WORDS = {"logo", "watermark", "emblem", "bug"}
+
+
+def _kind_for_query(query: str) -> str:
+    low = query.casefold()
+    if any(w in low for w in _MARK_WORDS):
+        return "watermark"
+    if any(w in low for w in _TEXT_WORDS):
+        return "text_overlay"
+    return "object"
+
+
+def parse_queries_arg(raw: str) -> list[Target]:
+    """Parse `text [bottom], logo, red mug` into targets. Where is optional."""
+    from videoclean.domain.intent import SCREEN_WHERES
+
+    out: list[Target] = []
+    for chunk in (raw or "").split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        where = None
+        query = chunk
+        if chunk.endswith("]") and "[" in chunk:
+            query, bracket = chunk.rsplit("[", 1)
+            candidate = bracket.rstrip("]").strip().casefold()
+            if candidate in SCREEN_WHERES:
+                where = candidate
+        query = " ".join(query.split())
+        if not query:
+            continue
+        out.append(Target(kind=_kind_for_query(query.casefold()), query=query, where=where))
+    if not out:
+        raise PipelineError("--queries: nothing parsed")
+    return out
+
+
 class RunPreview:
     """Detect + segment on a frame subset. No inpaint, no encode — masks only."""
 

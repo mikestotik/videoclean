@@ -22,6 +22,7 @@ from videoclean.composition import (
     build_downloader,
     build_packager,
     build_run_cleanup,
+    build_run_preview,
     config_from_flags,
     default_serve_port,
     doctor_sections,
@@ -57,6 +58,14 @@ def _job_index() -> JobIndex:
 def _die(msg: str, code: int = 1) -> None:
     console.print(msg)
     raise typer.Exit(code)
+
+
+class _SilentProgress:
+    def start(self, *args, **kwargs) -> None: ...
+
+    def tick(self, *args, **kwargs) -> None: ...
+
+    def finish(self, *args, **kwargs) -> None: ...
 
 
 def _flags(
@@ -392,6 +401,118 @@ def inspect(
     console.print(f"  format       {', '.join(cfg.formats)}")
     console.print(f"  eta (CPU, rough)  ~{int(eta)}s")
     console.print(f"  known formats     {', '.join(known_format_names())}")
+
+
+@app.command()
+def preview(
+    input: Path = typer.Option(..., "--input", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", help="Directory for preview artifacts"),
+    prompt: str = typer.Option("", "--prompt"),
+    queries: str = typer.Option(
+        "",
+        "--queries",
+        help='Manual targets instead of LLM parse: "text [bottom], logo, red mug". Skips the LLM.',
+    ),
+    frames: str = typer.Option(
+        "0:16:1",
+        "--frames",
+        help="Frame selection: start:count:stride or a comma list of indices (3,7,15).",
+    ),
+    device: str = _device_opt(),
+    detector: str = _detector_opt(),
+    detector_model: str = _detector_model_opt(),
+    detector_threshold: float = typer.Option(0.15, "--detector-threshold"),
+    segmenter: str = _segmenter_opt(),
+    segmenter_model: str = typer.Option(DEFAULT_SEGMENTER_MODEL, "--segmenter-model"),
+    mask_dilate: int = typer.Option(3, "--mask-dilate"),
+    llm: str = _llm_place_opt(),
+    llm_model: str = _llm_model_opt(),
+    llm_base_url: str = _llm_url_opt(),
+    prompt_frame_stride: int = _prompt_frame_stride_opt(),
+    prompt_frame_max: int = _prompt_frame_max_opt(),
+    vision_batch: int = typer.Option(2, "--vision-batch"),
+    detector_keyframes: int | None = typer.Option(None, "--detector-keyframes", min=1),
+    detector_nms_iou: float = typer.Option(0.3, "--detector-nms-iou"),
+    detector_max_box_area: float = typer.Option(0.25, "--detector-max-box-area"),
+    tracker_min_score: float = typer.Option(0.55, "--tracker-min-score"),
+    tracker_max_template_area: float = typer.Option(0.12, "--tracker-max-template-area"),
+    prompt_templates: str | None = typer.Option(None, "--prompt-templates", exists=True, file_okay=False),
+    download_models: bool = typer.Option(False, "--download-models"),
+) -> None:
+    """Detect + masks on a frame subset. No inpaint, no encode. For tuning parameters."""
+    cfg = _flags(
+        device,
+        detector,
+        detector_model,
+        detector_threshold,
+        segmenter,
+        segmenter_model,
+        "opencv-telea",
+        "",
+        None,
+        download_models,
+        require_device=True,
+        llm_place=llm,
+        llm_model=llm_model,
+        llm_base_url=llm_base_url,
+        mask_dilate_px=mask_dilate,
+        prompt_frame_stride=prompt_frame_stride,
+        prompt_frame_max=prompt_frame_max,
+        vision_batch=vision_batch,
+        detector_keyframes=detector_keyframes,
+        detector_nms_iou=detector_nms_iou,
+        detector_max_box_area=detector_max_box_area,
+        tracker_min_score=tracker_min_score,
+        tracker_max_template_area=tracker_max_template_area,
+        prompt_templates=prompt_templates,
+    )
+    from videoclean.application.use_cases.run_preview import PreviewRequest, parse_queries_arg
+
+    if queries.strip():
+        if prompt.strip():
+            _die("--queries and --prompt are mutually exclusive")
+        targets = [t for t in parse_queries_arg(queries)]
+        mode, target_dicts = "detect", [
+            {"kind": t.kind, "query": t.query, "where": t.where, "motion": t.motion}
+            for t in targets
+        ]
+    else:
+        if not prompt.strip():
+            _die("--prompt is required (or pass --queries)")
+        mode, target_dicts = "parse", None
+
+    parts = frames.split(":")
+    if len(parts) == 3:
+        start, count, stride = (int(p) if p.strip() else None for p in parts)
+        indices = None
+    else:
+        start = count = stride = None
+        indices = [int(p) for p in frames.split(",") if p.strip()]
+
+    media = FFmpegMedia()
+    manifest = media.probe(input)
+    from videoclean.store import new_job_id
+
+    job_id = new_job_id()
+    req = PreviewRequest(
+        input_path=input.expanduser().resolve(),
+        prompt=prompt,
+        config=cfg,
+        start=start,
+        count=count,
+        stride=stride,
+        indices=indices,
+        mode=mode,
+        targets=target_dicts,
+        job_id=job_id,
+    )
+    output.expanduser().resolve().mkdir(parents=True, exist_ok=True)
+    try:
+        uc = build_run_preview(cfg, _SilentProgress(), JobIndex(data_dir() / "jobs.sqlite"), job_id=job_id)
+        report = uc.execute(req, output.expanduser().resolve())
+    except (PipelineError, AdapterUnavailable, FileNotFoundError) as exc:
+        raise typer.Exit(str(exc)) from exc
+    console.print(f"[green]{report['state']}[/green]  artifacts: {report.get('workdir')}")
 
 
 @app.command()
