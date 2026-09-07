@@ -9,6 +9,7 @@ class ProgressBridge:
     def __init__(self, jobs: JobIndex, job_id: str) -> None:
         self.jobs = jobs
         self.job_id = job_id
+        self._started_at = utc_now().isoformat()
         self._stages = {
             key: {
                 "title": title,
@@ -89,5 +90,6 @@ class ProgressBridge:
                 "fraction": self.fraction_done(),
                 "detail": stage.get("detail") or "",
                 "heartbeat_at": utc_now().isoformat(),
+                "started_at": self._started_at,
             },
         )

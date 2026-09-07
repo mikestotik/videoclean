@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from videoclean.adapters.progress.silent import SilentProgress
 from videoclean.application.config import PipelineConfig, RunCleanupRequest
@@ -97,6 +98,14 @@ class FakeJobs:
         return None
 
 
+class RecordingJobs:
+    def __init__(self) -> None:
+        self.states: list[str] = []
+
+    def upsert(self, job_id, state, **kwargs) -> None:
+        self.states.append(state)
+
+
 def test_run_cleanup_with_fakes(tmp_path: Path):
     src = tmp_path / "in.mp4"
     src.write_bytes(b"fake")
@@ -186,6 +195,40 @@ class CancelDetector:
 
     def discover(self, frames, queries, on_progress=None):
         raise JobCancelled("job-cancel")
+
+
+def test_execute_upserts_cancelled_not_failed(tmp_path: Path):
+    src = tmp_path / "in.mp4"
+    src.write_bytes(b"fake")
+    out = tmp_path / "out.mp4"
+    frame = np.zeros((8, 8, 3), dtype=np.uint8)
+    jobs = RecordingJobs()
+    uc = RunCleanup(
+        media=FakeMedia(),
+        parser=FakeParser(),
+        detectors=[CancelDetector()],
+        segmenter=FakeSegmenter(),
+        inpainter=FakeInpainter(),
+        jobs=jobs,
+        progress=SilentProgress(),
+        new_job_id=lambda: "job-cancel",
+        make_paths=JobPaths.create,
+        utc_now=lambda: __import__("datetime").datetime(2026, 1, 1),
+        read_image=lambda path: frame,
+        write_image=lambda path, image: path.write_bytes(b"img"),
+    )
+    req = RunCleanupRequest(
+        input_path=src,
+        output_path=out,
+        prompt="убери надписи",
+        config=PipelineConfig(detectors=["owlvit"], formats=["mp4"], verify=False),
+        overwrite=True,
+        keep_workdir=True,
+    )
+    with pytest.raises(JobCancelled):
+        uc.execute(req, tmp_path)
+    assert "FAILED" not in jobs.states
+    assert jobs.states[-1] == "CANCELLED"
 
 
 def test_discover_reraises_job_cancelled():

@@ -59,6 +59,7 @@ class JobWorker:
         if self.jobs.is_cancel_requested(job_id):
             self.jobs.upsert(job_id, "CANCELLED", error="cancelled")
             return None
+        now = utc_now().isoformat()
         self.jobs.upsert(
             job_id,
             "RUNNING",
@@ -66,7 +67,8 @@ class JobWorker:
                 "stage": "validate",
                 "fraction": 0.0,
                 "detail": "",
-                "heartbeat_at": utc_now().isoformat(),
+                "heartbeat_at": now,
+                "started_at": now,
             },
         )
         return job_id

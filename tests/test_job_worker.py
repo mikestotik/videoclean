@@ -189,10 +189,13 @@ def test_progress_bridge_writes_heartbeat(tmp_path: Path):
     assert 0 < progress["fraction"] < 1
     assert progress["detail"] == "frame 4"
     assert progress["heartbeat_at"]
+    assert progress["started_at"]
+    started = progress["started_at"]
     bridge.finish("detect", "done")
     progress = json.loads(jobs.get("j1")["progress_json"])
     assert progress["stage"] == "detect"
     assert progress["detail"] == "done"
+    assert progress["started_at"] == started
 
 
 def test_progress_bridge_raises_on_cancel(tmp_path: Path):

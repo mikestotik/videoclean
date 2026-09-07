@@ -90,6 +90,16 @@ class RunCleanup:
 
         try:
             return self._run(req, cfg, job_id, paths, manifest, report)
+        except JobCancelled:
+            report["state"] = "CANCELLED"
+            report["error"] = "cancelled"
+            report["finishedAt"] = self._utc_now().isoformat()
+            try:
+                paths.report_file.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+            except OSError:
+                pass
+            self.jobs.upsert(job_id, "CANCELLED", report=report, error="cancelled")
+            raise
         except Exception as exc:
             report["state"] = "FAILED"
             report["error"] = str(exc)

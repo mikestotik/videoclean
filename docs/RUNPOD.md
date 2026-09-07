@@ -77,7 +77,7 @@ Upload a short mp4, prompt required (e.g. `remove the channel logo`). Device sho
 
 ## Local GPU (`docker compose`)
 
-Copy `.env.example` and set a password. Then:
+Copy `.env.example` to `.env` and set a password. Compose reads `env_file: .env`. Then:
 
 ```bash
 docker compose up --build

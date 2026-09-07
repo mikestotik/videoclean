@@ -1,3 +1,5 @@
+import pytest
+
 from videoclean.adapters.inpainters.lama import LamaInpainter
 from videoclean.adapters.inpainters.propainter import ProPainterInpainter, find_vendor, find_weights
 from videoclean.adapters.segmenters.sam2 import Sam2Segmenter
@@ -35,10 +37,11 @@ def test_lama_status_does_not_crash():
 
 def test_lama_loads_with_map_location_cpu():
     """PyPI SimpleLama omits map_location; our adapter must still load big-lama.pt on CPU-only Macs."""
+    pytest.importorskip("simple_lama_inpainting")
     from videoclean.adapters.inpainters.lama import find_weights
 
     if find_weights() is None:
-        return
+        pytest.skip("big-lama.pt not on disk")
     import numpy as np
 
     inp = LamaInpainter(device="cpu")
