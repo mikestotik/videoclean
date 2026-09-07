@@ -154,10 +154,10 @@ def test_models_download_invokes_component(monkeypatch, tmp_path: Path):
             on_progress(1.0, "ready")
 
     monkeypatch.setattr("videoclean.adapters.models.downloaders.run_download", fake_run)
-    result = runner.invoke(app, ["models", "download", "detector:owlvit"])
+    result = runner.invoke(app, ["models", "download", "detector:grounding-dino"])
     assert result.exit_code == 0, result.output
-    assert seen == ["detector:owlvit"]
-    assert "detector:owlvit" in result.output
+    assert seen == ["detector:grounding-dino"]
+    assert "detector:grounding-dino" in result.output
     rows = JobIndex(tmp_path / "jobs.sqlite").list_downloads()
     assert rows
     assert rows[0]["state"] == "done"

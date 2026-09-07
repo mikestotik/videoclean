@@ -22,7 +22,6 @@ def test_registry_ids():
 def test_all_registry_ids():
     expected = (
         "detector:grounding-dino",
-        "detector:owlvit",
         "segmenter:sam2-tiny",
         "segmenter:sam2-large",
         "inpainter:lama",
@@ -32,7 +31,7 @@ def test_all_registry_ids():
     )
     for cid in expected:
         assert cid in COMPONENT_IDS
-    assert len(COMPONENT_IDS) == 8
+    assert len(COMPONENT_IDS) == 7
 
 
 def test_telea_always_ready_helper():
@@ -53,7 +52,7 @@ def test_component_id_mapping():
     from videoclean.adapters.models.catalog import component_id_for
 
     assert component_id_for("detector", "grounding-dino") == "detector:grounding-dino"
-    assert component_id_for("detector", "owlvit") == "detector:owlvit"
+    assert component_id_for("detector", "owlvit") is None
     assert component_id_for("segmenter", "sam2") == "segmenter:sam2-tiny"
     assert component_id_for("segmenter", "sam2-video") == "segmenter:sam2-tiny"
     assert (
@@ -74,7 +73,7 @@ def test_backend_ready_uses_catalog():
 
     fake = FakeCat()
     assert backend_ready("detector", "grounding-dino", catalog=fake) is True
-    assert backend_ready("detector", "owlvit", catalog=fake) is False
+    assert backend_ready("detector", "unknown-detector", catalog=fake) is False
     assert backend_ready("inpainter", "propainter", catalog=fake) is True
     assert backend_ready("inpainter", "opencv-telea", catalog=fake) is True
     assert backend_ready("segmenter", "sam2-video", catalog=fake) is False
@@ -83,11 +82,11 @@ def test_backend_ready_uses_catalog():
 def test_list_status_downloading(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("HOME", str(tmp_path))
     jobs = JobIndex(tmp_path / "jobs.sqlite")
-    jobs.upsert_download("d1", "detector:owlvit", "running", progress=0.3, message="fetch")
+    jobs.upsert_download("d1", "detector:grounding-dino", "running", progress=0.3, message="fetch")
     cat = ModelCatalog(jobs=jobs)
     by_id = {r.info.id: r for r in cat.list_status()}
-    assert by_id["detector:owlvit"].state == "downloading"
-    assert "fetch" in by_id["detector:owlvit"].message
+    assert by_id["detector:grounding-dino"].state == "downloading"
+    assert "fetch" in by_id["detector:grounding-dino"].message
 
 
 def test_ollama_tags_caches_negative_and_uses_short_timeout(monkeypatch):
@@ -135,17 +134,17 @@ def test_download_component_records_progress(tmp_path: Path):
     cb: list[tuple[float, str]] = []
 
     def runner(component_id, on_progress, is_cancelled):
-        assert component_id == "detector:owlvit"
+        assert component_id == "detector:grounding-dino"
         on_progress(0.4, "fetch")
         assert is_cancelled() is False
 
     DownloadComponent(runner).execute(
-        "detector:owlvit", jobs, lambda f, m="": cb.append((f, m))
+        "detector:grounding-dino", jobs, lambda f, m="": cb.append((f, m))
     )
     row = jobs.list_downloads()[0]
     assert row["state"] == "done"
     assert row["progress"] == 1.0
-    assert row["component_id"] == "detector:owlvit"
+    assert row["component_id"] == "detector:grounding-dino"
     assert cb[0] == (0.4, "fetch")
 
 
@@ -161,7 +160,7 @@ def test_download_component_cancel(tmp_path: Path):
         on_progress(0.2, "more")
 
     with pytest.raises(DownloadCancelled):
-        DownloadComponent(runner).execute("detector:owlvit", jobs, None)
+        DownloadComponent(runner).execute("detector:grounding-dino", jobs, None)
     assert jobs.list_downloads()[0]["state"] == "cancelled"
 
 
@@ -177,8 +176,8 @@ def test_run_download_dispatches_hf(monkeypatch):
 
     seen: list[str] = []
     monkeypatch.setattr(d, "download_hf", lambda repo_id, **kw: seen.append(repo_id))
-    d.run_download("detector:owlvit")
-    assert seen == ["google/owlvit-base-patch32"]
+    d.run_download("detector:grounding-dino")
+    assert seen == ["IDEA-Research/grounding-dino-tiny"]
     seen.clear()
     d.run_download("segmenter:sam2-tiny")
     assert seen == ["facebook/sam2-hiera-tiny"]
@@ -209,8 +208,8 @@ def test_download_hf_snapshot_and_cancel(monkeypatch):
         seen["tqdm_class"] = kwargs.get("tqdm_class")
 
     monkeypatch.setattr(d, "_snapshot_download", fake_snap)
-    d.download_hf("google/owlvit-base-patch32", is_cancelled=lambda: False)
-    assert seen["repo_id"] == "google/owlvit-base-patch32"
+    d.download_hf("IDEA-Research/grounding-dino-tiny", is_cancelled=lambda: False)
+    assert seen["repo_id"] == "IDEA-Research/grounding-dino-tiny"
     assert seen["local_files_only"] is False
     assert seen["tqdm_class"] is not None
 

@@ -35,13 +35,6 @@ COMPONENTS: tuple[ComponentInfo, ...] = (
         size_hint="~650 MB",
     ),
     ComponentInfo(
-        id="detector:owlvit",
-        title="OWL-ViT base",
-        kind="detector",
-        model_ref="google/owlvit-base-patch32",
-        size_hint="~600 MB",
-    ),
-    ComponentInfo(
         id="segmenter:sam2-tiny",
         title="SAM2 Hiera tiny",
         kind="segmenter",
@@ -102,7 +95,6 @@ EXTRA_FILENAME = "catalog_extra.json"
 
 _BACKEND_TO_COMPONENT: dict[tuple[str, str], str] = {
     ("detector", "grounding-dino"): "detector:grounding-dino",
-    ("detector", "owlvit"): "detector:owlvit",
     ("inpainter", "lama"): "inpainter:lama",
     ("inpainter", "propainter"): "inpainter:propainter",
     ("llm", "llama3.2"): "llm:ollama-llama3.2",
