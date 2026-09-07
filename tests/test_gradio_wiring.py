@@ -1,0 +1,251 @@
+import json
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import pytest
+
+from videoclean.adapters.web.app_state import AppState, build_app_state
+from videoclean.adapters.web.gradio_app import (
+    as_path,
+    auth_from_env,
+    default_device,
+    format_active_progress,
+    format_jobs_table,
+    format_models_table,
+    is_job_stale,
+    launch_ui,
+    max_quality_ready,
+    missing_hint,
+    queue_clean_job,
+    ready_choices,
+    serialize_clean_form,
+)
+from videoclean.application.use_cases.manage_jobs import ManageJobs, pipeline_config_from_dict
+from videoclean.store import JobIndex
+
+
+class FakeCat:
+    def is_ready(self, cid: str) -> bool:
+        return cid in {"detector:grounding-dino", "inpainter:propainter"}
+
+
+def test_ready_detector_choices():
+    assert ready_choices("detector", FakeCat()) == ["grounding-dino"]
+
+
+def test_ready_inpainter_includes_telea():
+    assert ready_choices("inpainter", FakeCat()) == ["opencv-telea", "propainter"]
+
+
+def test_ready_segmenter_empty_without_weights():
+    assert ready_choices("segmenter", FakeCat()) == []
+
+
+def test_missing_hint_points_at_models():
+    hint = missing_hint("segmenter", FakeCat())
+    assert "sam2" in hint
+    assert "Models" in hint
+    assert "owlvit" in missing_hint("detector", FakeCat())
+    assert "lama" in missing_hint("inpainter", FakeCat())
+
+
+def test_max_quality_ready_requires_three():
+    assert max_quality_ready(FakeCat()) is False
+
+    class Ready:
+        def is_ready(self, cid: str) -> bool:
+            return cid in {
+                "detector:grounding-dino",
+                "segmenter:sam2-tiny",
+                "inpainter:propainter",
+            }
+
+    assert max_quality_ready(Ready()) is True
+
+
+def test_serialize_clean_form_disables_download():
+    payload = serialize_clean_form(
+        device="cuda",
+        detector="grounding-dino",
+        segmenter="sam2-video",
+        inpainter="propainter",
+        llm_place="local",
+        llm_model="llama3.2",
+        fmt="mp4",
+    )
+    assert payload["allow_download"] is False
+    assert payload["device"] == "cuda"
+    assert payload["detectors"] == ["grounding-dino"]
+    assert payload["segmenter"] == "sam2-video"
+    assert payload["inpainter"] == "propainter"
+    assert payload["formats"] == ["mp4"]
+    assert payload["overwrite"] is True
+    cfg = pipeline_config_from_dict(payload)
+    assert cfg.allow_download is False
+    assert cfg.detectors == ["grounding-dino"]
+    cfg.validate()
+
+
+def test_format_jobs_table():
+    rows = [
+        {
+            "id": "j1",
+            "state": "RUNNING",
+            "prompt": "remove the watermark from the lower third please",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:10+00:00",
+            "progress_json": json.dumps({"stage": "detect", "fraction": 0.4}),
+            "request_json": json.dumps(
+                {
+                    "device": "cuda",
+                    "detector": "grounding-dino",
+                    "segmenter": "sam2-video",
+                    "inpainter": "propainter",
+                }
+            ),
+        }
+    ]
+    table = format_jobs_table(rows)
+    assert table[0][0] == "j1"
+    assert table[0][1] == "RUNNING"
+    assert table[0][2].endswith("…")
+    assert "detect" in table[0][5]
+    assert "40%" in table[0][5]
+    assert "cuda" in table[0][6]
+    assert "propainter" in table[0][6]
+
+
+def test_format_jobs_table_empty():
+    assert format_jobs_table([]) == []
+
+
+def test_auth_from_env_requires_password():
+    with pytest.raises(RuntimeError, match="VIDEOCLEAN_UI_PASSWORD"):
+        auth_from_env({"VIDEOCLEAN_UI_USER": "admin"})
+    with pytest.raises(RuntimeError, match="VIDEOCLEAN_UI_PASSWORD"):
+        auth_from_env({"VIDEOCLEAN_UI_USER": "admin", "VIDEOCLEAN_UI_PASSWORD": "  "})
+
+
+def test_auth_from_env_ok():
+    assert auth_from_env(
+        {"VIDEOCLEAN_UI_USER": "admin", "VIDEOCLEAN_UI_PASSWORD": "secret"}
+    ) == ("admin", "secret")
+
+
+def test_auth_from_env_defaults_user():
+    assert auth_from_env({"VIDEOCLEAN_UI_PASSWORD": "secret"}) == ("admin", "secret")
+
+
+def test_launch_ui_refuses_missing_password(tmp_path: Path):
+    jobs = JobIndex(tmp_path / "jobs.sqlite")
+    state = AppState(
+        data_dir=tmp_path,
+        jobs=jobs,
+        manage=ManageJobs(jobs),
+        catalog=FakeCat(),
+    )
+    with pytest.raises(RuntimeError, match="password"):
+        launch_ui(state, "127.0.0.1", 7860, None)
+    with pytest.raises(RuntimeError, match="password"):
+        launch_ui(state, "127.0.0.1", 7860, ("admin", ""))
+
+
+def test_queue_clean_job_paths(tmp_path: Path):
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"fake-video")
+    state = build_app_state(tmp_path, worker=False)
+    payload = serialize_clean_form(device="cpu", detector="owlvit", inpainter="opencv-telea")
+    job_id = queue_clean_job(state, video, "remove logo", payload)
+    row = state.jobs.get(job_id)
+    assert row is not None
+    assert row["state"] == "QUEUED"
+    input_path = Path(row["input_path"])
+    assert input_path.is_file()
+    assert input_path.read_bytes() == b"fake-video"
+    assert input_path.parts[-3:] == ("uploads", job_id, "input") or input_path.parent == (
+        tmp_path / "uploads" / job_id / "input"
+    )
+    assert Path(row["output_path"]) == tmp_path / "jobs" / job_id / "output" / "cleaned.mp4"
+    request = json.loads(row["request_json"])
+    assert request["allow_download"] is False
+    assert request["prompt"] == "remove logo"
+
+
+def test_queue_clean_job_requires_prompt_and_file(tmp_path: Path):
+    from videoclean.application.errors import PipelineError
+
+    state = build_app_state(tmp_path, worker=False)
+    with pytest.raises(PipelineError, match="prompt"):
+        queue_clean_job(state, None, "  ", {})
+    with pytest.raises(PipelineError, match="video"):
+        queue_clean_job(state, None, "remove logo", {})
+
+
+def test_as_path_accepts_gradio_shapes(tmp_path: Path):
+    clip = tmp_path / "a.mp4"
+    clip.write_bytes(b"x")
+    assert as_path(clip) == clip
+    assert as_path(str(clip)) == clip
+    assert as_path({"path": str(clip)}) == clip
+    assert as_path({"video": str(clip)}) == clip
+    assert as_path(None) is None
+
+
+def test_format_models_table():
+    from videoclean.application.ports.model_catalog import ComponentInfo, ComponentStatus
+
+    info = ComponentInfo("detector:owlvit", "OWL-ViT", "detector", "google/owlvit", "~600 MB")
+    rows = format_models_table([ComponentStatus(info, "missing", "not cached")])
+    assert rows[0][0] == "detector:owlvit"
+    assert rows[0][2] == "missing"
+
+
+def test_format_active_progress_running():
+    text = format_active_progress(
+        {
+            "id": "job-1",
+            "state": "RUNNING",
+            "progress_json": json.dumps(
+                {"stage": "inpaint", "fraction": 0.55, "detail": "frame 10"}
+            ),
+        }
+    )
+    assert "job-1" in text
+    assert "55" in text
+    assert "inpaint" in text.lower() or "Inpaint" in text or "inpaint" in text
+    assert "frame 10" in text
+
+
+def test_format_active_progress_idle():
+    assert "No" in format_active_progress(None)
+
+
+def test_is_job_stale():
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    fresh = {
+        "state": "RUNNING",
+        "updated_at": (now - timedelta(seconds=10)).isoformat(),
+        "progress_json": json.dumps({"heartbeat_at": (now - timedelta(seconds=10)).isoformat()}),
+    }
+    stale = {
+        "state": "RUNNING",
+        "updated_at": (now - timedelta(seconds=1000)).isoformat(),
+        "progress_json": json.dumps({"heartbeat_at": (now - timedelta(seconds=1000)).isoformat()}),
+    }
+    queued = {"state": "QUEUED", "updated_at": (now - timedelta(seconds=1000)).isoformat()}
+    assert is_job_stale(fresh, now=now, stale_seconds=900) is False
+    assert is_job_stale(stale, now=now, stale_seconds=900) is True
+    assert is_job_stale(queued, now=now, stale_seconds=900) is False
+
+
+def test_default_device_is_cpu_or_cuda():
+    assert default_device() in {"cpu", "cuda"}
+
+
+def test_build_ui_constructs(tmp_path: Path):
+    pytest.importorskip("gradio")
+    from videoclean.adapters.web.gradio_app import build_ui
+
+    state = build_app_state(tmp_path, worker=False, catalog=FakeCat())
+    demo = build_ui(state)
+    assert demo is not None

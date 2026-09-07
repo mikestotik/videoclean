@@ -1,0 +1,936 @@
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import threading
+from collections.abc import Mapping
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import gradio as gr
+from gradio.events import SelectData
+
+from videoclean.adapters.models.catalog import COMPONENTS, backend_ready
+from videoclean.adapters.web.app_state import AppState, build_app_state
+from videoclean.application.config import (
+    DEFAULT_DETECTOR_MODEL,
+    DEFAULT_GROUNDING_DINO_MODEL,
+    DEFAULT_INPAINTER_MODEL,
+    DEFAULT_SEGMENTER_MODEL,
+    DETECTORS,
+    INPAINTERS,
+    LLM_PLACES,
+    SEGMENTERS,
+)
+from videoclean.application.errors import PipelineError
+from videoclean.progress import STAGES
+from videoclean.store import JobIndex, new_job_id
+
+NONE_READY = "(none ready — see Models)"
+JOB_TABLE_HEADERS = ["id", "state", "prompt", "created", "updated", "progress", "backends"]
+MODEL_TABLE_HEADERS = ["id", "title", "status", "size", "message"]
+JOB_STATES = ("all", "QUEUED", "RUNNING", "COMPLETED", "FAILED", "CANCELLED")
+PROMPT_MAX = 40
+
+_PORT_NAMES: dict[str, tuple[str, ...]] = {
+    "detector": DETECTORS,
+    "segmenter": SEGMENTERS,
+    "inpainter": INPAINTERS,
+}
+
+_CSS = """
+.gradio-container { max-width: 1200px !important; }
+#vc-progress textarea, #vc-doctor textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+"""
+
+
+def ready_choices(port: str, catalog) -> list[str]:
+    port = (port or "").strip().lower()
+    if port == "llm":
+        return list(LLM_PLACES)
+    names = _PORT_NAMES.get(port)
+    if not names:
+        return []
+    return [name for name in names if backend_ready(port, name, catalog=catalog)]
+
+
+def missing_hint(port: str, catalog) -> str:
+    port = (port or "").strip().lower()
+    names = _PORT_NAMES.get(port) or ()
+    ready = set(ready_choices(port, catalog))
+    missing = [name for name in names if name not in ready]
+    if not missing:
+        return ""
+    return "To enable " + ", ".join(missing) + " → Models"
+
+
+def max_quality_ready(catalog) -> bool:
+    return (
+        backend_ready("detector", "grounding-dino", catalog=catalog)
+        and backend_ready("segmenter", "sam2-video", catalog=catalog)
+        and backend_ready("inpainter", "propainter", catalog=catalog)
+    )
+
+
+def serialize_clean_form(
+    device: str = "cpu",
+    detector: str = "grounding-dino",
+    segmenter: str = "sam2",
+    inpainter: str = "opencv-telea",
+    llm_place: str = "auto",
+    llm_model: str = "",
+    fmt: str = "mp4",
+    detector_threshold: float = 0.15,
+    mask_dilate_px: int = 3,
+    telea_radius: int = 9,
+    verify: bool = True,
+    prompt_frame_stride: int = 4,
+    prompt_frame_max: int = 8,
+    overwrite: bool = True,
+    detector_model: str = "",
+    segmenter_model: str = "",
+    inpainter_model: str = "",
+    **_extra: Any,
+) -> dict[str, Any]:
+    detector = (detector or "").strip().lower()
+    segmenter = (segmenter or "").strip().lower()
+    inpainter = (inpainter or "").strip().lower()
+    if not detector_model:
+        detector_model = (
+            DEFAULT_DETECTOR_MODEL if detector == "owlvit" else DEFAULT_GROUNDING_DINO_MODEL
+        )
+    if not segmenter_model:
+        segmenter_model = DEFAULT_SEGMENTER_MODEL
+    if not inpainter_model:
+        inpainter_model = DEFAULT_INPAINTER_MODEL
+    fmt_name = (fmt or "mp4").strip().lower() or "mp4"
+    return {
+        "device": (device or "cpu").strip().lower() or "cpu",
+        "detector": detector,
+        "detectors": [detector] if detector else [],
+        "detector_model": detector_model,
+        "detector_threshold": float(detector_threshold),
+        "segmenter": segmenter,
+        "segmenter_model": segmenter_model,
+        "inpainter": inpainter,
+        "inpainter_model": inpainter_model,
+        "llm_place": (llm_place or "auto").strip().lower() or "auto",
+        "llm_model": (llm_model or "").strip(),
+        "formats": [fmt_name],
+        "allow_download": False,
+        "verify": bool(verify),
+        "mask_dilate_px": int(mask_dilate_px),
+        "telea_radius": int(telea_radius),
+        "prompt_frame_stride": int(prompt_frame_stride),
+        "prompt_frame_max": int(prompt_frame_max),
+        "overwrite": bool(overwrite),
+    }
+
+
+def format_jobs_table(rows) -> list[list]:
+    table: list[list] = []
+    for row in rows:
+        prompt = _truncate(_row_get(row, "prompt"), PROMPT_MAX)
+        progress = _progress_label(_row_get(row, "progress_json"))
+        backends = _backends_label(_row_get(row, "request_json"))
+        table.append(
+            [
+                _row_get(row, "id"),
+                _row_get(row, "state"),
+                prompt,
+                _short_ts(_row_get(row, "created_at")),
+                _short_ts(_row_get(row, "updated_at")),
+                progress,
+                backends,
+            ]
+        )
+    return table
+
+
+def format_models_table(statuses) -> list[list]:
+    rows: list[list] = []
+    for status in statuses:
+        info = status.info
+        rows.append([info.id, info.title, status.state, info.size_hint, status.message])
+    return rows
+
+
+def format_active_progress(row) -> str:
+    if row is None:
+        return "No running job."
+    job_id = _row_get(row, "id") or "—"
+    state = _row_get(row, "state") or "—"
+    payload = _as_dict(_row_get(row, "progress_json"))
+    stage = str(payload.get("stage") or "—")
+    detail = str(payload.get("detail") or "")
+    try:
+        frac = float(payload.get("fraction") or 0.0)
+    except (TypeError, ValueError):
+        frac = 0.0
+    titles = {key: title for key, title, _weight in STAGES}
+    title = titles.get(stage, stage)
+    pct = f"{max(0.0, min(frac, 1.0)) * 100:.1f}%"
+    lines = [
+        f"**{job_id}** `{state}`",
+        f"{pct} · {title}" + (f" — {detail}" if detail else ""),
+        "",
+    ]
+    for key, stage_title, _weight in STAGES:
+        mark = "→" if key == stage else ("✓" if _stage_before(key, stage) else "·")
+        lines.append(f"{mark} {stage_title}")
+    error = _row_get(row, "error")
+    if error:
+        lines.extend(["", f"Error: {error}"])
+    return "\n".join(lines)
+
+
+def as_path(value: Any) -> Path | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, Path):
+        return value
+    if isinstance(value, dict):
+        for key in ("path", "name", "video"):
+            if value.get(key):
+                return as_path(value[key])
+        return None
+    if isinstance(value, (list, tuple)) and value:
+        return as_path(value[0])
+    return Path(str(value))
+
+
+def auth_from_env(env: Mapping[str, str] | None = None) -> tuple[str, str]:
+    env = os.environ if env is None else env
+    password = str(env.get("VIDEOCLEAN_UI_PASSWORD") or "").strip()
+    if not password:
+        raise RuntimeError(
+            "VIDEOCLEAN_UI_PASSWORD is required to launch the UI "
+            "(safer default for RunPod). Set VIDEOCLEAN_UI_USER and "
+            "VIDEOCLEAN_UI_PASSWORD before starting."
+        )
+    user = str(env.get("VIDEOCLEAN_UI_USER") or "admin").strip() or "admin"
+    return (user, password)
+
+
+def default_device() -> str:
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return "cuda"
+    except Exception:  # noqa: BLE001 — UI default must not crash without torch
+        pass
+    return "cpu"
+
+
+def is_job_stale(
+    row,
+    *,
+    now: datetime | None = None,
+    stale_seconds: int | None = None,
+) -> bool:
+    if _row_get(row, "state") != "RUNNING":
+        return False
+    seconds = int(stale_seconds if stale_seconds is not None else _stale_seconds())
+    heartbeat = ""
+    payload = _as_dict(_row_get(row, "progress_json"))
+    heartbeat = str(payload.get("heartbeat_at") or "") or _row_get(row, "updated_at")
+    if not heartbeat:
+        return True
+    try:
+        ts = datetime.fromisoformat(str(heartbeat).replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    return (current - ts).total_seconds() > seconds
+
+
+def queue_clean_job(state: AppState, video: Any, prompt: str, request: dict[str, Any]) -> str:
+    prompt = (prompt or "").strip()
+    if not prompt:
+        raise PipelineError("prompt is required")
+    src = as_path(video)
+    if src is None or not src.is_file():
+        raise PipelineError("upload a video file first")
+    job_id = new_job_id()
+    dest_dir = Path(state.data_dir) / "uploads" / job_id / "input"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / src.name
+    if src.resolve() != dest.resolve():
+        shutil.copy2(src, dest)
+    output_path = Path(state.data_dir) / "jobs" / job_id / "output" / "cleaned.mp4"
+    payload = dict(request or {})
+    payload["allow_download"] = False
+    payload["input_path"] = str(dest)
+    payload["output_path"] = str(output_path)
+    payload["prompt"] = prompt
+    return state.manage.submit(payload, dest, output_path, prompt, job_id=job_id)
+
+
+def list_full_jobs(jobs: JobIndex, state: str | None = None, limit: int = 100) -> list:
+    listed = jobs.list_jobs(limit=limit, state=state)
+    rows = []
+    for row in listed:
+        full = jobs.get(row["id"])
+        if full is not None:
+            rows.append(full)
+    return rows
+
+
+def format_doctor_text() -> str:
+    from videoclean.composition import machine_facts
+
+    facts = machine_facts()
+    order = ("python", "ffmpeg", "ffprobe", "opencv", "torch", "cuda", "mps")
+    return "\n".join(f"{key}: {facts.get(key, '—')}" for key in order)
+
+
+def build_ui(state: AppState):
+    catalog = state.catalog
+    det0 = _choice_list(ready_choices("detector", catalog), "grounding-dino")
+    seg0 = _choice_list(ready_choices("segmenter", catalog), "sam2")
+    inp0 = _choice_list(ready_choices("inpainter", catalog), "opencv-telea")
+
+    with gr.Blocks(title="videoclean") as demo:
+        gr.Markdown(
+            "# videoclean\n"
+            "Remove a named object from video. One GPU cleanup at a time — extras stay "
+            "**QUEUED**. Download weights on **Models** before they appear in the selects."
+        )
+        with gr.Tabs():
+            with gr.Tab("Clean"):
+                with gr.Row():
+                    with gr.Column(scale=3):
+                        video = gr.File(
+                            label="Video",
+                            file_types=[".mp4", ".mov", ".mkv", ".webm"],
+                            file_count="single",
+                        )
+                        prompt = gr.Textbox(
+                            label="Prompt",
+                            placeholder="remove the watermark in the corner",
+                            lines=2,
+                        )
+                        with gr.Row():
+                            device = gr.Dropdown(
+                                label="Device",
+                                choices=["cpu", "cuda", "mps"],
+                                value=default_device(),
+                            )
+                            fmt = gr.Dropdown(
+                                label="Format",
+                                choices=["mp4", "mov", "mkv", "webm"],
+                                value="mp4",
+                            )
+                        with gr.Row():
+                            detector = gr.Dropdown(
+                                label="Detector",
+                                choices=det0[0],
+                                value=det0[1],
+                            )
+                            segmenter = gr.Dropdown(
+                                label="Segmenter",
+                                choices=seg0[0],
+                                value=seg0[1],
+                            )
+                            inpainter = gr.Dropdown(
+                                label="Inpainter",
+                                choices=inp0[0],
+                                value=inp0[1],
+                            )
+                        det_hint = gr.Markdown(missing_hint("detector", catalog))
+                        seg_hint = gr.Markdown(missing_hint("segmenter", catalog))
+                        inp_hint = gr.Markdown(missing_hint("inpainter", catalog))
+                        with gr.Row():
+                            llm_place = gr.Dropdown(
+                                label="LLM",
+                                choices=list(LLM_PLACES),
+                                value="auto",
+                            )
+                            llm_model = gr.Textbox(
+                                label="LLM model",
+                                placeholder="llama3.2 / llava-phi3 / empty for default",
+                            )
+                        with gr.Accordion("Advanced", open=False):
+                            detector_threshold = gr.Slider(
+                                0.01, 0.9, value=0.15, step=0.01, label="Detector threshold"
+                            )
+                            mask_dilate_px = gr.Slider(
+                                0, 32, value=3, step=1, label="Mask dilate (px)"
+                            )
+                            telea_radius = gr.Slider(
+                                1, 21, value=9, step=1, label="TELEA radius"
+                            )
+                            verify = gr.Checkbox(value=True, label="Verify")
+                            prompt_frame_stride = gr.Number(
+                                value=4, precision=0, label="Prompt frame stride"
+                            )
+                            prompt_frame_max = gr.Number(
+                                value=8, precision=0, label="Prompt frame max"
+                            )
+                            overwrite = gr.Checkbox(value=True, label="Overwrite output")
+                        with gr.Row():
+                            max_btn = gr.Button(
+                                "Max quality",
+                                interactive=max_quality_ready(catalog),
+                            )
+                            submit_btn = gr.Button("Submit", variant="primary")
+                        submit_status = gr.Markdown()
+                    with gr.Column(scale=2):
+                        gr.Markdown("### Live job")
+                        live_progress = gr.Markdown(
+                            value=_live_progress_text(state),
+                            elem_id="vc-progress",
+                        )
+            with gr.Tab("Models"):
+                models_table = gr.Dataframe(
+                    headers=MODEL_TABLE_HEADERS,
+                    value=format_models_table(_safe_list_status(catalog)),
+                    wrap=True,
+                    interactive=False,
+                    label="Catalog",
+                )
+                download_bar = gr.Slider(
+                    minimum=0,
+                    maximum=1,
+                    value=0,
+                    interactive=False,
+                    label="Active download",
+                )
+                download_msg = gr.Markdown(_download_message(state))
+                gr.Markdown("Download a component (one at a time; OK during a cleanup job):")
+                download_buttons: dict[str, Any] = {}
+                with gr.Column():
+                    for info in COMPONENTS:
+                        with gr.Row():
+                            gr.Markdown(f"**{info.title}** `{info.id}` · {info.size_hint}")
+                            download_buttons[info.id] = gr.Button("Download", scale=0, size="sm")
+                with gr.Row():
+                    refresh_models = gr.Button("Refresh status")
+                    cancel_dl = gr.Button("Cancel download")
+                doctor = gr.Textbox(
+                    label="Doctor (ffmpeg / torch / cuda)",
+                    value=format_doctor_text(),
+                    lines=8,
+                    interactive=False,
+                    elem_id="vc-doctor",
+                )
+            with gr.Tab("Jobs"):
+                with gr.Row():
+                    state_filter = gr.Dropdown(
+                        label="Filter",
+                        choices=list(JOB_STATES),
+                        value="all",
+                    )
+                    refresh_jobs = gr.Button("Refresh")
+                jobs_table = gr.Dataframe(
+                    headers=JOB_TABLE_HEADERS,
+                    value=format_jobs_table(list_full_jobs(state.jobs)),
+                    wrap=True,
+                    interactive=False,
+                    label="Queue",
+                )
+                job_id_box = gr.Textbox(label="Job id", placeholder="select a row or paste an id")
+                with gr.Row():
+                    cancel_btn = gr.Button("Cancel")
+                    retry_btn = gr.Button("Retry")
+                    delete_btn = gr.Button("Delete")
+                    fail_btn = gr.Button("Mark failed")
+                jobs_status = gr.Markdown()
+                output_file = gr.File(label="Download output", interactive=False)
+
+        timer = gr.Timer(2)
+
+        def _refresh_clean_selects(current_det, current_seg, current_inp):
+            d = _choice_list(ready_choices("detector", state.catalog), "grounding-dino", current_det)
+            s = _choice_list(ready_choices("segmenter", state.catalog), "sam2", current_seg)
+            i = _choice_list(
+                ready_choices("inpainter", state.catalog), "opencv-telea", current_inp
+            )
+            return (
+                gr.update(choices=d[0], value=d[1]),
+                gr.update(choices=s[0], value=s[1]),
+                gr.update(choices=i[0], value=i[1]),
+                missing_hint("detector", state.catalog),
+                missing_hint("segmenter", state.catalog),
+                missing_hint("inpainter", state.catalog),
+                gr.update(interactive=max_quality_ready(state.catalog)),
+            )
+
+        def _on_max_quality():
+            return "cuda", "grounding-dino", "sam2-video", "propainter"
+
+        def _on_submit(
+            video_val,
+            prompt_val,
+            device_val,
+            detector_val,
+            segmenter_val,
+            inpainter_val,
+            llm_place_val,
+            llm_model_val,
+            fmt_val,
+            thr,
+            dilate,
+            radius,
+            verify_val,
+            stride,
+            frame_max,
+            overwrite_val,
+        ):
+            try:
+                _validate_backend_choice("detector", detector_val, state.catalog)
+                _validate_backend_choice("segmenter", segmenter_val, state.catalog)
+                _validate_backend_choice("inpainter", inpainter_val, state.catalog)
+                payload = serialize_clean_form(
+                    device=device_val,
+                    detector=detector_val,
+                    segmenter=segmenter_val,
+                    inpainter=inpainter_val,
+                    llm_place=llm_place_val,
+                    llm_model=llm_model_val,
+                    fmt=fmt_val,
+                    detector_threshold=float(thr),
+                    mask_dilate_px=int(dilate),
+                    telea_radius=int(radius),
+                    verify=bool(verify_val),
+                    prompt_frame_stride=int(stride or 0),
+                    prompt_frame_max=int(frame_max or 1),
+                    overwrite=bool(overwrite_val),
+                )
+                job_id = queue_clean_job(state, video_val, prompt_val, payload)
+            except Exception as exc:  # noqa: BLE001 — surface as UI text, not traceback
+                return _ui_error(exc), _live_progress_text(state)
+            extra = ""
+            running = state.jobs.list_jobs(state="RUNNING", limit=1)
+            if running and running[0]["id"] != job_id:
+                extra = " A job is already running — this one waits in the FIFO queue."
+            return (
+                f"Queued **{job_id}**. Watch it on the Jobs tab.{extra}",
+                _live_progress_text(state),
+            )
+
+        def _on_refresh_models(current_det, current_seg, current_inp):
+            selects = _refresh_clean_selects(current_det, current_seg, current_inp)
+            table = format_models_table(_safe_list_status(state.catalog))
+            frac, msg = _download_progress(state)
+            return (table, frac, msg, format_doctor_text(), *selects)
+
+        def _on_download(component_id: str, current_det, current_seg, current_inp):
+            msg = _start_download(state, component_id)
+            rest = _on_refresh_models(current_det, current_seg, current_inp)
+            return (msg, *rest)
+
+        def _on_cancel_download(current_det, current_seg, current_inp):
+            msg = _cancel_download(state)
+            rest = _on_refresh_models(current_det, current_seg, current_inp)
+            return (msg, *rest)
+
+        def _jobs_refresh(filter_val, selected_id):
+            st = None if not filter_val or filter_val == "all" else str(filter_val)
+            table = format_jobs_table(list_full_jobs(state.jobs, state=st))
+            status = f"{len(table)} job(s)." if table else "No jobs yet."
+            out = _output_file(state, selected_id)
+            return table, status, out, _live_progress_text(state)
+
+        def _on_job_select(evt: SelectData):
+            row_value = getattr(evt, "row_value", None)
+            if isinstance(row_value, (list, tuple)) and row_value:
+                return str(row_value[0])
+            index = getattr(evt, "index", None)
+            value = getattr(evt, "value", None)
+            col = index[1] if isinstance(index, (list, tuple)) and len(index) > 1 else 0
+            if value is not None and col == 0:
+                return str(value)
+            return gr.update()
+
+        def _act(fn, job_id, filter_val):
+            try:
+                msg = fn(state, (job_id or "").strip())
+            except Exception as exc:  # noqa: BLE001
+                msg = _ui_error(exc)
+            table, status, out, live = _jobs_refresh(filter_val, job_id)
+            return table, f"{msg}\n\n{status}", out, live
+
+        max_btn.click(
+            _on_max_quality,
+            outputs=[device, detector, segmenter, inpainter],
+        )
+        submit_btn.click(
+            _on_submit,
+            inputs=[
+                video,
+                prompt,
+                device,
+                detector,
+                segmenter,
+                inpainter,
+                llm_place,
+                llm_model,
+                fmt,
+                detector_threshold,
+                mask_dilate_px,
+                telea_radius,
+                verify,
+                prompt_frame_stride,
+                prompt_frame_max,
+                overwrite,
+            ],
+            outputs=[submit_status, live_progress],
+        )
+
+        model_outputs = [
+            models_table,
+            download_bar,
+            download_msg,
+            doctor,
+            detector,
+            segmenter,
+            inpainter,
+            det_hint,
+            seg_hint,
+            inp_hint,
+            max_btn,
+        ]
+        refresh_models.click(
+            _on_refresh_models,
+            inputs=[detector, segmenter, inpainter],
+            outputs=model_outputs,
+        )
+        cancel_dl.click(
+            _on_cancel_download,
+            inputs=[detector, segmenter, inpainter],
+            outputs=[download_msg, *model_outputs],
+        )
+        for cid, btn in download_buttons.items():
+            btn.click(
+                lambda current_det, current_seg, current_inp, component_id=cid: _on_download(
+                    component_id, current_det, current_seg, current_inp
+                ),
+                inputs=[detector, segmenter, inpainter],
+                outputs=[download_msg, *model_outputs],
+            )
+
+        jobs_outputs = [jobs_table, jobs_status, output_file, live_progress]
+        refresh_jobs.click(_jobs_refresh, inputs=[state_filter, job_id_box], outputs=jobs_outputs)
+        state_filter.change(_jobs_refresh, inputs=[state_filter, job_id_box], outputs=jobs_outputs)
+        jobs_table.select(_on_job_select, outputs=[job_id_box])
+        cancel_btn.click(
+            lambda job_id, filt: _act(_cancel_job, job_id, filt),
+            inputs=[job_id_box, state_filter],
+            outputs=jobs_outputs,
+        )
+        retry_btn.click(
+            lambda job_id, filt: _act(_retry_job, job_id, filt),
+            inputs=[job_id_box, state_filter],
+            outputs=jobs_outputs,
+        )
+        delete_btn.click(
+            lambda job_id, filt: _act(_delete_job, job_id, filt),
+            inputs=[job_id_box, state_filter],
+            outputs=jobs_outputs,
+        )
+        fail_btn.click(
+            lambda job_id, filt: _act(_mark_failed_job, job_id, filt),
+            inputs=[job_id_box, state_filter],
+            outputs=jobs_outputs,
+        )
+        timer.tick(_jobs_refresh, inputs=[state_filter, job_id_box], outputs=jobs_outputs)
+
+        def _on_load(current_det, current_seg, current_inp, filter_val, selected_id):
+            models = _on_refresh_models(current_det, current_seg, current_inp)
+            jobs = _jobs_refresh(filter_val, selected_id)
+            return (*models, *jobs)
+
+        demo.load(
+            _on_load,
+            inputs=[detector, segmenter, inpainter, state_filter, job_id_box],
+            outputs=[*model_outputs, *jobs_outputs],
+        )
+    return demo
+
+
+def launch_ui(state: AppState, host: str, port: int, auth: tuple[str, str] | None) -> None:
+    password = "" if auth is None else str(auth[1] or "")
+    if not password.strip():
+        raise RuntimeError(
+            "UI password is required to launch (safer default for RunPod). "
+            "Set VIDEOCLEAN_UI_PASSWORD and pass auth=(user, password)."
+        )
+    user = str(auth[0] or "admin") if auth else "admin"
+    demo = build_ui(state)
+    demo.launch(
+        server_name=host,
+        server_port=int(port),
+        auth=(user, password),
+        show_error=True,
+        max_file_size="4gb",
+        css=_CSS,
+        allowed_paths=[str(state.data_dir)],
+        theme=gr.themes.Soft(),
+    )
+
+
+def launch_from_env(
+    *,
+    host: str = "0.0.0.0",
+    port: int | None = None,
+    data_dir: Path | None = None,
+    env: Mapping[str, str] | None = None,
+) -> None:
+    env_map = os.environ if env is None else env
+    auth = auth_from_env(env_map)
+    port_i = int(port if port is not None else env_map.get("VIDEOCLEAN_PORT") or 7860)
+    root = Path(data_dir or env_map.get("VIDEOCLEAN_DATA_DIR") or (Path.home() / ".videoclean"))
+    state = build_app_state(root)
+    state.manage.recover_orphans()
+    if state.worker is not None:
+        state.worker.start()
+    launch_ui(state, host, port_i, auth)
+
+
+def _choice_list(
+    names: list[str], preferred: str, current: str | None = None
+) -> tuple[list[str], str]:
+    choices = list(names) if names else [NONE_READY]
+    if current in choices:
+        return choices, current
+    if preferred in choices:
+        return choices, preferred
+    return choices, choices[0]
+
+
+def _validate_backend_choice(port: str, name: str, catalog) -> None:
+    name = (name or "").strip()
+    if not name or name == NONE_READY:
+        raise PipelineError(f"no ready {port}; download weights on the Models tab")
+    if not backend_ready(port, name, catalog=catalog):
+        raise PipelineError(f"{port} {name} is not ready; download it on the Models tab")
+
+
+def _ui_error(exc: BaseException) -> str:
+    return str(exc)[:400]
+
+
+def _live_progress_text(state: AppState) -> str:
+    running = list_full_jobs(state.jobs, state="RUNNING", limit=1)
+    if running:
+        return format_active_progress(running[0])
+    queued = list_full_jobs(state.jobs, state="QUEUED", limit=1)
+    if queued:
+        job_id = queued[0]["id"]
+        return f"**{job_id}** `QUEUED`\n\nWaiting for the GPU worker."
+    return format_active_progress(None)
+
+
+def _safe_list_status(catalog) -> list:
+    try:
+        return list(catalog.list_status())
+    except Exception:  # noqa: BLE001 — doctor/status must still render
+        return []
+
+
+def _download_progress(state: AppState) -> tuple[float, str]:
+    for row in state.jobs.list_downloads(limit=20):
+        if row["state"] in {"running", "queued"}:
+            try:
+                frac = float(row["progress"] or 0.0)
+            except (TypeError, ValueError):
+                frac = 0.0
+            frac = max(0.0, min(frac, 1.0))
+            msg = row["message"] or ""
+            return frac, f"{row['component_id']}: {int(frac * 100)}% {msg}".strip()
+    return 0.0, _download_message(state)
+
+
+def _download_message(state: AppState) -> str:
+    for row in state.jobs.list_downloads(limit=20):
+        if row["state"] in {"running", "queued"}:
+            return f"Downloading {row['component_id']}…"
+    return "No download in progress."
+
+
+def _start_download(state: AppState, component_id: str) -> str:
+    if state.downloader is None:
+        return "Downloader is not configured."
+    component_id = (component_id or "").strip()
+    if not component_id:
+        return "Pick a component."
+    for row in state.jobs.list_downloads(limit=20):
+        if row["state"] in {"running", "queued"}:
+            return f"Already downloading {row['component_id']}. Wait or cancel."
+    downloader = state.downloader
+
+    def _run() -> None:
+        try:
+            downloader.execute(component_id, state.jobs, None)
+        except Exception:  # noqa: BLE001 — status is stored on the download row
+            return
+
+    threading.Thread(target=_run, name=f"vc-dl-{component_id}", daemon=True).start()
+    return f"Started download: {component_id}"
+
+
+def _cancel_download(state: AppState) -> str:
+    cancelled = []
+    for row in state.jobs.list_downloads(limit=20):
+        if row["state"] in {"running", "queued"}:
+            state.jobs.request_download_cancel(row["id"])
+            cancelled.append(row["component_id"])
+    if not cancelled:
+        return "No running download."
+    return "Cancel requested for " + ", ".join(cancelled)
+
+
+def _cancel_job(state: AppState, job_id: str) -> str:
+    if not job_id:
+        return "Enter a job id."
+    row = state.jobs.get(job_id)
+    if row is None:
+        return f"Unknown job {job_id}."
+    if row["state"] not in {"QUEUED", "RUNNING"}:
+        return f"Job {job_id} is {row['state']}; nothing to cancel."
+    state.manage.cancel(job_id)
+    after = state.jobs.get(job_id)
+    if after is not None and after["state"] == "RUNNING":
+        return f"Cancel requested for {job_id}; the worker stops at the next progress tick."
+    return f"Job {job_id} → {after['state'] if after else 'CANCELLED'}."
+
+
+def _retry_job(state: AppState, job_id: str) -> str:
+    if not job_id:
+        return "Enter a job id."
+    new_id = state.manage.retry(job_id)
+    return f"Queued retry {new_id} (from {job_id})."
+
+
+def _delete_job(state: AppState, job_id: str) -> str:
+    if not job_id:
+        return "Enter a job id."
+    row = state.jobs.get(job_id)
+    if row is None:
+        return f"Unknown job {job_id}."
+    state.manage.delete(job_id, state.data_dir)
+    upload_dir = Path(state.data_dir) / "uploads" / job_id
+    if upload_dir.exists():
+        shutil.rmtree(upload_dir, ignore_errors=True)
+    return f"Deleted {job_id}."
+
+
+def _mark_failed_job(state: AppState, job_id: str) -> str:
+    if not job_id:
+        return "Enter a job id."
+    row = state.jobs.get(job_id)
+    if row is None:
+        return f"Unknown job {job_id}."
+    if row["state"] != "RUNNING":
+        return f"Job {job_id} is {row['state']}, not RUNNING."
+    if not is_job_stale(row):
+        return f"Job {job_id} still has a recent heartbeat. Wait or Cancel instead."
+    state.manage.mark_failed(job_id, "stale heartbeat")
+    return f"Marked {job_id} failed (stale heartbeat)."
+
+
+def _output_file(state: AppState, job_id: str | None) -> str | None:
+    job_id = (job_id or "").strip()
+    if not job_id:
+        return None
+    row = state.jobs.get(job_id)
+    if row is None or row["state"] != "COMPLETED":
+        return None
+    path = Path(row["output_path"] or "")
+    if path.is_file():
+        return str(path)
+    report = _as_dict(row["report_json"] if "report_json" in row.keys() else None)
+    for item in (report.get("outputs") or {}).values():
+        candidate = Path(str(item))
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+def _stale_seconds() -> int:
+    raw = os.environ.get("VIDEOCLEAN_STALE_SECONDS", "900")
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 900
+
+
+def _row_get(row, key: str, default: str = "") -> str:
+    if row is None:
+        return default
+    if isinstance(row, dict):
+        value = row.get(key, default)
+        return default if value is None else str(value) if not isinstance(value, str) else value
+    try:
+        value = row[key]
+    except (KeyError, IndexError, TypeError):
+        return default
+    if value is None:
+        return default
+    return value if isinstance(value, str) else str(value)
+
+
+def _as_dict(raw: Any) -> dict:
+    if isinstance(raw, dict):
+        return raw
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _truncate(text: str, n: int) -> str:
+    text = (text or "").replace("\n", " ").strip()
+    if len(text) <= n:
+        return text
+    return text[: n - 1] + "…"
+
+
+def _short_ts(value: str) -> str:
+    return (value or "").replace("T", " ")[:19]
+
+
+def _progress_label(raw: str) -> str:
+    payload = _as_dict(raw)
+    stage = str(payload.get("stage") or "")
+    frac = payload.get("fraction")
+    if frac is None:
+        return stage or "—"
+    try:
+        pct = f"{max(0.0, min(float(frac), 1.0)) * 100:.0f}%"
+    except (TypeError, ValueError):
+        return stage or "—"
+    return f"{stage} {pct}".strip()
+
+
+def _backends_label(raw: str) -> str:
+    payload = _as_dict(raw)
+    device = str(payload.get("device") or "")
+    detector = payload.get("detector")
+    if not detector:
+        dets = payload.get("detectors") or []
+        detector = ",".join(dets) if isinstance(dets, list) else str(dets or "")
+    segmenter = str(payload.get("segmenter") or "")
+    inpainter = str(payload.get("inpainter") or "")
+    core = " / ".join(part for part in (str(detector), segmenter, inpainter) if part)
+    if device and core:
+        return f"{device} · {core}"
+    return device or core or "—"
+
+
+def _stage_before(key: str, current: str) -> bool:
+    keys = [item[0] for item in STAGES]
+    if key not in keys or current not in keys:
+        return False
+    return keys.index(key) < keys.index(current)

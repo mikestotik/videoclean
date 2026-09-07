@@ -56,8 +56,9 @@ class ManageJobs:
         input_path: Path,
         output_path: Path,
         prompt: str,
+        job_id: str | None = None,
     ) -> str:
-        job_id = new_job_id()
+        job_id = job_id or new_job_id()
         payload = dict(request_dict or {})
         payload.setdefault("input_path", str(input_path))
         payload.setdefault("output_path", str(output_path))
