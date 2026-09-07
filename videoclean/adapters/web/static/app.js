@@ -428,11 +428,25 @@ if (view === "work") {
       "detector_model",
       "segmenter_model",
       "detector_threshold",
+      "detector_keyframes",
+      "detector_nms_iou",
+      "detector_max_box_area",
+      "tracker_min_score",
+      "tracker_max_template_area",
       "mask_dilate_px",
       "telea_radius",
       "prompt_frame_stride",
       "prompt_frame_max",
-    ].forEach((id) => fd.append(id, $(id).value));
+      "vision_batch",
+      "propainter_mask_dilation",
+      "propainter_ref_stride",
+      "propainter_neighbor_length",
+      "propainter_subvideo_length",
+      "propainter_raft_iter",
+    ].forEach((id) => {
+      const el = $(id);
+      if (el.value !== "") fd.append(id, el.value);
+    });
     fd.append("verify", $("verify").checked ? "true" : "false");
     try {
       const job = await api("/api/jobs", { method: "POST", body: fd });

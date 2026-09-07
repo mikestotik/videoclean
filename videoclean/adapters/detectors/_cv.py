@@ -25,11 +25,16 @@ def box_area_frac(xyxy: tuple[int, int, int, int], width: int, height: int) -> f
     return max(0, x2 - x1) * max(0, y2 - y1) / den
 
 
-def keep_detection_box(xyxy: tuple[int, int, int, int], width: int, height: int) -> bool:
+def keep_detection_box(
+    xyxy: tuple[int, int, int, int],
+    width: int,
+    height: int,
+    max_area: float = MAX_BOX_AREA,
+) -> bool:
     x1, y1, x2, y2 = xyxy
     if x2 - x1 < 4 or y2 - y1 < 4:
         return False
-    return box_area_frac(xyxy, width, height) <= MAX_BOX_AREA
+    return box_area_frac(xyxy, width, height) <= max_area
 
 
 def sample_indices(n: int, limit: int) -> list[int]:
@@ -53,6 +58,17 @@ def iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
 def mean_iou(a: list[tuple[int, int, int, int] | None], b: list[tuple[int, int, int, int] | None]) -> float:
     vals = [iou(x, y) for x, y in zip(a, b) if x and y]
     return float(np.mean(vals)) if vals else 0.0
+
+
+def nms(hits: list, iou_thr: float = 0.3) -> list:
+    """Greedy score-ordered NMS over BoxHit-like objects with .score/.xyxy."""
+    ordered = sorted(hits, key=lambda h: -h.score)
+    kept: list = []
+    for hit in ordered:
+        if any(iou(hit.xyxy, other.xyxy) > iou_thr for other in kept):
+            continue
+        kept.append(hit)
+    return kept
 
 
 def match_template(

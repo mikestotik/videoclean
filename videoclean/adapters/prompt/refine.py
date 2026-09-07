@@ -23,7 +23,7 @@ _TEXT_QUERIES = {
     "on-screen text",
     "on screen text",
 }
-_MARK_QUERIES = {"logo", "watermark", "emblem", "bug", "channel logo"}
+_MARK_QUERIES = {"logo", "watermark", "emblem", "bug", "channel logo", "mark"}
 
 # Longer / more specific patterns first. Russian can be "правом нижнем" or "нижнем правом".
 _WHERE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -37,24 +37,24 @@ _WHERE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"справа|(?<![a-z])right(?![a-z-])", re.I), "right"),
 )
 
-_PHYSICAL = {
-    "mug",
-    "cup",
-    "person",
-    "people",
-    "man",
-    "woman",
-    "car",
-    "dog",
-    "cat",
-    "phone",
-    "hand",
-    "bottle",
-    "chair",
-    "table",
-    "laptop",
-    "face",
-    "head",
+# Whitelist of words that explicitly name an on-screen overlay. Only these may flip an
+# object target into a text overlay — the detector vocabulary stays open for everything
+# else (ball, clock, drone, sticker on a wall, road sign…). A blacklist here would
+# silently break unknown requests. Keep this list unambiguous: no words that also name
+# physical things (sign, banner, sticker are deliberately absent).
+_OVERLAY_WORDS = {
+    "overlay",
+    "writing",
+    "lettering",
+    "letters",
+    "inscription",
+    "caption",
+    "subtitle",
+    "title",
+    "headline",
+    "watermark",
+    "logo",
+    "osd",
 }
 
 _ORDINAL_ASK = re.compile(
@@ -120,9 +120,7 @@ def refine_intent(intent: Intent) -> Intent:
 
 def _treat_object_as_overlay(query: str) -> bool:
     words = (query or "").casefold().split()
-    if not words or any(w in _PHYSICAL for w in words):
-        return False
-    return len(words) <= 2
+    return bool(words) and any(w in _OVERLAY_WORDS for w in words)
 
 
 def _rewrite_query(kind: str, query: str) -> str:

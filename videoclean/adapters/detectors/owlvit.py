@@ -7,11 +7,13 @@ import numpy as np
 import re
 
 from videoclean.adapters.detectors._cv import (
+    MAX_BOX_AREA,
     MAX_TEMPLATE_AREA,
     box_area_frac,
     iou,
     keep_detection_box,
     match_template,
+    nms,
     sample_indices,
 )
 from videoclean.adapters.hf_cache import download_hint, hf_cached
@@ -73,6 +75,7 @@ class OwlVitDetector:
     """Open-vocabulary boxes from a Hugging Face OWL-ViT checkpoint, then template-track across frames."""
 
     name = "owlvit"
+    DEFAULT_KEYFRAMES = 12
 
     def __init__(
         self,
@@ -80,11 +83,21 @@ class OwlVitDetector:
         device: str,
         threshold: float = 0.15,
         allow_download: bool = False,
+        keyframes: int | None = None,
+        nms_iou: float = 0.3,
+        max_box_area: float = MAX_BOX_AREA,
+        tracker_min_score: float = 0.55,
+        tracker_max_template_area: float = MAX_TEMPLATE_AREA,
     ) -> None:
         self.model_id = model_id
         self.device = device
         self.threshold = threshold
         self.allow_download = allow_download
+        self.keyframes = keyframes
+        self.nms_iou = nms_iou
+        self.max_box_area = max_box_area
+        self.tracker_min_score = tracker_min_score
+        self.tracker_max_template_area = tracker_max_template_area
         self._model = None
         self._processor = None
         self._load_error: str | None = None
@@ -113,7 +126,8 @@ class OwlVitDetector:
         class_queries = fit_owlvit_queries(queries, self._token_len)
         if not class_queries:
             return []
-        key_idx = sample_indices(len(frames), min(12, len(frames)))
+        keyframes = self.keyframes if self.keyframes and self.keyframes > 0 else self.DEFAULT_KEYFRAMES
+        key_idx = sample_indices(len(frames), min(keyframes, len(frames)))
         n_keys = len(key_idx)
         per_frame: list[list[tuple[str, float, tuple[int, int, int, int]]]] = [[] for _ in frames]
         for n, i in enumerate(key_idx, start=1):
@@ -153,8 +167,8 @@ class OwlVitDetector:
                 x1, y1, x2, y2 = box
                 crop = frames[i][y1:y2, x1:x2]
                 fh, fw = frames[i].shape[:2]
-                if crop.size and box_area_frac(box, fw, fh) <= MAX_TEMPLATE_AREA:
-                    searched = match_template(frames, crop, min_score=0.55)
+                if crop.size and box_area_frac(box, fw, fh) <= self.tracker_max_template_area:
+                    searched = match_template(frames, crop, min_score=self.tracker_min_score)
                     boxes = [s if s is not None else b for s, b in zip(searched, boxes)]
                 tr = Track(
                     track_id=tid,
@@ -232,9 +246,9 @@ class OwlVitDetector:
             x1, y1, x2, y2 = (int(v) for v in box.tolist())
             x1, y1 = max(0, x1), max(0, y1)
             x2, y2 = min(w, x2), min(h, y2)
-            if not keep_detection_box((x1, y1, x2, y2), w, h):
+            if not keep_detection_box((x1, y1, x2, y2), w, h, max_area=self.max_box_area):
                 continue
             idx = int(label_id)
             name = queries[idx] if 0 <= idx < len(queries) else "object"
             hits.append(BoxHit(label=name, score=float(score), xyxy=(x1, y1, x2, y2)))
-        return hits
+        return nms(hits, self.nms_iou)

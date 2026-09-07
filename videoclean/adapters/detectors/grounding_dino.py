@@ -5,11 +5,13 @@ from dataclasses import dataclass
 import numpy as np
 
 from videoclean.adapters.detectors._cv import (
+    MAX_BOX_AREA,
     MAX_TEMPLATE_AREA,
     box_area_frac,
     iou,
     keep_detection_box,
     match_template,
+    nms,
     sample_indices,
 )
 from videoclean.adapters.hf_cache import download_hint, hf_cached
@@ -29,6 +31,7 @@ class GroundingDinoDetector:
     """Open-vocab boxes from a text query (mug, logo, person — same model)."""
 
     name = "grounding-dino"
+    DEFAULT_KEYFRAMES = 8
 
     def __init__(
         self,
@@ -36,11 +39,21 @@ class GroundingDinoDetector:
         device: str,
         threshold: float = 0.25,
         allow_download: bool = False,
+        keyframes: int | None = None,
+        nms_iou: float = 0.3,
+        max_box_area: float = MAX_BOX_AREA,
+        tracker_min_score: float = 0.55,
+        tracker_max_template_area: float = MAX_TEMPLATE_AREA,
     ) -> None:
         self.model_id = model_id.strip() or DEFAULT_MODEL
         self.device = device
         self.threshold = threshold
         self.allow_download = allow_download
+        self.keyframes = keyframes
+        self.nms_iou = nms_iou
+        self.max_box_area = max_box_area
+        self.tracker_min_score = tracker_min_score
+        self.tracker_max_template_area = tracker_max_template_area
         self._model = None
         self._processor = None
         self._load_error: str | None = None
@@ -74,7 +87,7 @@ class GroundingDinoDetector:
         phrases = _phrases(queries)
         if not phrases:
             return []
-        key_idx = sample_indices(len(frames), min(8, len(frames)))
+        key_idx = sample_indices(len(frames), min(self._n_keyframes(), len(frames)))
         n_keys = len(key_idx)
         per_frame: list[list[tuple[str, float, tuple[int, int, int, int]]]] = [[] for _ in frames]
         for n, i in enumerate(key_idx, start=1):
@@ -115,8 +128,8 @@ class GroundingDinoDetector:
                 x1, y1, x2, y2 = box
                 crop = frames[i][y1:y2, x1:x2]
                 fh, fw = frames[i].shape[:2]
-                if crop.size and box_area_frac(box, fw, fh) <= MAX_TEMPLATE_AREA:
-                    searched = match_template(frames, crop, min_score=0.55)
+                if crop.size and box_area_frac(box, fw, fh) <= self.tracker_max_template_area:
+                    searched = match_template(frames, crop, min_score=self.tracker_min_score)
                     boxes = [s if s is not None else b for s, b in zip(searched, boxes)]
                 tr = Track(
                     track_id=tid,
@@ -153,6 +166,9 @@ class GroundingDinoDetector:
             self._processor = None
             return False, self._load_error
 
+    def _n_keyframes(self) -> int:
+        return self.keyframes if self.keyframes and self.keyframes > 0 else self.DEFAULT_KEYFRAMES
+
     def _detect_frame(self, bgr: np.ndarray, phrases: list[str]) -> list[BoxHit]:
         hits: list[BoxHit] = []
         for phrase in phrases:
@@ -160,7 +176,7 @@ class GroundingDinoDetector:
             for hit in self._detect_caption(bgr, phrase):
                 hit.label = name
                 hits.append(hit)
-        return _nms(hits)
+        return nms(hits, self.nms_iou)
 
     def _detect_caption(self, bgr: np.ndarray, caption: str) -> list[BoxHit]:
         import torch
@@ -198,22 +214,11 @@ class GroundingDinoDetector:
             x1, y1, x2, y2 = (int(v) for v in box.tolist())
             x1, y1 = max(0, x1), max(0, y1)
             x2, y2 = min(w, x2), min(h, y2)
-            if not keep_detection_box((x1, y1, x2, y2), w, h):
+            if not keep_detection_box((x1, y1, x2, y2), w, h, max_area=self.max_box_area):
                 continue
             score = float(scores[i]) if scores is not None and i < len(scores) else 0.0
             hits.append(BoxHit(label="object", score=score, xyxy=(x1, y1, x2, y2)))
         return hits
-
-
-def _nms(hits: list[BoxHit], iou_thr: float = 0.3) -> list[BoxHit]:
-    ordered = sorted(hits, key=lambda h: -h.score)
-    kept: list[BoxHit] = []
-    for hit in ordered:
-        if any(iou(hit.xyxy, other.xyxy) > iou_thr for other in kept):
-            continue
-        kept.append(hit)
-    return kept
-
 
 def _phrases(queries: list[str]) -> list[str]:
     out: list[str] = []

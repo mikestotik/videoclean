@@ -147,10 +147,26 @@
         <summary class="cursor-pointer text-sm text-mute">Дополнительно</summary>
         <div class="grid gap-2 pt-2">
           <label class="lbl">Порог детектора <input id="detector_threshold" class="field" type="number" min="0.01" max="0.9" step="0.01" value="0.15"></label>
+          <label class="lbl">Кадры детектора <input id="detector_keyframes" class="field" type="number" min="1" step="1" placeholder="8 (dino) / 12 (owlvit)"></label>
+          <label class="lbl">NMS IoU <input id="detector_nms_iou" class="field" type="number" min="0.01" max="0.99" step="0.01" value="0.3"></label>
+          <label class="lbl">Макс. площадь бокса <input id="detector_max_box_area" class="field" type="number" min="0.01" max="1" step="0.01" value="0.25"></label>
+          <label class="lbl">Трекинг: порог <input id="tracker_min_score" class="field" type="number" min="0.01" max="0.99" step="0.01" value="0.55"></label>
+          <label class="lbl">Трекинг: макс. площадь шаблона <input id="tracker_max_template_area" class="field" type="number" min="0.01" max="1" step="0.01" value="0.12"></label>
           <label class="lbl">Dilate маски, px <input id="mask_dilate_px" class="field" type="number" min="0" max="32" step="1" value="3"></label>
           <label class="lbl">TELEA radius <input id="telea_radius" class="field" type="number" min="1" max="21" step="1" value="9"></label>
           <label class="lbl">Кадры для vision, шаг <input id="prompt_frame_stride" class="field" type="number" min="0" step="1" value="4"></label>
           <label class="lbl">Кадры, максимум <input id="prompt_frame_max" class="field" type="number" min="1" step="1" value="8"></label>
+          <label class="lbl">Vision batch (кадров на запрос) <input id="vision_batch" class="field" type="number" min="1" step="1" value="2"></label>
+          <details>
+            <summary class="cursor-pointer text-sm text-mute">ProPainter (CUDA)</summary>
+            <div class="grid gap-2 pt-2">
+              <label class="lbl">Mask dilation <input id="propainter_mask_dilation" class="field" type="number" min="0" step="1" value="4"></label>
+              <label class="lbl">Ref stride <input id="propainter_ref_stride" class="field" type="number" min="1" step="1" value="10"></label>
+              <label class="lbl">Neighbor length <input id="propainter_neighbor_length" class="field" type="number" min="1" step="1" value="10"></label>
+              <label class="lbl">Subvideo length <input id="propainter_subvideo_length" class="field" type="number" min="1" step="1" value="80"></label>
+              <label class="lbl">RAFT iter <input id="propainter_raft_iter" class="field" type="number" min="1" step="1" value="20"></label>
+            </div>
+          </details>
           <label class="flex items-center gap-2 text-sm text-mute"><input id="verify" type="checkbox" checked> Проверять leftover</label>
         </div>
       </details>

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 
 import numpy as np
 
@@ -73,15 +74,43 @@ query must be English, concrete, searchable by Grounding DINO. No Russian. Overl
 """
 
 
-# Small VLMs (llava-phi3) degrade to word salad past 1-2 attached frames.
-_VISION_BATCH = 2
+_PROMPTS_DIR = Path(__file__).parent / "prompts"
+
+
+def _read_prompt(name: str) -> str:
+    return (_PROMPTS_DIR / name).read_text(encoding="utf-8")
+
+
+SYSTEM = _read_prompt("system.md")
+VISION_SYSTEM = _read_prompt("vision_system.md")
+BRIDGE_SYSTEM = _read_prompt("bridge_system.md")
+
+# Fallback defaults when no --prompt-templates dir overrides them.
+_BUILTIN_PROMPTS = {
+    "system.md": SYSTEM,
+    "vision_system.md": VISION_SYSTEM,
+    "bridge_system.md": BRIDGE_SYSTEM,
+}
+
+
+def _load_prompts(templates_dir: str | None) -> dict[str, str]:
+    if not templates_dir:
+        return dict(_BUILTIN_PROMPTS)
+    root = Path(templates_dir).expanduser()
+    out: dict[str, str] = {}
+    for name, default in _BUILTIN_PROMPTS.items():
+        custom = root / name
+        out[name] = custom.read_text(encoding="utf-8") if custom.is_file() else default
+    return out
 
 
 class LlmPromptParser:
     name = "llm"
 
-    def __init__(self, llm) -> None:
+    def __init__(self, llm, vision_batch: int = 2, templates_dir: str | None = None) -> None:
         self.llm = llm
+        self.vision_batch = max(1, int(vision_batch))
+        self._templates = _load_prompts(templates_dir)
 
     def status(self) -> str:
         return self.llm.status()
@@ -110,7 +139,7 @@ class LlmPromptParser:
         return self._parse_text(raw)
 
     def _parse_text(self, raw: str) -> Intent:
-        text = self.llm.complete(SYSTEM, raw, images=None)
+        text = self.llm.complete(self._templates["system.md"], raw, images=None)
         intent = intent_from_llm_json(text, raw=raw)
         intent.parse_mode = "llm"
         return intent
@@ -122,8 +151,8 @@ class LlmPromptParser:
             return None
         targets: list[Target] = []
         modes: list[str] = []
-        for i in range(0, len(jpegs), _VISION_BATCH):
-            batch = jpegs[i : i + _VISION_BATCH]
+        for i in range(0, len(jpegs), self.vision_batch):
+            batch = jpegs[i : i + self.vision_batch]
             batch_intent = self._vision_batch(raw, batch)
             if batch_intent is None:
                 continue
@@ -145,8 +174,9 @@ class LlmPromptParser:
 
     def _vision_batch(self, raw: str, jpegs: list[bytes]) -> Intent | None:
         # Small VLMs (llava-phi3) often ignore system; put the contract in user text.
+        vision_system = self._templates["vision_system.md"]
         user = (
-            f"{VISION_SYSTEM}\n\n"
+            f"{vision_system}\n\n"
             f"User request:\n{raw}\n\n"
             f"Attached: {len(jpegs)} sampled frame(s) in time order. "
             "Reply with ONLY the JSON object for what you see that matches the request. "
@@ -154,7 +184,7 @@ class LlmPromptParser:
         )
         vision_notes = ""
         try:
-            text = self.llm.complete(VISION_SYSTEM, user, images=jpegs)
+            text = self.llm.complete(vision_system, user, images=jpegs)
             vision_notes = text
             intent = intent_from_llm_json(text, raw=raw)
         except (PipelineError, AdapterUnavailable):
@@ -167,7 +197,7 @@ class LlmPromptParser:
                 "No other text."
             )
             try:
-                text = self.llm.complete(VISION_SYSTEM, repair, images=jpegs)
+                text = self.llm.complete(vision_system, repair, images=jpegs)
                 # Keep the first vision prose for bridging; repair may be shorter junk.
                 if len((text or "").strip()) > len(vision_notes.strip()):
                     vision_notes = text
@@ -195,7 +225,7 @@ class LlmPromptParser:
             "If the notes are vague, keep targets few and specific — never a canned HUD list."
         )
         try:
-            text = self.llm.complete(BRIDGE_SYSTEM, user, images=None)
+            text = self.llm.complete(self._templates["bridge_system.md"], user, images=None)
             return intent_from_llm_json(text, raw=raw)
         except (PipelineError, AdapterUnavailable, Exception):  # noqa: BLE001
             return None

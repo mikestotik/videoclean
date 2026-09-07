@@ -60,6 +60,18 @@ def config_from_flags(
     verify_max_coverage: float = 0.12,
     prompt_frame_stride: int = 4,
     prompt_frame_max: int = 8,
+    vision_batch: int = 2,
+    detector_keyframes: int | None = None,
+    detector_nms_iou: float = 0.3,
+    detector_max_box_area: float = 0.25,
+    tracker_min_score: float = 0.55,
+    tracker_max_template_area: float = 0.12,
+    propainter_mask_dilation: int = 4,
+    propainter_ref_stride: int = 10,
+    propainter_neighbor_length: int = 10,
+    propainter_subvideo_length: int = 80,
+    propainter_raft_iter: int = 20,
+    prompt_templates: str | None = None,
     require_runtime: bool = False,
 ) -> PipelineConfig:
     cfg = PipelineConfig(
@@ -84,6 +96,18 @@ def config_from_flags(
         verify_max_coverage=float(verify_max_coverage),
         prompt_frame_stride=int(prompt_frame_stride),
         prompt_frame_max=int(prompt_frame_max),
+        vision_batch=int(vision_batch),
+        detector_keyframes=None if detector_keyframes is None else int(detector_keyframes),
+        detector_nms_iou=float(detector_nms_iou),
+        detector_max_box_area=float(detector_max_box_area),
+        tracker_min_score=float(tracker_min_score),
+        tracker_max_template_area=float(tracker_max_template_area),
+        propainter_mask_dilation=int(propainter_mask_dilation),
+        propainter_ref_stride=int(propainter_ref_stride),
+        propainter_neighbor_length=int(propainter_neighbor_length),
+        propainter_subvideo_length=int(propainter_subvideo_length),
+        propainter_raft_iter=int(propainter_raft_iter),
+        prompt_templates=prompt_templates,
     )
     cfg.validate()
     if require_device:
@@ -132,6 +156,11 @@ def make_detector(name: str, cfg: PipelineConfig) -> Detector:
             device=cfg.device,
             threshold=cfg.detector_threshold,
             allow_download=cfg.allow_download,
+            keyframes=cfg.detector_keyframes,
+            nms_iou=cfg.detector_nms_iou,
+            max_box_area=cfg.detector_max_box_area,
+            tracker_min_score=cfg.tracker_min_score,
+            tracker_max_template_area=cfg.tracker_max_template_area,
         )
     if name == "owlvit":
         return OwlVitDetector(
@@ -139,6 +168,11 @@ def make_detector(name: str, cfg: PipelineConfig) -> Detector:
             device=cfg.device,
             threshold=cfg.detector_threshold,
             allow_download=cfg.allow_download,
+            keyframes=cfg.detector_keyframes,
+            nms_iou=cfg.detector_nms_iou,
+            max_box_area=cfg.detector_max_box_area,
+            tracker_min_score=cfg.tracker_min_score,
+            tracker_max_template_area=cfg.tracker_max_template_area,
         )
     raise PipelineError(f"no factory for detector {name!r}")
 
@@ -171,12 +205,21 @@ def make_inpainter(cfg: PipelineConfig):
             model_id=cfg.inpainter_model,
             device=cfg.device,
             allow_download=cfg.allow_download,
+            mask_dilation=cfg.propainter_mask_dilation,
+            ref_stride=cfg.propainter_ref_stride,
+            neighbor_length=cfg.propainter_neighbor_length,
+            subvideo_length=cfg.propainter_subvideo_length,
+            raft_iter=cfg.propainter_raft_iter,
         )
     raise PipelineError(f"no factory for inpainter {cfg.inpainter!r}")
 
 
 def make_parser(cfg: PipelineConfig):
-    return LlmPromptParser(resolve_llm(cfg))
+    return LlmPromptParser(
+        resolve_llm(cfg),
+        vision_batch=cfg.vision_batch,
+        templates_dir=cfg.prompt_templates,
+    )
 
 
 def ensure_runtime(cfg: PipelineConfig) -> None:
@@ -347,7 +390,11 @@ def doctor_sections(cfg: PipelineConfig) -> list[tuple[str, list[str]]]:
         f"prompt-parser    llm",
         f"verify           {cfg.verify}",
         f"llm              {cfg.llm_place}  model={cfg.llm_model or '—'}  url={cfg.llm_base_url or '—'}",
-        f"vision-frames    stride={cfg.prompt_frame_stride}  max={cfg.prompt_frame_max}",
+        f"vision-frames    stride={cfg.prompt_frame_stride}  max={cfg.prompt_frame_max}  batch={cfg.vision_batch}",
+        f"detector-tune    keyframes={cfg.detector_keyframes or 'default'}  nms-iou={cfg.detector_nms_iou}  max-box-area={cfg.detector_max_box_area}",
+        f"tracker-tune     min-score={cfg.tracker_min_score}  max-template-area={cfg.tracker_max_template_area}",
+        f"propainter-tune  dilate={cfg.propainter_mask_dilation}  ref-stride={cfg.propainter_ref_stride}  neighbor={cfg.propainter_neighbor_length}  subvideo={cfg.propainter_subvideo_length}  raft={cfg.propainter_raft_iter}",
+        f"prompt-templates {cfg.prompt_templates or 'builtin'}",
         f"format           {', '.join(cfg.formats)}",
         "media            ffmpeg   (always, not a flag)",
     ]

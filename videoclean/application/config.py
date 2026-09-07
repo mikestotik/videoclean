@@ -179,6 +179,24 @@ class PipelineConfig:
     # Vision prompt parse: send every Nth frame (0 = text-only). Cap keeps Ollama payloads small.
     prompt_frame_stride: int = 4
     prompt_frame_max: int = 8
+    # Frames per vision-LLM request. Small VLMs (llava-phi3) degrade past 1-2; stronger
+    # multi-image models can take more. Raise --vision-batch only for models proven multi-image.
+    vision_batch: int = 2
+    # Detector tuning. keyframes=None keeps each detector's own default (dino 8, owlvit 12).
+    detector_keyframes: int | None = None
+    detector_nms_iou: float = 0.3
+    detector_max_box_area: float = 0.25
+    # Template tracker tuning (boxes between keyframes).
+    tracker_min_score: float = 0.55
+    tracker_max_template_area: float = 0.12
+    # ProPainter knobs, forwarded 1:1 to the vendor model.
+    propainter_mask_dilation: int = 4
+    propainter_ref_stride: int = 10
+    propainter_neighbor_length: int = 10
+    propainter_subvideo_length: int = 80
+    propainter_raft_iter: int = 20
+    # Dir with custom prompt templates (system.md, vision_system.md, bridge_system.md).
+    prompt_templates: str | None = None
 
     def validate(self) -> None:
         if self.device not in DEVICES:
@@ -187,6 +205,33 @@ class PipelineConfig:
             raise PipelineError(f"--prompt-frame-stride must be >= 0, got {self.prompt_frame_stride}")
         if self.prompt_frame_max < 1:
             raise PipelineError(f"--prompt-frame-max must be >= 1, got {self.prompt_frame_max}")
+        if self.vision_batch < 1:
+            raise PipelineError(f"--vision-batch must be >= 1, got {self.vision_batch}")
+        if self.detector_keyframes is not None and self.detector_keyframes < 1:
+            raise PipelineError(f"--detector-keyframes must be >= 1, got {self.detector_keyframes}")
+        if not 0.0 < self.detector_nms_iou < 1.0:
+            raise PipelineError(f"--detector-nms-iou must be in (0, 1), got {self.detector_nms_iou}")
+        if not 0.0 < self.detector_max_box_area <= 1.0:
+            raise PipelineError(f"--detector-max-box-area must be in (0, 1], got {self.detector_max_box_area}")
+        if not 0.0 < self.tracker_min_score < 1.0:
+            raise PipelineError(f"--tracker-min-score must be in (0, 1), got {self.tracker_min_score}")
+        if not 0.0 < self.tracker_max_template_area <= 1.0:
+            raise PipelineError(
+                f"--tracker-max-template-area must be in (0, 1], got {self.tracker_max_template_area}"
+            )
+        if self.propainter_mask_dilation < 0:
+            raise PipelineError(f"--propainter-mask-dilation must be >= 0, got {self.propainter_mask_dilation}")
+        if min(
+            self.propainter_ref_stride,
+            self.propainter_neighbor_length,
+            self.propainter_subvideo_length,
+            self.propainter_raft_iter,
+        ) < 1:
+            raise PipelineError("--propainter-ref-stride/neighbor-length/subvideo-length/raft-iter must be >= 1")
+        if self.prompt_templates is not None:
+            root = Path(self.prompt_templates).expanduser()
+            if not root.is_dir():
+                raise PipelineError(f"--prompt-templates: dir not found: {root}")
         for name in self.detectors:
             if name not in DETECTORS:
                 raise PipelineError(f"unknown --detector {name!r}. known: {', '.join(DETECTORS)}")

@@ -55,8 +55,18 @@ LLM parser достаёт из `--prompt` короткие запросы (`red 
 | `--llm-base-url` | корень OpenAI-compatible `/v1` | |
 | `--prompt-frame-stride` | vision-parse: кадр 0, потом каждый N-й (`4` → 0,4,8…). `0` = только текст | по умолчанию `4` |
 | `--prompt-frame-max` | потолок кадров в vision LLM | по умолчанию `8` |
+| `--vision-batch` | кадров на один vision-запрос. llava-phi3 — строго `2` | по умолчанию `2` |
+| `--prompt-templates` | каталог со своими промптами (`system.md`, `vision_system.md`, `bridge_system.md`) | встроенные |
+| `--detector-keyframes` | сколько кадров реально детектить (остальные добирает трекинг) | dino `8`, owlvit `12` |
+| `--detector-nms-iou` | схлопывание дублей боксов | по умолчанию `0.3` |
+| `--detector-max-box-area` | отсечка боксов > доли кадра | по умолчанию `0.25` |
+| `--tracker-min-score` | порог шаблонного трекинга | по умолчанию `0.55` |
+| `--tracker-max-template-area` | потолок площади кропа для трекинга | по умолчанию `0.12` |
+| `--propainter-*` | тюнинг ProPainter: `mask-dilation` `4`, `ref-stride` `10`, `neighbor-length` `10`, `subvideo-length` `80`, `raft-iter` `20` | см. docs/PARAMS.md |
 | `--verify` / `--no-verify` | повторный детект | по умолчанию включён |
 | `--format` | контейнер | `mp4`, `mov`, `mkv`, `webm`, `hls-fmp4`, `hls-ts`, `dash` |
+
+Полный справочник с «когда крутить»: [docs/PARAMS.md](docs/PARAMS.md). Выбор моделей: [docs/MODELS.md](docs/MODELS.md).
 
 Detector получает `Intent.queries` как есть (строки из JSON parser). Select оставляет трек, если `label` пересекается с `query`; `where` и `ordinal` режут уже найденное.
 

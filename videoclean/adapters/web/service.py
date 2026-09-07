@@ -102,6 +102,19 @@ def serialize_clean_form(payload: Mapping[str, Any] | None = None) -> dict[str, 
         "telea_radius": int(data.get("telea_radius") or 9),
         "prompt_frame_stride": int(data.get("prompt_frame_stride") or 4),
         "prompt_frame_max": int(data.get("prompt_frame_max") or 8),
+        "vision_batch": int(data.get("vision_batch") or 2),
+        "detector_keyframes": (
+            int(data["detector_keyframes"]) if str(data.get("detector_keyframes") or "").strip() else None
+        ),
+        "detector_nms_iou": float(data.get("detector_nms_iou") or 0.3),
+        "detector_max_box_area": float(data.get("detector_max_box_area") or 0.25),
+        "tracker_min_score": float(data.get("tracker_min_score") or 0.55),
+        "tracker_max_template_area": float(data.get("tracker_max_template_area") or 0.12),
+        "propainter_mask_dilation": int(data.get("propainter_mask_dilation") or 4),
+        "propainter_ref_stride": int(data.get("propainter_ref_stride") or 10),
+        "propainter_neighbor_length": int(data.get("propainter_neighbor_length") or 10),
+        "propainter_subvideo_length": int(data.get("propainter_subvideo_length") or 80),
+        "propainter_raft_iter": int(data.get("propainter_raft_iter") or 20),
         "overwrite": _as_bool(data.get("overwrite"), True),
     }
 
