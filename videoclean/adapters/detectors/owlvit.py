@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 
 import numpy as np
 
@@ -15,6 +14,7 @@ from videoclean.adapters.detectors._cv import (
     match_template,
     sample_indices,
 )
+from videoclean.adapters.hf_cache import download_hint, hf_cached
 from videoclean.domain.tracks import Track, infer_motion
 
 # OwlViTTextConfig.max_position_embeddings. Per visual class, not the user prompt.
@@ -94,12 +94,11 @@ class OwlVitDetector:
             return f"ready ({self.model_id} on {self.device})"
         if self._load_error:
             return f"unavailable: {self._load_error}"
-        cache = Path.home() / ".cache" / "huggingface" / "hub" / ("models--" + self.model_id.replace("/", "--"))
-        if cache.exists():
+        if hf_cached(self.model_id):
             return f"ready (weights on disk: {self.model_id}; loads on first detect, device={self.device})"
         return (
             f"unavailable: {self.model_id} not in local HF cache. "
-            f"Download: uv run huggingface-cli download {self.model_id}  "
+            f"{download_hint(self.model_id)}  "
             f"or pass --download-models"
         )
 

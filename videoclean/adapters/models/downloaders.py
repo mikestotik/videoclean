@@ -13,6 +13,7 @@ from videoclean.adapters.inpainters.lama import LAMA_MODEL_URL, _default_model_p
 from videoclean.adapters.inpainters.propainter import DEFAULT_HF_REPO, find_vendor
 from videoclean.adapters.models.catalog import COMPONENT_BY_ID, OLLAMA_API
 from videoclean.application.errors import DownloadCancelled, PipelineError
+from videoclean.store import resolve_data_dir
 
 OnProgress = Callable[..., None]
 IsCancelled = Callable[[], bool]
@@ -231,14 +232,14 @@ def _propainter_vendor_dest() -> Path:
     env = os.environ.get("VIDEOCLEAN_PROPAINTER_ROOT", "").strip()
     if env:
         return Path(env).expanduser()
-    return Path.home() / ".videoclean" / "vendor" / "ProPainter"
+    return resolve_data_dir() / "vendor" / "ProPainter"
 
 
 def _propainter_weights_dest() -> Path:
     env = os.environ.get("VIDEOCLEAN_PROPAINTER_WEIGHTS", "").strip()
     if env:
         return Path(env).expanduser()
-    return Path.home() / ".videoclean" / "weights" / "propainter"
+    return resolve_data_dir() / "weights" / "propainter"
 
 
 def _check(is_cancelled: IsCancelled | None) -> None:

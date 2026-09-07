@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import threading
 from collections.abc import Mapping
 from datetime import datetime, timezone
@@ -699,6 +700,37 @@ def launch_ui(state: AppState, host: str, port: int, auth: tuple[str, str] | Non
     )
 
 
+def shutdown_serve(state: AppState, join_s: float = 30) -> None:
+    for row in state.jobs.list_jobs(state="RUNNING", limit=10_000):
+        state.jobs.request_cancel(row["id"])
+    if state.worker is not None:
+        state.worker.stop(timeout=join_s)
+
+
+def install_serve_signal_handlers(state: AppState, join_s: float = 30):
+    previous = {
+        signal.SIGINT: signal.getsignal(signal.SIGINT),
+        signal.SIGTERM: signal.getsignal(signal.SIGTERM),
+    }
+
+    def handler(signum, frame):
+        shutdown_serve(state, join_s=join_s)
+        prev = previous.get(signum)
+        if callable(prev):
+            prev(signum, frame)
+
+    signal.signal(signal.SIGINT, handler)
+    signal.signal(signal.SIGTERM, handler)
+
+    def restore() -> None:
+        for sig, prev in previous.items():
+            if prev is None:
+                continue
+            signal.signal(sig, prev)
+
+    return restore
+
+
 def launch_from_env(
     *,
     host: str = "0.0.0.0",
@@ -714,7 +746,12 @@ def launch_from_env(
     state.manage.recover_orphans()
     if state.worker is not None:
         state.worker.start()
-    launch_ui(state, host, port_i, auth)
+    restore = install_serve_signal_handlers(state)
+    try:
+        launch_ui(state, host, port_i, auth)
+    finally:
+        shutdown_serve(state)
+        restore()
 
 
 def _choice_list(

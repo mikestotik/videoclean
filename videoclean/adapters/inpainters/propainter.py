@@ -8,8 +8,9 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from videoclean.adapters.hf_cache import download_hint, hf_cached, hf_hub_dir
+from videoclean.adapters.hf_cache import download_hint, hf_hub_dir
 from videoclean.application.errors import AdapterUnavailable
+from videoclean.store import resolve_data_dir
 
 WEIGHT_FILES = ("ProPainter.pth", "raft-things.pth", "recurrent_flow_completion.pth")
 DEFAULT_HF_REPO = "camenduru/ProPainter"
@@ -58,12 +59,13 @@ class ProPainterInpainter:
         missing: list[str] = []
         if root is None:
             missing.append(
-                "clone https://github.com/sczhou/ProPainter.git to ~/.videoclean/vendor/ProPainter"
+                "clone https://github.com/sczhou/ProPainter.git to "
+                f"{resolve_data_dir() / 'vendor' / 'ProPainter'}"
             )
         if weights is None:
             missing.append(
                 f"weights ({', '.join(WEIGHT_FILES)}). "
-                f"{download_hint(self.model_id)}  --local-dir ~/.videoclean/weights/propainter"
+                f"{download_hint(self.model_id)}  --local-dir {resolve_data_dir() / 'weights' / 'propainter'}"
             )
         if missing:
             return "unavailable: " + " | ".join(missing)
@@ -313,7 +315,7 @@ def find_vendor() -> Path | None:
     candidates = []
     if env:
         candidates.append(Path(env).expanduser())
-    candidates.append(Path.home() / ".videoclean" / "vendor" / "ProPainter")
+    candidates.append(resolve_data_dir() / "vendor" / "ProPainter")
     for path in candidates:
         if (path / "model" / "propainter.py").is_file():
             return path
@@ -328,7 +330,7 @@ def find_weights(model_id: str) -> Path | None:
     local = Path(model_id).expanduser()
     if local.is_dir():
         candidates.append(local)
-    candidates.append(Path.home() / ".videoclean" / "weights" / "propainter")
+    candidates.append(resolve_data_dir() / "weights" / "propainter")
     vendor = find_vendor()
     if vendor:
         candidates.append(vendor / "weights")
@@ -347,7 +349,7 @@ def find_weights(model_id: str) -> Path | None:
 
 
 def _download_weights(model_id: str) -> Path | None:
-    dest = Path.home() / ".videoclean" / "weights" / "propainter"
+    dest = resolve_data_dir() / "weights" / "propainter"
     dest.mkdir(parents=True, exist_ok=True)
     try:
         from huggingface_hub import snapshot_download

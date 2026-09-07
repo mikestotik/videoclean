@@ -14,13 +14,16 @@ from videoclean.adapters.web.gradio_app import (
     format_active_progress,
     format_jobs_table,
     format_models_table,
+    install_serve_signal_handlers,
     is_job_stale,
+    launch_from_env,
     launch_ui,
     max_quality_ready,
     missing_hint,
     queue_clean_job,
     ready_choices,
     serialize_clean_form,
+    shutdown_serve,
 )
 from videoclean.application.use_cases.manage_jobs import ManageJobs, pipeline_config_from_dict
 from videoclean.store import JobIndex
@@ -136,6 +139,110 @@ def test_auth_from_env_ok():
 
 def test_auth_from_env_defaults_user():
     assert auth_from_env({"VIDEOCLEAN_UI_PASSWORD": "secret"}) == ("admin", "secret")
+
+
+def test_shutdown_serve_cancels_running_and_stops_worker(tmp_path: Path):
+    jobs = JobIndex(tmp_path / "jobs.sqlite")
+    jobs.upsert("r1", "RUNNING")
+    jobs.upsert("q1", "QUEUED")
+
+    class FakeWorker:
+        def __init__(self):
+            self.stop_timeout = None
+
+        def stop(self, timeout=5):
+            self.stop_timeout = timeout
+
+    worker = FakeWorker()
+    state = AppState(
+        data_dir=tmp_path,
+        jobs=jobs,
+        manage=ManageJobs(jobs),
+        catalog=FakeCat(),
+        worker=worker,
+    )
+    shutdown_serve(state, join_s=30)
+    assert jobs.is_cancel_requested("r1") is True
+    assert jobs.is_cancel_requested("q1") is False
+    assert worker.stop_timeout == 30
+
+
+def test_install_serve_signal_handlers_wires_sigterm(monkeypatch, tmp_path: Path):
+    import signal
+
+    from videoclean.adapters.web import gradio_app as ga
+
+    jobs = JobIndex(tmp_path / "jobs.sqlite")
+    jobs.upsert("r1", "RUNNING")
+    handlers: dict[int, object] = {}
+
+    def fake_signal(sig, handler):
+        handlers[sig] = handler
+        return signal.SIG_DFL
+
+    monkeypatch.setattr(ga.signal, "signal", fake_signal)
+    monkeypatch.setattr(ga.signal, "getsignal", lambda sig: signal.SIG_DFL)
+
+    class FakeWorker:
+        def stop(self, timeout=5):
+            self.timeout = timeout
+
+    worker = FakeWorker()
+    state = AppState(
+        data_dir=tmp_path,
+        jobs=jobs,
+        manage=ManageJobs(jobs),
+        catalog=FakeCat(),
+        worker=worker,
+    )
+    restore = install_serve_signal_handlers(state, join_s=30)
+    assert signal.SIGTERM in handlers
+    assert signal.SIGINT in handlers
+    handlers[signal.SIGTERM](signal.SIGTERM, None)
+    assert jobs.is_cancel_requested("r1") is True
+    assert worker.timeout == 30
+    restore()
+
+
+def test_launch_from_env_stops_worker_on_return(monkeypatch, tmp_path: Path):
+    pytest.importorskip("gradio")
+    jobs = JobIndex(tmp_path / "jobs.sqlite")
+
+    class FakeWorker:
+        def __init__(self):
+            self.started = False
+            self.stop_timeout = None
+
+        def start(self):
+            self.started = True
+
+        def stop(self, timeout=5):
+            self.stop_timeout = timeout
+
+    worker = FakeWorker()
+
+    def fake_build(root, **kwargs):
+        return AppState(
+            data_dir=root,
+            jobs=jobs,
+            manage=ManageJobs(jobs),
+            catalog=FakeCat(),
+            worker=worker,
+        )
+
+    monkeypatch.setattr("videoclean.adapters.web.gradio_app.build_app_state", fake_build)
+    monkeypatch.setattr(
+        "videoclean.adapters.web.gradio_app.launch_ui",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "videoclean.adapters.web.gradio_app.install_serve_signal_handlers",
+        lambda state, join_s=30: (lambda: None),
+    )
+    monkeypatch.setenv("VIDEOCLEAN_UI_PASSWORD", "secret")
+    launch_from_env(host="127.0.0.1", port=7860, data_dir=tmp_path)
+    assert worker.started is True
+    assert worker.stop_timeout == 30
 
 
 def test_launch_ui_refuses_missing_password(tmp_path: Path):

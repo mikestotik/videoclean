@@ -33,7 +33,7 @@ from videoclean.application.jobs.worker import JobWorker
 from videoclean.application.use_cases.download_component import DownloadComponent
 from videoclean.application.use_cases.package_media import PackageMedia
 from videoclean.application.use_cases.run_cleanup import RunCleanup
-from videoclean.store import JobIndex, JobPaths, new_job_id, utc_now
+from videoclean.store import JobIndex, JobPaths, new_job_id, resolve_data_dir, utc_now
 
 
 def config_from_flags(
@@ -248,14 +248,6 @@ def build_downloader() -> DownloadComponent:
     from videoclean.adapters.models.downloaders import run_download
 
     return DownloadComponent(run_download)
-
-
-def resolve_data_dir(env: Mapping[str, str] | None = None) -> Path:
-    env_map = os.environ if env is None else env
-    raw = str(env_map.get("VIDEOCLEAN_DATA_DIR") or "").strip()
-    if raw:
-        return Path(raw).expanduser()
-    return Path.home() / ".videoclean"
 
 
 def default_serve_port(env: Mapping[str, str] | None = None) -> int:

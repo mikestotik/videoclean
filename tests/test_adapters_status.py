@@ -1,6 +1,8 @@
 import pytest
 
-from videoclean.adapters.inpainters.lama import LamaInpainter
+from pathlib import Path
+
+from videoclean.adapters.inpainters.lama import LamaInpainter, find_weights as find_lama_weights
 from videoclean.adapters.inpainters.propainter import ProPainterInpainter, find_vendor, find_weights
 from videoclean.adapters.segmenters.sam2 import Sam2Segmenter
 from videoclean.application.config import PipelineConfig
@@ -21,6 +23,32 @@ def test_find_vendor_missing_by_default():
     # May exist on a GPU box; the function must not raise.
     find_vendor()
     find_weights("camenduru/ProPainter")
+
+
+def test_propainter_paths_honor_data_dir(monkeypatch, tmp_path: Path):
+    data = tmp_path / "vc-data"
+    vendor = data / "vendor" / "ProPainter"
+    (vendor / "model").mkdir(parents=True)
+    (vendor / "model" / "propainter.py").write_text("#", encoding="utf-8")
+    weights = data / "weights" / "propainter"
+    weights.mkdir(parents=True)
+    for name in ("ProPainter.pth", "raft-things.pth", "recurrent_flow_completion.pth"):
+        (weights / name).write_bytes(b"x")
+    monkeypatch.setenv("VIDEOCLEAN_DATA_DIR", str(data))
+    monkeypatch.delenv("VIDEOCLEAN_PROPAINTER_ROOT", raising=False)
+    monkeypatch.delenv("VIDEOCLEAN_PROPAINTER_WEIGHTS", raising=False)
+    assert find_vendor() == vendor
+    assert find_weights("camenduru/ProPainter") == weights
+
+
+def test_lama_find_weights_honors_data_dir(monkeypatch, tmp_path: Path):
+    data = tmp_path / "vc-data"
+    dest = data / "weights" / "lama" / "big-lama.pt"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(b"weights")
+    monkeypatch.setenv("VIDEOCLEAN_DATA_DIR", str(data))
+    monkeypatch.delenv("LAMA_MODEL", raising=False)
+    assert find_lama_weights() == dest
 
 
 def test_factories_accept_sam2_and_propainter():

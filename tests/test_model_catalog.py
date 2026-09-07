@@ -8,7 +8,9 @@ from videoclean.store import JobIndex
 
 
 @pytest.fixture(autouse=True)
-def _mock_ollama_tags(monkeypatch):
+def _mock_ollama_tags(monkeypatch, request):
+    if request.node.name.startswith("test_ollama_tags_"):
+        return
     monkeypatch.setattr("videoclean.adapters.models.catalog.ollama_tags", lambda: None)
 
 
@@ -86,6 +88,27 @@ def test_list_status_downloading(monkeypatch, tmp_path: Path):
     by_id = {r.info.id: r for r in cat.list_status()}
     assert by_id["detector:owlvit"].state == "downloading"
     assert "fetch" in by_id["detector:owlvit"].message
+
+
+def test_ollama_tags_caches_negative_and_uses_short_timeout(monkeypatch):
+    from videoclean.adapters.models import catalog as cat
+
+    cat._ollama_neg_until = 0.0
+    calls: list[float | None] = []
+
+    def boom(req, timeout=None):
+        calls.append(timeout)
+        raise TimeoutError("down")
+
+    monkeypatch.setattr(cat.urllib.request, "urlopen", boom)
+    assert cat.ollama_tags() is None
+    assert cat.ollama_tags() is None
+    assert calls == [cat.OLLAMA_TAGS_TIMEOUT_S]
+    assert cat.OLLAMA_TAGS_TIMEOUT_S <= 0.2
+    assert cat._ollama_neg_until > 0
+    cat._ollama_neg_until = 0.0
+    assert cat.ollama_tags() is None
+    assert len(calls) == 2
 
 
 def test_list_status_caches_ollama_tags(monkeypatch, tmp_path: Path):
@@ -249,6 +272,44 @@ def test_download_ollama_streams_progress(monkeypatch):
     )
     assert ticks[0][0] == pytest.approx(0.1)
     assert ticks[-1][0] == 1.0
+
+
+def test_download_propainter_honors_data_dir(monkeypatch, tmp_path: Path):
+    from videoclean.adapters.models import downloaders as d
+
+    data = tmp_path / "custom-data"
+    monkeypatch.setenv("VIDEOCLEAN_DATA_DIR", str(data))
+    monkeypatch.delenv("VIDEOCLEAN_PROPAINTER_ROOT", raising=False)
+    monkeypatch.delenv("VIDEOCLEAN_PROPAINTER_WEIGHTS", raising=False)
+    monkeypatch.setattr(d, "find_vendor", lambda: None)
+    cloned: list[Path] = []
+    hf: list[str] = []
+    monkeypatch.setattr(d, "_git_clone", lambda url, dest, **kw: cloned.append(dest))
+    monkeypatch.setattr(
+        d, "download_hf", lambda repo_id, **kw: hf.append(str(kw.get("local_dir")))
+    )
+    d.download_propainter(is_cancelled=lambda: False)
+    assert cloned[0] == data / "vendor" / "ProPainter"
+    assert Path(hf[0]) == data / "weights" / "propainter"
+
+
+def test_download_lama_honors_data_dir(monkeypatch, tmp_path: Path):
+    from videoclean.adapters.models import downloaders as d
+
+    data = tmp_path / "custom-data"
+    dest = data / "weights" / "lama" / "big-lama.pt"
+    monkeypatch.setenv("VIDEOCLEAN_DATA_DIR", str(data))
+    monkeypatch.delenv("LAMA_MODEL", raising=False)
+
+    def fake_retrieve(url, path, reporthook):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"weights")
+        reporthook(1, 7, 7)
+
+    monkeypatch.setattr(d, "_urlretrieve", fake_retrieve)
+    d.download_lama(is_cancelled=lambda: False)
+    assert dest.is_file()
+    assert dest.read_bytes() == b"weights"
 
 
 def test_download_propainter_clones_then_weights(monkeypatch, tmp_path: Path):

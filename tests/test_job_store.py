@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from videoclean.store import JobIndex
+from videoclean.store import SQLITE_TIMEOUT_S, JobIndex
 
 
 def test_schema_has_queue_fields(tmp_path: Path):
@@ -27,3 +27,11 @@ def test_cancel_flag(tmp_path: Path):
     idx.upsert("c", "RUNNING")
     assert idx.request_cancel("c") is True
     assert idx.is_cancel_requested("c") is True
+
+
+def test_sqlite_wal_and_timeout(tmp_path: Path):
+    idx = JobIndex(tmp_path / "jobs.sqlite")
+    assert SQLITE_TIMEOUT_S > 0
+    with idx._connect() as con:
+        mode = con.execute("PRAGMA journal_mode").fetchone()[0]
+        assert str(mode).lower() == "wal"

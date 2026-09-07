@@ -31,12 +31,16 @@ docker push YOUR_DOCKERHUB_USER/videoclean:runpod
 | `VIDEOCLEAN_UI_USER` | `admin` (or whatever you want) |
 | `VIDEOCLEAN_UI_PASSWORD` | a real password — not `change-me` |
 | `VIDEOCLEAN_PORT` | `7860` |
-| `VIDEOCLEAN_DATA_DIR` | `/workspace/.videoclean` |
+| `VIDEOCLEAN_DATA_DIR` | `/workspace/.videoclean` — jobs, uploads, ProPainter vendor+weights, LaMa `big-lama.pt` |
 | `HF_HOME` | `/workspace/.cache/huggingface` |
+| `HF_HUB_CACHE` | optional; defaults to `$HF_HOME/hub` |
+| `VIDEOCLEAN_PROPAINTER_ROOT` | optional override (else `$VIDEOCLEAN_DATA_DIR/vendor/ProPainter`) |
+| `VIDEOCLEAN_PROPAINTER_WEIGHTS` | optional override (else `$VIDEOCLEAN_DATA_DIR/weights/propainter`) |
+| `LAMA_MODEL` | optional path to `big-lama.pt` (else `$VIDEOCLEAN_DATA_DIR/weights/lama/big-lama.pt`) |
 | `XAI_API_KEY` | optional cloud LLM |
 | `OPENAI_API_KEY` | optional |
 
-Point data + HF cache at `/workspace` so downloads survive pod stop/terminate when a network volume is attached. Defaults in the image are `/root/.videoclean` and `/root/.cache/huggingface` (container disk only).
+Point data + HF cache at `/workspace` so downloads survive pod stop/terminate when a network volume is attached. Defaults in the image are `/root/.videoclean` and `/root/.cache/huggingface` (container disk only). Catalog status honors `HF_HUB_CACHE` / `HF_HOME` (huggingface_hub), not only `~/.cache/huggingface`.
 
 ## 4. Start and open the UI
 

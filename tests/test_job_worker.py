@@ -111,6 +111,27 @@ def test_cancel_queued_not_executed(tmp_path: Path):
         worker.stop()
 
 
+def test_successful_execute_keeps_completed_despite_cancel_flag(tmp_path: Path):
+    jobs = JobIndex(tmp_path / "j.sqlite")
+    mgr = ManageJobs(jobs)
+
+    class CompletingRunner:
+        def execute(self, req, data_dir):
+            jobs.upsert(req.job_id, "COMPLETED", report={"jobId": req.job_id, "state": "COMPLETED"})
+            jobs.request_cancel(req.job_id)
+            return {"jobId": req.job_id, "state": "COMPLETED"}
+
+    worker = JobWorker(tmp_path, jobs, lambda cfg, progress, jobs, job_id: CompletingRunner())
+    jid = mgr.submit({}, tmp_path / "a.mp4", tmp_path / "b.mp4", "x")
+    worker.start()
+    try:
+        _wait_state(jobs, jid, "COMPLETED", "CANCELLED")
+        assert jobs.get(jid)["state"] == "COMPLETED"
+        assert jobs.is_cancel_requested(jid) is True
+    finally:
+        worker.stop()
+
+
 def test_cancel_running_sets_flag(tmp_path: Path):
     jobs = JobIndex(tmp_path / "j.sqlite")
     mgr = ManageJobs(jobs)

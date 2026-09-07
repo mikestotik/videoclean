@@ -33,11 +33,11 @@ class JobWorker:
         )
         self._thread.start()
 
-    def stop(self) -> None:
+    def stop(self, timeout: float = 5) -> None:
         self._stop.set()
         thread = self._thread
         if thread is not None:
-            thread.join(timeout=5)
+            thread.join(timeout=timeout)
 
     def _loop(self) -> None:
         while not self._stop.is_set():
@@ -88,15 +88,19 @@ class JobWorker:
             self.jobs.upsert(job_id, "CANCELLED", error="cancelled")
             return
         except Exception as exc:  # noqa: BLE001 — queue must isolate job failures
+            current = self.jobs.get(job_id)
+            if current is None or current["state"] != "RUNNING":
+                return
             if self.jobs.is_cancel_requested(job_id):
                 self.jobs.upsert(job_id, "CANCELLED", error=str(exc)[:500])
             else:
                 self.jobs.upsert(job_id, "FAILED", error=str(exc)[:500])
             return
+        current = self.jobs.get(job_id)
+        if current is None or current["state"] != "RUNNING":
+            return
         if self.jobs.is_cancel_requested(job_id):
             self.jobs.upsert(job_id, "CANCELLED", error="cancelled")
             return
-        current = self.jobs.get(job_id)
-        if current is not None and current["state"] == "RUNNING":
-            payload = report if isinstance(report, dict) else None
-            self.jobs.upsert(job_id, "COMPLETED", report=payload)
+        payload = report if isinstance(report, dict) else None
+        self.jobs.upsert(job_id, "COMPLETED", report=payload)

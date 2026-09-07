@@ -8,6 +8,7 @@ import numpy as np
 from PIL import Image
 
 from videoclean.application.errors import AdapterUnavailable
+from videoclean.store import resolve_data_dir
 
 # Torch Hub checkpoint used by simple-lama-inpainting (big-lama.pt).
 LAMA_MODEL_URL = (
@@ -15,10 +16,11 @@ LAMA_MODEL_URL = (
 )
 
 
-def _default_model_path() -> Path:
-    env = (os.environ.get("LAMA_MODEL") or "").strip()
-    if env:
-        return Path(env)
+def _data_dir_model_path() -> Path:
+    return resolve_data_dir() / "weights" / "lama" / "big-lama.pt"
+
+
+def _torch_hub_model_path() -> Path:
     try:
         from torch.hub import get_dir
     except ImportError:
@@ -26,9 +28,22 @@ def _default_model_path() -> Path:
     return Path(get_dir()) / "checkpoints" / "big-lama.pt"
 
 
+def _default_model_path() -> Path:
+    env = (os.environ.get("LAMA_MODEL") or "").strip()
+    if env:
+        return Path(env).expanduser()
+    return _data_dir_model_path()
+
+
 def find_weights() -> Path | None:
-    path = _default_model_path()
-    return path if path.is_file() else None
+    seen: set[Path] = set()
+    for path in (_default_model_path(), _data_dir_model_path(), _torch_hub_model_path()):
+        if path in seen:
+            continue
+        seen.add(path)
+        if path.is_file():
+            return path
+    return None
 
 
 class LamaInpainter:

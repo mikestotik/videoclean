@@ -1,12 +1,24 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+SQLITE_TIMEOUT_S = 30.0
+
+
+def resolve_data_dir(env: Mapping[str, str] | None = None) -> Path:
+    env_map = os.environ if env is None else env
+    raw = str(env_map.get("VIDEOCLEAN_DATA_DIR") or "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    return Path.home() / ".videoclean"
 
 
 def utc_now() -> datetime:
@@ -114,8 +126,9 @@ class JobIndex:
                     raise
 
     def _connect(self) -> sqlite3.Connection:
-        con = sqlite3.connect(self.db_path)
+        con = sqlite3.connect(self.db_path, timeout=SQLITE_TIMEOUT_S)
         con.row_factory = sqlite3.Row
+        con.execute("PRAGMA journal_mode=WAL")
         return con
 
     def upsert(

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -15,6 +17,11 @@ from videoclean.application.ports.model_catalog import ComponentInfo, ComponentS
 from videoclean.store import JobIndex
 
 OLLAMA_API = "http://127.0.0.1:11434"
+OLLAMA_TAGS_TIMEOUT_S = 0.2
+OLLAMA_NEG_TTL_S = 30.0
+
+_ollama_neg_lock = threading.Lock()
+_ollama_neg_until = 0.0
 
 COMPONENTS: tuple[ComponentInfo, ...] = (
     ComponentInfo(
@@ -191,12 +198,19 @@ class ModelCatalog:
 
 
 def ollama_tags() -> set[str] | None:
+    global _ollama_neg_until
+    now = time.monotonic()
+    with _ollama_neg_lock:
+        if now < _ollama_neg_until:
+            return None
     url = OLLAMA_API.rstrip("/") + "/api/tags"
     req = urllib.request.Request(url, method="GET")
     try:
-        with urllib.request.urlopen(req, timeout=1.0) as resp:
+        with urllib.request.urlopen(req, timeout=OLLAMA_TAGS_TIMEOUT_S) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError, ValueError):
+        with _ollama_neg_lock:
+            _ollama_neg_until = time.monotonic() + OLLAMA_NEG_TTL_S
         return None
     names: set[str] = set()
     for model in payload.get("models") or []:
@@ -205,4 +219,6 @@ def ollama_tags() -> set[str] | None:
             continue
         names.add(name)
         names.add(name.split(":")[0])
+    with _ollama_neg_lock:
+        _ollama_neg_until = 0.0
     return names
