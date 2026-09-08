@@ -34,6 +34,8 @@ type Props = {
   inpaint: ReturnType<typeof useInpaintRun>
   resultJob: Job | null
   masks?: number[]
+  onRunAll?: () => void
+  runAllBusy?: boolean
   onOpenConfig?: () => void
   onOpenResult?: () => void
 }
@@ -48,6 +50,8 @@ export function StageRail({
   inpaint,
   resultJob,
   masks,
+  onRunAll,
+  runAllBusy,
   onOpenConfig,
   onOpenResult,
 }: Props) {
@@ -55,6 +59,17 @@ export function StageRail({
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const noSource = !source
   const set = (patch: Partial<EditorParams>) => onParamsChange({ ...params, ...patch })
+
+  const hasMasks = (masks?.length ?? 0) > 0
+  const hasPrompt = params.prompt.trim().length > 0
+
+  const runAllDisabled =
+    noSource ||
+    runAllBusy ||
+    interpret.running ||
+    detect.running ||
+    inpaint.running ||
+    (!hasPrompt && !hasMasks)
 
   const activeStage = resultJob?.state === "COMPLETED"
     ? 5
@@ -103,7 +118,15 @@ export function StageRail({
   }
 
   return (
-    <aside className="flex w-[360px] shrink-0 flex-col overflow-y-auto rounded-md border bg-card">
+    <aside className="flex h-full min-h-0 flex-col overflow-y-auto rounded-md border bg-card">
+      <div className="flex items-center gap-2 border-b px-3 py-2">
+        <span className="text-sm font-medium">Конвейер</span>
+        {onRunAll && (
+          <Button size="sm" className="ml-auto" disabled={runAllDisabled} onClick={onRunAll}>
+            {runAllBusy ? "Идёт…" : "Запустить всё"}
+          </Button>
+        )}
+      </div>
       <StageSection n={1} title="Вход" active={activeStage === 1}>
         <Textarea
           value={params.prompt}

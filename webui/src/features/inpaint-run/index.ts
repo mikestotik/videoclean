@@ -17,9 +17,18 @@ export type InpaintProgress = { fraction: number; detail: string; eta: string }
 export function useInpaintRun(source: Source | null) {
   const [running, setRunning] = useState(false)
   const [jobId, setJobId] = useState<string | null>(null)
+  const [lastJobId, setLastJobId] = useState<string | null>(null)
   const [progress, setProgress] = useState<InpaintProgress>({ fraction: 0, detail: "", eta: "" })
   const [error, setError] = useState("")
   const runIdRef = useRef(0)
+
+  const [prevSourceId, setPrevSourceId] = useState(source?.id)
+  if (prevSourceId !== source?.id) {
+    setPrevSourceId(source?.id)
+    setJobId(null)
+    setLastJobId(null)
+    setError("")
+  }
 
   const run = useCallback(
     async (payload: InpaintPayload, params: Record<string, string | number | boolean> = {}) => {
@@ -45,6 +54,7 @@ export function useInpaintRun(source: Source | null) {
           }
         })
         if (runId !== runIdRef.current) return null
+        setLastJobId(done.id)
         return done.id
       } catch (e) {
         if (runId === runIdRef.current) setError(e instanceof Error ? e.message : String(e))
@@ -59,5 +69,5 @@ export function useInpaintRun(source: Source | null) {
     [running, source],
   )
 
-  return { run, running, jobId, progress, error }
+  return { run, running, jobId, lastJobId, progress, error }
 }

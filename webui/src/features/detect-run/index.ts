@@ -47,6 +47,7 @@ export type DetectRunPayload = {
 export function useDetectRun(source: Source | null) {
   const [running, setRunning] = useState(false)
   const [jobId, setJobId] = useState<string | null>(null)
+  const [lastJobId, setLastJobId] = useState<string | null>(null)
   const [progress, setProgress] = useState<{ fraction: number; detail: string; eta: string }>({
     fraction: 0,
     detail: "",
@@ -56,6 +57,16 @@ export function useDetectRun(source: Source | null) {
   const [manifest, setManifest] = useState<PreviewManifest | null>(null)
   const [tracks, setTracks] = useState<DetectTrack[]>([])
   const runIdRef = useRef(0)
+
+  const [prevSourceId, setPrevSourceId] = useState(source?.id)
+  if (prevSourceId !== source?.id) {
+    setPrevSourceId(source?.id)
+    setJobId(null)
+    setLastJobId(null)
+    setManifest(null)
+    setTracks([])
+    setError("")
+  }
 
   const run = useCallback(
     async (payload: DetectRunPayload) => {
@@ -90,6 +101,7 @@ export function useDetectRun(source: Source | null) {
         if (runId !== runIdRef.current) return
         setManifest(m)
         setTracks(parseTracks((report as ReportBody | null)?.tracks))
+        setLastJobId(done.id)
       } catch (e) {
         if (runId === runIdRef.current) setError(e instanceof Error ? e.message : String(e))
       } finally {
@@ -102,5 +114,5 @@ export function useDetectRun(source: Source | null) {
     [running, source],
   )
 
-  return { run, running, jobId, progress, error, manifest, tracks }
+  return { run, running, jobId, lastJobId, progress, error, manifest, tracks }
 }

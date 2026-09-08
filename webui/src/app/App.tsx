@@ -1,10 +1,15 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { ConfigPage } from "@pages/config"
 import { WorkspacePage } from "@pages/workspace"
 import { Tabs, TabsList, TabsTrigger } from "@/shared/ui/tabs"
 
 export function App() {
   const [tab, setTab] = useState("workspace")
+  useEffect(() => {
+    const openConfig = () => setTab("config")
+    window.addEventListener("videoclean:open-config", openConfig)
+    return () => window.removeEventListener("videoclean:open-config", openConfig)
+  }, [])
   return (
     <div className="flex h-svh flex-col overflow-hidden">
       <header className="flex items-center gap-4 border-b border-border px-4 py-2">
