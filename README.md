@@ -186,7 +186,9 @@ uv run videoclean preview \
 
 ## UI (FastAPI) и RunPod
 
-Порт `7860` (`VIDEOCLEAN_PORT`). Логин HTTP Basic: `VIDEOCLEAN_UI_USER` + `VIDEOCLEAN_UI_PASSWORD` (пароль обязателен). Два экрана: рабочая (видео, prompt, параметры, история) и конфиг (doctor, модели по категориям).
+Порт `7860` (`VIDEOCLEAN_PORT`). Логин HTTP Basic: `VIDEOCLEAN_UI_USER` + `VIDEOCLEAN_UI_PASSWORD` (пароль обязателен). Экраны: рабочая (плеер + филмстрип кадров, мультивыбор, превью масок на выделении, таргеты, полный прогон, история джобов) и конфиг (doctor, модели по категориям).
+
+Структура репозитория и правила слоёв — [AGENTS.md](AGENTS.md): `videoclean/` — библиотека (Clean Architecture), `server/` — FastAPI-хост, `webui/` — React-фронт (FSD, shadcn).
 
 ```bash
 uv sync --extra web
@@ -194,18 +196,28 @@ VIDEOCLEAN_UI_USER=admin VIDEOCLEAN_UI_PASSWORD=change-me \
   uv run videoclean serve --host 127.0.0.1 --port 7860
 ```
 
-Внешний API (тот же процесс): `POST /api/jobs` multipart `video` + `prompt`, статус `GET /api/jobs/{id}`, файл `GET /api/jobs/{id}/output`. Заголовок `Authorization: Bearer $VIDEOCLEAN_API_TOKEN` (если токен не задан, сработает пароль UI). Карта: `GET /api`.
+UI собирается из `webui/` и раздаётся из `server/static_dist/` (в git лежит собранная версия). Пересборка фронта:
+
+```bash
+cd webui && bun install && bun run build   # vite build → server/static_dist/
+bun run dev                                 # dev-режим, proxy /api → :7860
+```
+
+Внешний API (тот же процесс): `POST /api/jobs` multipart `video` + `prompt`, статус `GET /api/jobs/{id}`, файл `GET /api/jobs/{id}/output`, превью на существующем видео `POST /api/preview/from-job` (JSON: `job_id`, `indices`, `prompt`/`targets`), манифест `GET /api/jobs/{id}/probe`. Заголовок `Authorization: Bearer $VIDEOCLEAN_API_TOKEN` (если токен не задан, сработает пароль UI). Карта: `GET /api`.
 
 Docker и деплой на RTX 4090: [docs/RUNPOD.md](docs/RUNPOD.md). Веса Hugging Face в образ не входят — качаются с экрана Конфиг после старта.
 
 ## Код
 
 ```
-videoclean/domain/          Intent, Track, форматы
-videoclean/application/     порты и use case
-videoclean/adapters/        ffmpeg, grounding_dino, sam2, sam2_video, opencv-telea, lama, propainter
-videoclean/composition.py   флаг CLI → класс адаптера
-videoclean/cli.py           Typer
+videoclean/                 библиотека (Clean Architecture): domain ← application ← adapters ← composition
+  domain/                   Intent, Track, форматы
+  application/              порты, use cases, конфиг, выбор треков
+  adapters/                 ffmpeg, grounding_dino, sam2, sam2_video, opencv-telea, lama, propainter, llm
+  composition.py            флаг CLI → класс адаптера
+  cli.py                    Typer
+server/                     FastAPI-хост (роуты, auth, job-воркер) → зависит только от videoclean
+webui/                      React-фронт: FSD (app/pages/widgets/features/entities/shared), shadcn, bun
 ```
 
-Новый адаптер: класс в `adapters/`, регистрация в `composition.py` и `application/config.py`.
+Новый адаптер: класс в `adapters/`, регистрация в `composition.py` и `application/config.py`. Новый эндпоинт — тонкий роут в `server/`, логика в use cases библиотеки. Новый UI-блок — слайс в `webui/` по правилам FSD.
