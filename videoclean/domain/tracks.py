@@ -106,3 +106,42 @@ def tracks_to_json(tracks: list[Track]) -> list[dict]:
             }
         )
     return out
+
+
+def tracks_from_json(data: list[dict] | None) -> list[Track]:
+    """Inverse of tracks_to_json. Unusable rows are skipped; nothing left → ValueError."""
+    out: list[Track] = []
+    for item in data or []:
+        if not isinstance(item, dict):
+            continue
+        boxes: list[tuple[int, int, int, int] | None] = []
+        for b in item.get("boxes") or []:
+            if not isinstance(b, (list, tuple)) or len(b) != 4:
+                boxes.append(None)
+                continue
+            try:
+                x1, y1, x2, y2 = (int(round(float(v))) for v in b)
+            except (TypeError, ValueError):
+                boxes.append(None)
+                continue
+            boxes.append((x1, y1, x2, y2) if x2 > x1 and y2 > y1 else None)
+        if not boxes or not any(b is not None for b in boxes):
+            continue
+        try:
+            track_id = int(item.get("id") or len(out))
+        except (TypeError, ValueError):
+            track_id = len(out)
+        out.append(
+            Track(
+                track_id=track_id,
+                label=str(item.get("label") or f"track{len(out)}"),
+                boxes=boxes,
+                scores=[1.0] * len(boxes),
+                motion=str(item.get("motion") or "static"),
+                part=item.get("part"),
+                notes=[str(n) for n in (item.get("notes") or [])],
+            )
+        )
+    if not out:
+        raise ValueError("tracks payload contains no usable tracks")
+    return out
