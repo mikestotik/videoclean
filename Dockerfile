@@ -1,3 +1,10 @@
+FROM oven/bun:1 AS webui-build
+WORKDIR /build
+COPY webui/package.json webui/bun.lock ./
+RUN bun install --frozen-lockfile
+COPY webui/ ./
+RUN bun run build
+
 FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -31,6 +38,7 @@ WORKDIR /app
 
 COPY pyproject.toml uv.lock README.md ./
 COPY videoclean ./videoclean
+COPY server ./server
 COPY scripts/start.sh ./scripts/start.sh
 
 # pyproject pins torch==2.2.2; override with cu124 wheels (>=2.5) for sam2-video.
@@ -42,6 +50,8 @@ RUN uv sync --extra gpu --extra lama --extra web --no-dev \
     && uv pip install --python /opt/videoclean/bin/python \
         "git+https://github.com/facebookresearch/sam2.git" \
     && chmod +x /app/scripts/start.sh
+
+COPY --from=webui-build /server/static_dist ./server/static_dist
 
 EXPOSE 7860
 
