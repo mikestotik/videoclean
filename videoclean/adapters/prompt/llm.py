@@ -84,12 +84,14 @@ def _read_prompt(name: str) -> str:
 SYSTEM = _read_prompt("system.md")
 VISION_SYSTEM = _read_prompt("vision_system.md")
 BRIDGE_SYSTEM = _read_prompt("bridge_system.md")
+INTERPRET_SYSTEM = _read_prompt("interpret_system.md")
 
 # Fallback defaults when no --prompt-templates dir overrides them.
 _BUILTIN_PROMPTS = {
     "system.md": SYSTEM,
     "vision_system.md": VISION_SYSTEM,
     "bridge_system.md": BRIDGE_SYSTEM,
+    "interpret_system.md": INTERPRET_SYSTEM,
 }
 
 
@@ -102,6 +104,11 @@ def _load_prompts(templates_dir: str | None) -> dict[str, str]:
         custom = root / name
         out[name] = custom.read_text(encoding="utf-8") if custom.is_file() else default
     return out
+
+
+def interpret_system_prompt(templates_dir: str | None = None) -> str:
+    """Public accessor for BuildPrompt wiring (application layer cannot import this module)."""
+    return _load_prompts(templates_dir)["interpret_system.md"]
 
 
 class LlmPromptParser:
