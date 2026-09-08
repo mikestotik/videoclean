@@ -10,17 +10,18 @@ export function parseTargetsJson(text: string): TargetRow[] {
     return []
   }
   if (!Array.isArray(data)) return []
-  return data
-    .map((item): TargetRow | null => {
-      const r = (item ?? {}) as Record<string, unknown>
-      const query = String(r.query ?? "").trim()
-      if (!query) return null
-      const kind = ["watermark", "text_overlay", "object"].includes(String(r.kind))
-        ? (r.kind as TargetKind)
-        : "object"
-      const where = r.where ? String(r.where) : null
-      return { kind, query, where }
-    })
+  const rows: TargetRow[] = []
+  for (const item of data) {
+    const r = (item ?? {}) as Record<string, unknown>
+    const query = String(r.query ?? "").trim()
+    if (!query) continue
+    const kind = ["watermark", "text_overlay", "object"].includes(String(r.kind))
+      ? (r.kind as TargetKind)
+      : "object"
+    const where = r.where ? String(r.where) : null
+    rows.push({ kind, query, where })
+  }
+  return rows
 }
 
 export function targetsToJson(rows: TargetRow[]): string {

@@ -1,6 +1,6 @@
 import type { Job } from "@/entities/job"
 import { api } from "@/shared/api/client"
-import { parsePreviewManifest, type PreviewManifest } from "./types"
+import { parsePreviewManifest } from "./types"
 
 export const fetchPreviewManifest = (jobId: string) =>
   api<unknown>(`/api/jobs/${jobId}/preview/preview.json`).then(parsePreviewManifest)
