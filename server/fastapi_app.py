@@ -494,6 +494,20 @@ def create_app(state: AppState) -> FastAPI:
         body["download"] = f"/api/jobs/{job_id}/output" if kind == "run" else None
         return JSONResponse(body, status_code=201)
 
+    @app.get("/api/jobs/{job_id}/report")
+    def job_report(job_id: str, st: AppState = Depends(get_state)):
+        row = st.jobs.get(job_id)
+        if row is None:
+            raise HTTPException(404, f"unknown job {job_id}")
+        report_json = row["report_json"] if "report_json" in row.keys() else None
+        if not report_json:
+            raise HTTPException(404, f"job {job_id} has no report")
+        try:
+            payload = json.loads(report_json)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(404, f"job {job_id} report is unreadable") from exc
+        return JSONResponse(payload)
+
     @app.get("/api/jobs/{job_id}/output")
     def job_output(job_id: str, st: AppState = Depends(get_state)):
         row = st.jobs.get(job_id)

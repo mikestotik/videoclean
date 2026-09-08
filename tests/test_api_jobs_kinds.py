@@ -154,3 +154,25 @@ def test_job_dict_carries_source_fields(client):
     job = resp.json()
     assert job["source_id"] == src["id"]
     assert job["source_name"] == "clip.mp4"
+
+
+def test_job_report_returns_report_json(client):
+    client, state, tmp_path = client
+    state.jobs.upsert("j-rep", "COMPLETED", report={"kind": "prompt", "prompt": "x", "targets": []})
+    resp = client.get("/api/jobs/j-rep/report")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["kind"] == "prompt"
+    assert body["prompt"] == "x"
+    assert body["targets"] == []
+
+
+def test_job_report_unknown_job_is_404(client):
+    client, state, tmp_path = client
+    assert client.get("/api/jobs/nope/report").status_code == 404
+
+
+def test_job_report_without_report_is_404(client):
+    client, state, tmp_path = client
+    state.jobs.upsert("j-empty", "COMPLETED")
+    assert client.get("/api/jobs/j-empty/report").status_code == 404
