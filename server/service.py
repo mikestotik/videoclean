@@ -15,7 +15,7 @@ from videoclean.adapters.models.catalog import (
     max_quality_ready,
     ollama_model_names,
 )
-from videoclean.adapters.web.app_state import AppState
+from server.app_state import AppState
 from videoclean.application.config import (
     DEFAULT_GROUNDING_DINO_MODEL,
     DEFAULT_INPAINTER_MODEL,

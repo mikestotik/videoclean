@@ -14,8 +14,8 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from videoclean.adapters.models.catalog import add_extra, ollama_model_names
-from videoclean.adapters.web.app_state import AppState, build_app_state
-from videoclean.adapters.web.service import (
+from server.app_state import AppState, build_app_state
+from server.service import (
     api_token,
     auth_from_env,
     cancel_downloads,
@@ -326,7 +326,7 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.get("/api/jobs/{job_id}/preview/{name}")
     def preview_artifact(job_id: str, name: str, st: AppState = Depends(get_state)):
-        from videoclean.adapters.web.service import preview_artifact_path
+        from server.service import preview_artifact_path
 
         path = preview_artifact_path(st, job_id, name)
         if path is None:

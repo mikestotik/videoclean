@@ -748,7 +748,7 @@ def serve(
 ) -> None:
     """Launch the web UI (FastAPI) and background job worker."""
     try:
-        from videoclean.adapters.web.fastapi_app import launch_from_env
+        from server.fastapi_app import launch_from_env
     except ImportError:
         _die("Web UI is not installed. Install with: uv sync --extra web")
     port_i = port if port is not None else default_serve_port()

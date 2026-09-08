@@ -4,9 +4,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from videoclean.adapters.web import fastapi_app as fa
-from videoclean.adapters.web.app_state import AppState
-from videoclean.adapters.web.service import auth_from_env
+from server import fastapi_app as fa
+from server.app_state import AppState
+from server.service import auth_from_env
 from videoclean.store import JobIndex
 
 
@@ -25,7 +25,7 @@ def client(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("VIDEOCLEAN_UI_USER", "admin")
     monkeypatch.setenv("VIDEOCLEAN_UI_PASSWORD", "pw")
     jobs = JobIndex(tmp_path / "jobs.sqlite")
-    from videoclean.adapters.web.app_state import build_app_state
+    from server.app_state import build_app_state
 
     state = build_app_state(tmp_path, worker=False, downloader=False)
     app = fa.create_app(state)

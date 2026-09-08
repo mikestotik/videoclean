@@ -115,7 +115,7 @@ def test_llm_parser_vision_respects_batch_size():
 
 
 def test_serialize_clean_form_passes_tunables():
-    from videoclean.adapters.web.service import serialize_clean_form
+    from server.service import serialize_clean_form
 
     form = serialize_clean_form(
         {
@@ -146,7 +146,7 @@ def test_serialize_clean_form_passes_tunables():
 
 
 def test_serialize_clean_form_empty_keyframes_means_default():
-    from videoclean.adapters.web.service import serialize_clean_form
+    from server.service import serialize_clean_form
 
     form = serialize_clean_form({"detector_keyframes": ""})
     assert form["detector_keyframes"] is None
