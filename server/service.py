@@ -79,7 +79,6 @@ def serialize_clean_form(payload: Mapping[str, Any] | None = None) -> dict[str, 
         segmenter_model = DEFAULT_SEGMENTER_MODEL
     if not inpainter_model:
         inpainter_model = DEFAULT_INPAINTER_MODEL
-    fmt_name = str(data.get("fmt") or data.get("format") or "mp4").strip().lower() or "mp4"
     return {
         "device": str(data.get("device") or "cpu").strip().lower() or "cpu",
         "detector": detector,
@@ -92,7 +91,20 @@ def serialize_clean_form(payload: Mapping[str, Any] | None = None) -> dict[str, 
         "inpainter_model": inpainter_model,
         "llm_place": str(data.get("llm_place") or "auto").strip().lower() or "auto",
         "llm_model": str(data.get("llm_model") or "").strip(),
-        "formats": [fmt_name],
+        "formats": [
+            f.strip().lower()
+            for f in str(data.get("formats") or data.get("fmt") or "mp4").split(",")
+            if f.strip()
+        ] or ["mp4"],
+        "llm_base_url": str(data.get("llm_base_url") or "").strip(),
+        "llm_api_key": str(data.get("llm_api_key") or "").strip(),
+        "keep_workdir": _as_bool(data.get("keep_workdir"), False),
+        "min_mask_coverage": (
+            float(data["min_mask_coverage"]) if str(data.get("min_mask_coverage") or "").strip() else 0.0004
+        ),
+        "verify_max_coverage": (
+            float(data["verify_max_coverage"]) if str(data.get("verify_max_coverage") or "").strip() else 0.12
+        ),
         "allow_download": False,
         "verify": _as_bool(data.get("verify"), True),
         "mask_dilate_px": int(data.get("mask_dilate_px") or 3),

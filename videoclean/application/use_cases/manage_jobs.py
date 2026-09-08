@@ -43,6 +43,9 @@ def cleanup_request_from_row(row: Any) -> RunCleanupRequest:
         keep_workdir=bool(payload.get("keep_workdir", False)),
         overwrite=bool(payload.get("overwrite", True)),
         job_id=row["id"],
+        targets_override=payload.get("targets_override"),
+        tracks_override=payload.get("tracks_override"),
+        masks_override=[Path(str(p)) for p in (payload.get("masks_override") or [])] or None,
     )
 
 
