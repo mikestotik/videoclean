@@ -33,8 +33,15 @@ from server.service import (
 )
 from videoclean.application.errors import PipelineError
 
-STATIC_DIR = Path(__file__).resolve().parent / "static"
-INDEX_HTML = STATIC_DIR / "index.html"
+DIST_DIR = Path(__file__).resolve().parent / "static_dist"
+
+_PLACEHOLDER_HTML = """<!doctype html><html lang="en"><meta charset="utf-8">
+<title>videoclean</title><body style="font-family:system-ui;max-width:40rem;margin:4rem auto">
+<h1>videoclean UI</h1>
+<p>React UI is not built yet. Run:</p>
+<pre>cd webui &amp;&amp; bun install &amp;&amp; bun run build</pre>
+<p>Then restart <code>videoclean serve</code>. API docs: <a href="/api/docs">/api/docs</a></p>
+</body></html>"""
 VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 
 
@@ -97,7 +104,8 @@ def create_app(state: AppState) -> FastAPI:
     )
     user, password = auth_from_env()
     app.add_middleware(BasicOrBearerAuth, user=user, password=password, token=api_token())
-    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    if DIST_DIR.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(DIST_DIR / "assets")), name="assets")
 
     def get_state() -> AppState:
         return app.state.vc
@@ -109,7 +117,10 @@ def create_app(state: AppState) -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     @app.get("/config", response_class=HTMLResponse)
     def index():
-        return INDEX_HTML.read_text(encoding="utf-8")
+        spa_index = DIST_DIR / "index.html"
+        if spa_index.is_file():
+            return spa_index.read_text(encoding="utf-8")
+        return _PLACEHOLDER_HTML
 
     @app.get("/api")
     def api_index():

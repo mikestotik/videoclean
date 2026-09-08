@@ -29,8 +29,11 @@ def test_application_does_not_import_adapters_or_cli():
 
 
 def test_server_does_not_import_webui():
+    banned = ("from webui", "import webui")
     for path in _py_files_in(SERVER):
-        assert "webui" not in path.read_text(encoding="utf-8"), f"{path} imports webui"
+        text = path.read_text(encoding="utf-8")
+        for name in banned:
+            assert name not in text, f"{path} imports {name}"
 
 
 def test_library_does_not_import_server():
