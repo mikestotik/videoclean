@@ -26,6 +26,7 @@ from server.service import (
     job_dict,
     options_payload,
     queue_clean_job,
+    queue_preview_from_job,
     queue_preview_job,
     serialize_clean_form,
     start_download,
@@ -124,6 +125,7 @@ def create_app(state: AppState) -> FastAPI:
                 "GET /api/jobs/{id}": "status",
                 "GET /api/jobs/{id}/output": "download cleaned file when COMPLETED",
                 "GET /api/jobs/{id}/input": "source file",
+                "GET /api/jobs/{id}/probe": "media manifest of the input (fps, frames, size)",
                 "POST /api/jobs/{id}/cancel": "",
                 "POST /api/jobs/{id}/retry": "",
                 "DELETE /api/jobs/{id}": "",
@@ -133,6 +135,11 @@ def create_app(state: AppState) -> FastAPI:
                 "POST /api/models/download": '{"id": "detector:grounding-dino"}',
                 "POST /api/models/custom": '{"kind","backend","model_ref"}',
                 "POST /api/models/cancel": "",
+            },
+            "preview": {
+                "POST /api/preview": "multipart: video + prompt/indices (kind=preview)",
+                "POST /api/preview/from-job": "JSON: reuse input of an existing job",
+                "GET /api/jobs/{id}/preview/{name}": "preview.json or frame artifacts",
             },
         }
 
@@ -323,6 +330,35 @@ def create_app(state: AppState) -> FastAPI:
         body = job_dict(st, row) if row is not None else {"id": job_id, "state": "QUEUED"}
         body["poll"] = f"/api/jobs/{job_id}"
         return JSONResponse(body, status_code=201)
+
+    @app.post("/api/preview/from-job")
+    async def create_preview_from_job(body: dict[str, Any], st: AppState = Depends(get_state)):
+        data = body or {}
+        job_id = str(data.get("job_id") or "").strip()
+        if not job_id:
+            raise HTTPException(400, "job_id is required")
+        payload: dict[str, Any] = {"kind": "preview"}
+        for key in (
+            "mode", "device", "detector", "detector_model", "detector_threshold",
+            "segmenter", "segmenter_model", "mask_dilate_px",
+        ):
+            if str(data.get(key) or "").strip():
+                payload[key] = data[key]
+        for key in ("start", "count", "stride"):
+            if data.get(key) is not None:
+                payload[key] = int(data[key])
+        if data.get("indices"):
+            payload["indices"] = [int(i) for i in data["indices"]]
+        if data.get("targets"):
+            payload["targets"] = data["targets"]
+        try:
+            new_id = queue_preview_from_job(st, job_id, payload, prompt=str(data.get("prompt") or ""))
+        except PipelineError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        row = st.jobs.get(new_id)
+        body_out = job_dict(st, row) if row is not None else {"id": new_id, "state": "QUEUED"}
+        body_out["poll"] = f"/api/jobs/{new_id}"
+        return JSONResponse(body_out, status_code=201)
 
     @app.get("/api/jobs/{job_id}/preview/{name}")
     def preview_artifact(job_id: str, name: str, st: AppState = Depends(get_state)):

@@ -179,6 +179,22 @@ def queue_preview_job(
     return state.manage.submit(payload, dest, output_dir, prompt, job_id=job_id)
 
 
+def queue_preview_from_job(
+    state: AppState,
+    job_id: str,
+    request: dict[str, Any],
+    prompt: str = "",
+) -> str:
+    """Queue a preview run reusing the input video of an existing job."""
+    row = state.jobs.get(job_id)
+    if row is None:
+        raise PipelineError(f"unknown job {job_id}")
+    src = Path(row["input_path"] or "")
+    if not src.is_file():
+        raise PipelineError("source job has no input file")
+    return queue_preview_job(state, src, prompt, request, original_name=src.name)
+
+
 def preview_artifact_path(state: AppState, job_id: str, name: str) -> Path | None:
     """Resolve a preview artifact; reject traversal and unknown names."""
     if not name or "/" in name or "\\" in name or ".." in name:
