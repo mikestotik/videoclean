@@ -193,7 +193,8 @@ def create_app(state: AppState) -> FastAPI:
             raise HTTPException(400, "video file is required")
         tmp_dir = Path(st.data_dir) / "uploads" / "_incoming"
         tmp_dir.mkdir(parents=True, exist_ok=True)
-        tmp = tmp_dir / f"src_{os.getpid()}_{video.filename}"
+        safe_name = Path(video.filename or "").name
+        tmp = tmp_dir / f"src_{os.getpid()}_{safe_name}"
         try:
             await _save_upload(video, tmp)
             sid = register_source(st, tmp, video.filename)
@@ -467,7 +468,8 @@ def create_app(state: AppState) -> FastAPI:
                         raise HTTPException(400, f"unsupported video type {suffix}")
                     tmp_dir = Path(st.data_dir) / "uploads" / "_incoming"
                     tmp_dir.mkdir(parents=True, exist_ok=True)
-                    tmp = tmp_dir / f"up_{os.getpid()}_{video.filename}"
+                    safe_name = Path(video.filename or "").name
+                    tmp = tmp_dir / f"up_{os.getpid()}_{safe_name}"
                     try:
                         await _save_upload(video, tmp)
                         sid = register_source(st, tmp, video.filename)
@@ -550,7 +552,8 @@ def create_app(state: AppState) -> FastAPI:
             raise HTTPException(400, f"unsupported video type {suffix}")
         tmp_dir = Path(st.data_dir) / "uploads" / "_incoming"
         tmp_dir.mkdir(parents=True, exist_ok=True)
-        tmp = tmp_dir / f"up_{os.getpid()}_{video.filename}"
+        safe_name = Path(video.filename or "").name
+        tmp = tmp_dir / f"up_{os.getpid()}_{safe_name}"
         try:
             await _save_upload(video, tmp)
             job_id = queue_preview_job(

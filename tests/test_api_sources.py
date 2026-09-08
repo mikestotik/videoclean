@@ -66,6 +66,22 @@ def test_rejects_non_video(client, tmp_path: Path):
     assert resp.status_code == 400
 
 
+def test_upload_filename_traversal_is_sanitized(client, tmp_path: Path):
+    client, state, _ = client
+    evil_name = "../../evil.mp4"
+    clip = tmp_path / "fixture.mp4"
+    _make_clip(clip)
+    with clip.open("rb") as f:
+        resp = client.post("/api/sources", files={"video": (evil_name, f, "video/mp4")})
+    assert resp.status_code == 201, resp.text
+    src = resp.json()
+    assert src["name"] == "evil.mp4"
+    assert not (tmp_path / "evil.mp4").exists(), "file must not escape the uploads dir"
+    incoming = tmp_path / "uploads" / "_incoming"
+    for entry in incoming.iterdir():
+        assert entry.resolve().is_relative_to(incoming.resolve())
+
+
 def test_video_stream_and_frame(client, tmp_path: Path):
     client, state, _ = client
     src, _ = _upload(client, tmp_path)
