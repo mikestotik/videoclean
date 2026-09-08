@@ -39,14 +39,19 @@ export function useInterpret(source: Source | null) {
   }
 
   const run = useCallback(
-    async (prompt: string): Promise<InterpretResult | null> => {
+    async (prompt: string, llmModel = ""): Promise<InterpretResult | null> => {
       if (!source || running) return null
       const runId = ++runIdRef.current
       setRunning(true)
       setError("")
       setResult(null)
       try {
-        const job = await submitJob({ kind: "prompt", source_id: source.id, prompt })
+        const job = await submitJob({
+          kind: "prompt",
+          source_id: source.id,
+          prompt,
+          params: { llm_model: llmModel },
+        })
         await pollJobToCompletion(job.id, undefined, 1000, 600)
         if (runId !== runIdRef.current) return null
         const report = (await fetchJobReport(job.id)) as ReportBody

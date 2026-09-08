@@ -129,7 +129,7 @@ export function WorkspacePage() {
     }
     setRunAllBusy(true)
     try {
-      const interp = await interpret.run(prompt)
+      const interp = await interpret.run(prompt, params.run.llm_model)
       const targets = interp ? toTargetRows(interp.targets) : enabledTargets(params)
       if (targets.length === 0) {
         setRunAllError(

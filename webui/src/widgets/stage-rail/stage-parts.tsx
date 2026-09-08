@@ -7,6 +7,7 @@ import { Button } from "@/shared/ui/button"
 import { Input } from "@/shared/ui/input"
 import { Label } from "@/shared/ui/label"
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select"
 import { Slider } from "@/shared/ui/slider"
 import { cn } from "@/shared/lib/utils"
 import { ADVANCED_DEFAULTS, applyPreset, presetSnapshot, type EditorParams } from "./params"
@@ -41,26 +42,55 @@ export function StageSection({
   )
 }
 
-export function LlmChip({ onOpenConfig }: { onOpenConfig?: () => void }) {
+export function LlmChip({
+  value,
+  onChange,
+  onOpenConfig,
+  disabled,
+}: {
+  value: string
+  onChange: (model: string) => void
+  onOpenConfig?: () => void
+  disabled?: boolean
+}) {
   const [ok, setOk] = useState<boolean | null>(null)
+  const [models, setModels] = useState<string[]>([])
   const poll = useCallback(() => {
     return api<PollShape>("/api/poll")
-      .then((r) => setOk(Boolean(r.ollama?.ok)))
+      .then((r) => {
+        setOk(Boolean(r.ollama?.ok))
+        setModels(r.ollama?.models ?? [])
+      })
       .catch(() => setOk(false))
   }, [])
   usePoll(poll, 5000)
 
   if (ok === null) return <span className="text-xs text-muted-foreground">LLM: проверяю…</span>
-  if (ok) return <Badge variant="secondary" className="text-ok">LLM готов</Badge>
+  if (!ok)
+    return (
+      <span className="flex items-center gap-2 text-xs text-destructive">
+        Ollama недоступна
+        {onOpenConfig && (
+          <Button size="xs" variant="link" onClick={onOpenConfig}>
+            Конфиг
+          </Button>
+        )}
+      </span>
+    )
   return (
-    <span className="flex items-center gap-2 text-xs text-destructive">
-      Ollama недоступна
-      {onOpenConfig && (
-        <Button size="xs" variant="link" onClick={onOpenConfig}>
-          Конфиг
-        </Button>
-      )}
-    </span>
+    <div className="flex items-center gap-2 text-xs">
+      <Badge variant="secondary" className="text-ok">LLM готов</Badge>
+      <Select value={value} onValueChange={(v) => { if (v) onChange(v) }} disabled={disabled}>
+        <SelectTrigger size="sm" className="flex-1">
+          <SelectValue placeholder="Модель" />
+        </SelectTrigger>
+        <SelectContent>
+          {models.map((m) => (
+            <SelectItem key={m} value={m}>{m}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
   )
 }
 

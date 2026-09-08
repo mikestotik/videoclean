@@ -22,6 +22,7 @@ export type EditorParams = {
     verify_max_coverage: number
     llm_base_url: string
     llm_api_key: string
+    llm_model: string
   }
   advanced: Record<string, string>
 }
@@ -63,6 +64,7 @@ export const DEFAULT_PARAMS: EditorParams = {
     verify_max_coverage: 0.12,
     llm_base_url: "",
     llm_api_key: "",
+    llm_model: "",
   },
   advanced: { ...ADVANCED_DEFAULTS },
 }
@@ -92,6 +94,7 @@ export function toRunParams(params: EditorParams): Record<string, string | numbe
     verify_max_coverage: params.run.verify_max_coverage,
     llm_base_url: params.run.llm_base_url,
     llm_api_key: params.run.llm_api_key,
+    llm_model: params.run.llm_model,
     formats: params.run.formats.join(","),
     ...params.advanced,
   }
@@ -126,6 +129,7 @@ function pickRun(run: Record<string, unknown>): Partial<EditorParams["run"]> {
   if (typeof run.verify_max_coverage === "number") out.verify_max_coverage = run.verify_max_coverage
   if (typeof run.llm_base_url === "string") out.llm_base_url = run.llm_base_url
   if (typeof run.llm_api_key === "string") out.llm_api_key = run.llm_api_key
+  if (typeof run.llm_model === "string") out.llm_model = run.llm_model
   return out
 }
 

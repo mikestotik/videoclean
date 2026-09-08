@@ -138,11 +138,16 @@ export function StageRail({
           className="min-h-20 text-xs"
           disabled={noSource}
         />
-        <LlmChip onOpenConfig={onOpenConfig} />
+        <LlmChip
+          value={params.run.llm_model}
+          onChange={(model) => set({ run: { ...params.run, llm_model: model } })}
+          onOpenConfig={onOpenConfig}
+          disabled={noSource}
+        />
         <Button
           size="sm"
           disabled={noSource || interpret.running || (!params.prompt.trim() && !(masks && masks.length > 0))}
-          onClick={() => void interpret.run(params.prompt)}
+          onClick={() => void interpret.run(params.prompt, params.run.llm_model)}
         >
           Интерпретировать
         </Button>
