@@ -5,7 +5,14 @@ import { Button } from "@/shared/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card"
 import { ScrollArea } from "@/shared/ui/scroll-area"
 
-type ModelInfo = { id: string; title: string; kind: string; status?: string; installed?: boolean }
+type ModelInfo = {
+  id: string
+  title: string
+  kind: string
+  state?: string
+  progress?: number
+  downloadable?: boolean
+}
 type PollData = {
   models: Record<string, ModelInfo[]>
   doctor: Record<string, unknown>
@@ -36,6 +43,20 @@ export function ConfigPage() {
     setError("")
     try {
       await api("/api/models/download", { method: "POST", body: JSON.stringify({ id }) })
+      refresh()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy("")
+    }
+  }
+
+  const cancelDownloads = async () => {
+    setBusy("cancel")
+    setError("")
+    try {
+      await api("/api/models/cancel", { method: "POST" })
+      refresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -58,8 +79,24 @@ export function ConfigPage() {
               {models.map((m) => (
                 <div key={m.id} className="flex items-center gap-2">
                   <span className="font-mono">{m.title}</span>
-                  {m.status && <Badge variant="secondary">{m.status}</Badge>}
-                  <Button size="xs" variant="outline" disabled={busy === m.id} onClick={() => download(m.id)}>
+                  {m.state === "downloading" ? (
+                    <Badge variant="secondary">
+                      {m.state} {Math.round((m.progress ?? 0) * 100)}%
+                    </Badge>
+                  ) : (
+                    m.state && <Badge variant="secondary">{m.state}</Badge>
+                  )}
+                  {m.state === "downloading" && (
+                    <Button size="xs" variant="outline" disabled={busy === "cancel"} onClick={() => void cancelDownloads()}>
+                      {busy === "cancel" ? "…" : "Отменить"}
+                    </Button>
+                  )}
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={busy === m.id || m.state === "downloading" || m.downloadable === false}
+                    onClick={() => void download(m.id)}
+                  >
                     {busy === m.id ? "…" : "Download"}
                   </Button>
                 </div>
