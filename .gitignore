@@ -16,4 +16,4 @@ uv.lock
 .superpowers/
 .idea
 .agents
-docs/superpowers
+docs/superpowers.worktrees/
