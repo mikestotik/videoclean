@@ -46,6 +46,7 @@ export type DetectRunPayload = {
 
 export function useDetectRun(source: Source | null) {
   const [running, setRunning] = useState(false)
+  const [jobId, setJobId] = useState<string | null>(null)
   const [progress, setProgress] = useState<{ fraction: number; detail: string; eta: string }>({
     fraction: 0,
     detail: "",
@@ -75,6 +76,7 @@ export function useDetectRun(source: Source | null) {
           stride: payload.all ? undefined : payload.stride,
           all: payload.all,
         })
+        if (runId === runIdRef.current) setJobId(job.id)
         const done = await pollJobToCompletion(job.id, (j) => {
           if (runId === runIdRef.current) {
             setProgress({ fraction: j.fraction, detail: j.detail, eta: j.eta })
@@ -91,11 +93,14 @@ export function useDetectRun(source: Source | null) {
       } catch (e) {
         if (runId === runIdRef.current) setError(e instanceof Error ? e.message : String(e))
       } finally {
-        if (runId === runIdRef.current) setRunning(false)
+        if (runId === runIdRef.current) {
+          setRunning(false)
+          setJobId(null)
+        }
       }
     },
     [running, source],
   )
 
-  return { run, running, progress, error, manifest, tracks }
+  return { run, running, jobId, progress, error, manifest, tracks }
 }

@@ -16,6 +16,7 @@ export type InpaintProgress = { fraction: number; detail: string; eta: string }
 
 export function useInpaintRun(source: Source | null) {
   const [running, setRunning] = useState(false)
+  const [jobId, setJobId] = useState<string | null>(null)
   const [progress, setProgress] = useState<InpaintProgress>({ fraction: 0, detail: "", eta: "" })
   const [error, setError] = useState("")
   const runIdRef = useRef(0)
@@ -37,6 +38,7 @@ export function useInpaintRun(source: Source | null) {
           masks: payload.masks,
           params,
         })
+        if (runId === runIdRef.current) setJobId(job.id)
         const done = await pollJobToCompletion(job.id, (j) => {
           if (runId === runIdRef.current) {
             setProgress({ fraction: j.fraction, detail: j.detail, eta: j.eta })
@@ -48,11 +50,14 @@ export function useInpaintRun(source: Source | null) {
         if (runId === runIdRef.current) setError(e instanceof Error ? e.message : String(e))
         return null
       } finally {
-        if (runId === runIdRef.current) setRunning(false)
+        if (runId === runIdRef.current) {
+          setRunning(false)
+          setJobId(null)
+        }
       }
     },
     [running, source],
   )
 
-  return { run, running, progress, error }
+  return { run, running, jobId, progress, error }
 }
