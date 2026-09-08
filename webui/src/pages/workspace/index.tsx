@@ -160,7 +160,7 @@ export function WorkspacePage() {
 
       {source && probe ? (
         <>
-          <div className="flex min-h-0 min-w-0 flex-col gap-2 overflow-hidden">
+          <div className="col-start-2 row-start-1 flex min-h-0 min-w-0 flex-col gap-2 overflow-hidden">
             <div className="flex items-center gap-3">
               <Timecode>{formatTimecode(currentFrame, probe.fps)}</Timecode>
               <span className="truncate text-sm text-muted-foreground">{source.name}</span>
@@ -196,7 +196,7 @@ export function WorkspacePage() {
               resultJobId={resultJobId}
             />
           </div>
-          <div className="min-h-0 min-w-0">
+          <div className="col-start-2 row-start-2 min-h-0 min-w-0">
             <Timeline
               src={source.video_url}
               fps={probe.fps}
