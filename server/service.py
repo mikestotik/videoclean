@@ -63,6 +63,8 @@ def default_device() -> str:
 
         if torch.cuda.is_available():
             return "cuda"
+        if torch.backends.mps.is_available():
+            return "mps"
     except Exception:  # noqa: BLE001
         pass
     return "cpu"

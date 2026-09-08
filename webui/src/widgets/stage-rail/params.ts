@@ -23,11 +23,18 @@ export type EditorParams = {
     llm_base_url: string
     llm_api_key: string
     llm_model: string
+    detector: string
+    detector_model: string
+    segmenter: string
+    segmenter_model: string
+    device: string
   }
   advanced: Record<string, string>
 }
 
 export const INPAINTER_OPTIONS = ["opencv-telea", "lama", "propainter"] as const
+
+export const DEVICE_OPTIONS = ["cpu", "cuda", "mps"] as const
 
 export const OUTPUT_FORMATS = ["mp4", "mov", "mkv", "webm"] as const
 
@@ -65,6 +72,11 @@ export const DEFAULT_PARAMS: EditorParams = {
     llm_base_url: "",
     llm_api_key: "",
     llm_model: "",
+    detector: "",
+    detector_model: "",
+    segmenter: "",
+    segmenter_model: "",
+    device: "",
   },
   advanced: { ...ADVANCED_DEFAULTS },
 }
@@ -95,6 +107,11 @@ export function toRunParams(params: EditorParams): Record<string, string | numbe
     llm_base_url: params.run.llm_base_url,
     llm_api_key: params.run.llm_api_key,
     llm_model: params.run.llm_model,
+    detector: params.run.detector,
+    detector_model: params.run.detector_model,
+    segmenter: params.run.segmenter,
+    segmenter_model: params.run.segmenter_model,
+    device: params.run.device,
     formats: params.run.formats.join(","),
     ...params.advanced,
   }
@@ -130,6 +147,13 @@ function pickRun(run: Record<string, unknown>): Partial<EditorParams["run"]> {
   if (typeof run.llm_base_url === "string") out.llm_base_url = run.llm_base_url
   if (typeof run.llm_api_key === "string") out.llm_api_key = run.llm_api_key
   if (typeof run.llm_model === "string") out.llm_model = run.llm_model
+  if (typeof run.detector_model === "string") out.detector_model = run.detector_model
+  if (typeof run.segmenter_model === "string") out.segmenter_model = run.segmenter_model
+  if (typeof run.detector === "string") out.detector = run.detector
+  if (typeof run.detector_model === "string") out.detector_model = run.detector_model
+  if (typeof run.segmenter === "string") out.segmenter = run.segmenter
+  if (typeof run.segmenter_model === "string") out.segmenter_model = run.segmenter_model
+  if (typeof run.device === "string") out.device = run.device
   return out
 }
 

@@ -12,8 +12,9 @@ import { Switch } from "@/shared/ui/switch"
 import { Textarea } from "@/shared/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/shared/ui/toggle-group"
 import { TargetsEditor } from "./targets-editor"
-import { AdvancedFields, LlmChip, ParamSlider, PresetsPopover, StageSection } from "./stage-parts"
+import { AdvancedFields, BackendSelectors, LlmChip, ParamSlider, PresetsPopover, StageSection } from "./stage-parts"
 import {
+  DEVICE_OPTIONS,
   INPAINTER_OPTIONS,
   OUTPUT_FORMATS,
   autoStride,
@@ -206,6 +207,12 @@ export function StageRail({
           <ToggleGroupItem value="targets">По таргетам</ToggleGroupItem>
           <ToggleGroupItem value="prompt">По промпту</ToggleGroupItem>
         </ToggleGroup>
+        <BackendSelectors
+          detector={params.run.detector}
+          segmenter={params.run.segmenter}
+          onChange={(patch) => set({ run: { ...params.run, ...patch } })}
+          disabled={noSource}
+        />
         <Button size="sm" disabled={noSource || detect.running} onClick={runDetect}>
           Найти маски
         </Button>
@@ -255,6 +262,16 @@ export function StageRail({
             <SelectContent>
               {INPAINTER_OPTIONS.map((o) => (
                 <SelectItem key={o} value={o}>{o}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={params.run.device} onValueChange={(v) => { if (v) set({ run: { ...params.run, device: v } }) }} disabled={noSource}>
+            <SelectTrigger size="sm" className="w-24">
+              <SelectValue placeholder="device" />
+            </SelectTrigger>
+            <SelectContent>
+              {DEVICE_OPTIONS.map((d) => (
+                <SelectItem key={d} value={d}>{d}</SelectItem>
               ))}
             </SelectContent>
           </Select>

@@ -156,7 +156,8 @@ class BuildPrompt:
         raw = self.llm.complete(self._system_prompt, self._user_message(req.prompt, ann_by_frame, idxs), images=jpegs)
         data = _extract_json(raw)
         if data is None:
-            raise PipelineError("build-prompt: model returned no JSON object")
+            snippet = " ".join((raw or "").split())[:200]
+            raise PipelineError(f"build-prompt: model returned no JSON object; raw: {snippet or '(empty)'}")
         targets_json = data.get("targets") or []
         targets = targets_from_json(targets_json) if targets_json else []
         out_prompt = str(data.get("prompt") or "").strip()

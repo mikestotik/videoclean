@@ -89,17 +89,25 @@ class GroundingDinoDetector:
             return []
         key_idx = sample_indices(len(frames), min(self._n_keyframes(), len(frames)))
         n_keys = len(key_idx)
+        total_units = n_keys * len(phrases)
+        unit = 0
         per_frame: list[list[tuple[str, float, tuple[int, int, int, int]]]] = [[] for _ in frames]
         for n, i in enumerate(key_idx, start=1):
-            if on_progress:
-                on_progress(
-                    n,
-                    n_keys,
-                    f"{self.name} keyframe {n}/{n_keys}  frame {i + 1}/{len(frames)}",
-                )
-            for hit in self._detect_frame(frames[i], phrases):
-                label = hit.label or "object"
-                per_frame[i].append((label, hit.score, hit.xyxy))
+            frame_hits: list[BoxHit] = []
+            for p_idx, phrase in enumerate(phrases):
+                unit += 1
+                if on_progress:
+                    on_progress(
+                        unit,
+                        total_units,
+                        f"{self.name} keyframe {n}/{n_keys}  frame {i + 1}/{len(frames)}  ({p_idx + 1}/{len(phrases)}) {phrase.rstrip('.')}",
+                    )
+                name = phrase.rstrip(".").strip() or "object"
+                for hit in self._detect_caption(frames[i], phrase):
+                    hit.label = name
+                    frame_hits.append(hit)
+            for hit in nms(frame_hits, self.nms_iou):
+                per_frame[i].append((hit.label or "object", hit.score, hit.xyxy))
         if on_progress:
             on_progress(n_keys, n_keys, f"{self.name} template-track")
         tracks: list[Track] = []

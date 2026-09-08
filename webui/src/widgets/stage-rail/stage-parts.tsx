@@ -14,6 +14,61 @@ import { ADVANCED_DEFAULTS, applyPreset, presetSnapshot, type EditorParams } fro
 
 type PollShape = { ollama: { ok: boolean; models: string[] } }
 
+type OptionsShape = {
+  detectors: string[]
+  segmenters: string[]
+}
+
+export function BackendSelectors({
+  detector,
+  segmenter,
+  onChange,
+  disabled,
+}: {
+  detector: string
+  segmenter: string
+  onChange: (patch: { detector?: string; segmenter?: string }) => void
+  disabled?: boolean
+}) {
+  const [opts, setOpts] = useState<OptionsShape>({ detectors: [], segmenters: [] })
+  useEffect(() => {
+    api<OptionsShape>("/api/options")
+      .then((r) => setOpts({ detectors: r.detectors ?? [], segmenters: r.segmenters ?? [] }))
+      .catch(() => setOpts({ detectors: [], segmenters: [] }))
+  }, [])
+
+  return (
+    <div className="flex flex-col gap-1.5 text-xs">
+      <div className="flex items-center gap-2">
+        <Label className="w-20 shrink-0">Детектор</Label>
+        <Select value={detector} onValueChange={(v) => { if (v) onChange({ detector: v }) }} disabled={disabled}>
+          <SelectTrigger size="sm" className="flex-1">
+            <SelectValue placeholder="grounding-dino" />
+          </SelectTrigger>
+          <SelectContent>
+            {opts.detectors.map((d) => (
+              <SelectItem key={d} value={d}>{d}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="flex items-center gap-2">
+        <Label className="w-20 shrink-0">Сегментер</Label>
+        <Select value={segmenter} onValueChange={(v) => { if (v) onChange({ segmenter: v }) }} disabled={disabled}>
+          <SelectTrigger size="sm" className="flex-1">
+            <SelectValue placeholder="sam2-video" />
+          </SelectTrigger>
+          <SelectContent>
+            {opts.segmenters.map((s) => (
+              <SelectItem key={s} value={s}>{s}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    </div>
+  )
+}
+
 export function StageSection({
   n,
   title,
@@ -155,6 +210,26 @@ export function AdvancedFields({
           />
         </div>
       ))}
+      <div className="flex items-center gap-2 text-xs">
+        <Label className="w-40 shrink-0">detector_model</Label>
+        <Input
+          value={params.run.detector_model}
+          onChange={(e) => onParamsChange({ ...params, run: { ...params.run, detector_model: e.target.value } })}
+          disabled={disabled}
+          placeholder="IDEA-Research/grounding-dino-tiny"
+          className="h-6 flex-1 text-xs"
+        />
+      </div>
+      <div className="flex items-center gap-2 text-xs">
+        <Label className="w-40 shrink-0">segmenter_model</Label>
+        <Input
+          value={params.run.segmenter_model}
+          onChange={(e) => onParamsChange({ ...params, run: { ...params.run, segmenter_model: e.target.value } })}
+          disabled={disabled}
+          placeholder="facebook/sam2-hiera-tiny"
+          className="h-6 flex-1 text-xs"
+        />
+      </div>
       <div className="flex items-center gap-2 text-xs">
         <Label className="w-40 shrink-0">llm_base_url</Label>
         <Input
