@@ -14,7 +14,7 @@ from videoclean.application.use_cases.run_cleanup import RunCleanup
 from videoclean.store import JobPaths
 
 
-def _uc(tmp_path: Path, detector=None, segmenter=None, parser=None) -> RunCleanup:
+def _uc(tmp_path: Path, detector=None, segmenter=None, parser=None, progress=None) -> RunCleanup:
     frame = np.zeros((8, 8, 3), dtype=np.uint8)
     return RunCleanup(
         media=FakeMedia(),
@@ -23,13 +23,21 @@ def _uc(tmp_path: Path, detector=None, segmenter=None, parser=None) -> RunCleanu
         segmenter=segmenter or FakeSegmenter(),
         inpainter=FakeInpainter(),
         jobs=FakeJobs(),
-        progress=SilentProgress(),
+        progress=progress or SilentProgress(),
         new_job_id=lambda: "j-manual",
         make_paths=JobPaths.create,
         utc_now=lambda: __import__("datetime").datetime(2026, 1, 1),
         read_image=lambda path: frame,
         write_image=lambda path, image: path.write_bytes(b"img"),
     )
+
+
+class RecordingProgress(SilentProgress):
+    def __init__(self):
+        self.finishes: dict[str, str] = {}
+
+    def finish(self, key, detail=""):
+        self.finishes[key] = detail
 
 
 class CountingDetector(FakeDetector):
@@ -124,6 +132,39 @@ def test_manual_overrides_satisfy_prompt_check(tmp_path: Path):
         assert "--prompt" in str(exc)
     else:
         raise AssertionError("expected PipelineError without prompt or overrides")
+
+
+def _cfg(verify: bool = False) -> PipelineConfig:
+    return PipelineConfig(detectors=["grounding-dino"], formats=["mp4"], verify=verify)
+
+
+def test_masks_override_with_default_verify_skips_verify(tmp_path: Path):
+    src = tmp_path / "in.mp4"
+    src.write_bytes(b"fake")
+    det = CountingDetector()
+    mask = _write_mask(tmp_path, "m.png")
+    prog = RecordingProgress()
+    uc = _uc(tmp_path, detector=det, progress=prog)
+    report = uc.execute(_req(tmp_path, config=_cfg(verify=True), masks_override=[str(mask)]), tmp_path)
+    assert report["state"] == "COMPLETED"
+    assert det.calls == 0, "verify must not re-detect when masks are manual"
+    assert report["verify"] is True and report["verifyPasses"] == 0
+    assert "skipped" in prog.finishes.get("verify", "")
+
+
+def test_tracks_override_with_verify_runs_verify_and_stays_clean(tmp_path: Path):
+    src = tmp_path / "in.mp4"
+    src.write_bytes(b"fake")
+    det = CountingDetector()
+    prog = RecordingProgress()
+    uc = _uc(tmp_path, detector=det, progress=prog)
+    report = uc.execute(_req(tmp_path, config=_cfg(verify=True), tracks_override=[
+        {"id": 0, "label": "logo", "motion": "static", "boxes": [[1, 1, 4, 4], [1, 1, 4, 4]]},
+    ]), tmp_path)
+    assert report["state"] == "COMPLETED"
+    assert det.calls == 1, "verify re-detects once on inpainted frames"
+    assert report["verify"] is True and report["verifyPasses"] == 0
+    assert prog.finishes.get("verify", "").startswith("clean")
 
 
 def test_unusable_tracks_raise(tmp_path: Path):
