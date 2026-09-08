@@ -44,6 +44,19 @@ UI собирается ТОЛЬКО из shadcn-компонентов (`bunx s
 
 ## Команды
 
+Все повседневные команды — через `make` (см. `make help`):
+
+```bash
+make setup    # разовая установка: uv sync + bun install
+make dev      # дев: FastAPI :7860 + vite hot-reload :5173 (proxy /api)
+make serve    # прод: FastAPI на :7860, отдаёт server/static_dist/
+make web      # собрать фронт → server/static_dist/
+make test     # pytest
+make lint     # eslint + tsc для webui
+```
+
+Те же команды напрямую:
+
 ```bash
 # Python (из корня)
 uv run pytest -q

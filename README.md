@@ -191,9 +191,10 @@ uv run videoclean preview \
 Структура репозитория и правила слоёв — [AGENTS.md](AGENTS.md): `videoclean/` — библиотека (Clean Architecture), `server/` — FastAPI-хост, `webui/` — React-фронт (FSD, shadcn).
 
 ```bash
-uv sync --extra web
-VIDEOCLEAN_UI_USER=admin VIDEOCLEAN_UI_PASSWORD=change-me \
-  uv run videoclean serve --host 127.0.0.1 --port 7860
+make setup                              # разовая установка (uv + bun)
+make serve                              # UI на http://127.0.0.1:7860 (admin/admin)
+make dev                                # дев-режим: FastAPI + vite hot-reload
+make test                               # pytest
 ```
 
 UI собирается из `webui/` и раздаётся из `server/static_dist/` (в git лежит собранная версия). Пересборка фронта:
