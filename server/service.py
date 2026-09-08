@@ -193,6 +193,91 @@ def queue_preview_job(
     return state.manage.submit(payload, dest, output_dir, prompt, job_id=job_id)
 
 
+def queue_source_run(
+    state: AppState,
+    source_row,
+    prompt: str,
+    request: dict[str, Any],
+) -> str:
+    """Queue a full cleanup referencing the source video in place."""
+    src = Path(source_row["path"])
+    if not src.is_file():
+        raise PipelineError("source file missing")
+    prompt = (prompt or "").strip()
+    if not prompt and not request.get("targets_override") and not request.get("tracks_override") and not request.get("masks"):
+        raise PipelineError("prompt is required (or targets/tracks/masks)")
+    job_id = new_job_id()
+    suffix = src.suffix.lower() or ".mp4"
+    output_path = Path(state.data_dir) / "jobs" / job_id / "output" / f"cleaned{suffix}"
+    payload = dict(request or {})
+    payload["kind"] = "run"
+    payload["allow_download"] = False
+    payload["input_path"] = str(src)
+    payload["output_path"] = str(output_path)
+    payload["prompt"] = prompt
+    payload["source_id"] = source_row["id"]
+    frames = payload.pop("masks", None)
+    if frames:
+        masks_dir = Path(state.data_dir) / "sources" / source_row["id"] / "masks"
+        paths = [masks_dir / f"{int(n):06d}.png" for n in frames]
+        missing = next((p for p in paths if not p.is_file()), None)
+        if missing is not None:
+            raise PipelineError(f"mask for frame {missing.stem} not found on source")
+        payload["masks_override"] = [str(p) for p in paths]
+    return state.manage.submit(payload, src, output_path, prompt, job_id=job_id, source_id=source_row["id"])
+
+
+def queue_source_preview(state: AppState, source_row, prompt: str, request: dict[str, Any]) -> str:
+    """Queue a preview job against a registered source (in place, no copy)."""
+    src = Path(source_row["path"])
+    if not src.is_file():
+        raise PipelineError("source file missing")
+    prompt = (prompt or "").strip()
+    mode = str((request or {}).get("mode") or "parse")
+    if mode not in {"parse", "detect"}:
+        raise PipelineError("preview mode must be parse | detect")
+    if mode == "parse" and not prompt:
+        raise PipelineError("prompt is required for mode=parse")
+    if mode == "detect" and not request.get("targets"):
+        raise PipelineError("targets are required for mode=detect")
+    job_id = new_job_id()
+    payload = dict(request or {})
+    payload["kind"] = "preview"
+    payload["input_path"] = str(src)
+    payload["prompt"] = prompt
+    payload["source_id"] = source_row["id"]
+    output_dir = Path(state.data_dir) / "jobs" / job_id / "output"
+    payload["output_path"] = str(output_dir / "preview")
+    if payload.pop("all", None):
+        probe = _as_dict(source_row["probe_json"])
+        payload["start"] = 0
+        payload["count"] = int(probe.get("frame_count") or 0)
+    payload["segmenter"] = "sam2"
+    return state.manage.submit(payload, src, output_dir, prompt, job_id=job_id, source_id=source_row["id"])
+
+
+def queue_source_prompt(state: AppState, source_row, prompt: str, request: dict[str, Any]) -> str:
+    """Queue a prompt-interpretation job over the masks drawn on a source."""
+    src = Path(source_row["path"])
+    if not src.is_file():
+        raise PipelineError("source file missing")
+    masks_dir = Path(state.data_dir) / "sources" / source_row["id"] / "masks"
+    annotations = [{"frame": int(p.stem), "mask": str(p)} for p in sorted(masks_dir.glob("*.png"))]
+    prompt = (prompt or "").strip()
+    if not prompt and not annotations:
+        raise PipelineError("provide a text prompt or draw at least one mask on the source")
+    job_id = new_job_id()
+    payload = dict(request or {})
+    payload["kind"] = "prompt"
+    payload["input_path"] = str(src)
+    payload["prompt"] = prompt
+    payload["annotations"] = annotations
+    payload["source_id"] = source_row["id"]
+    output_dir = Path(state.data_dir) / "jobs" / job_id / "output"
+    payload["output_path"] = str(output_dir)
+    return state.manage.submit(payload, src, output_dir, prompt, job_id=job_id, source_id=source_row["id"])
+
+
 def queue_preview_from_job(
     state: AppState,
     job_id: str,

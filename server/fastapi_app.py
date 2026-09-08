@@ -30,9 +30,11 @@ from server.service import (
     job_dict,
     mask_path,
     options_payload,
-    queue_clean_job,
     queue_preview_from_job,
     queue_preview_job,
+    queue_source_preview,
+    queue_source_prompt,
+    queue_source_run,
     register_source,
     save_mask,
     serialize_clean_form,
@@ -290,6 +292,23 @@ def create_app(state: AppState) -> FastAPI:
         st: AppState = Depends(get_state),
         video: UploadFile | None = File(None),
         prompt: str = Form(""),
+        kind: str = Form("run"),
+        source_id: str = Form(""),
+        targets: str = Form(""),
+        tracks: str = Form(""),
+        masks: str = Form(""),
+        mode: str = Form(""),
+        start: str = Form(""),
+        count: str = Form(""),
+        stride: str = Form(""),
+        indices: str = Form(""),
+        all_: str = Form("", alias="all"),
+        llm_base_url: str = Form(""),
+        llm_api_key: str = Form(""),
+        keep_workdir: str = Form(""),
+        min_mask_coverage: str = Form(""),
+        verify_max_coverage: str = Form(""),
+        formats: str = Form(""),
         device: str = Form(""),
         detector: str = Form(""),
         segmenter: str = Form(""),
@@ -320,7 +339,27 @@ def create_app(state: AppState) -> FastAPI:
         propainter_raft_iter: str = Form(""),
         overwrite: str = Form(""),
     ):
+        kind = (kind or "run").strip().lower() or "run"
+        if kind not in {"run", "preview", "prompt"}:
+            raise HTTPException(400, "kind must be run | preview | prompt")
         fields = {
+            "kind": kind,
+            "source_id": source_id,
+            "targets": targets,
+            "tracks": tracks,
+            "masks": masks,
+            "mode": mode,
+            "start": start,
+            "count": count,
+            "stride": stride,
+            "indices": indices,
+            "all": all_,
+            "llm_base_url": llm_base_url,
+            "llm_api_key": llm_api_key,
+            "keep_workdir": keep_workdir,
+            "min_mask_coverage": min_mask_coverage,
+            "verify_max_coverage": verify_max_coverage,
+            "formats": formats,
             "device": device,
             "detector": detector,
             "segmenter": segmenter,
@@ -352,27 +391,69 @@ def create_app(state: AppState) -> FastAPI:
             "overwrite": overwrite,
         }
         payload = serialize_clean_form({k: v for k, v in fields.items() if v != ""})
-        if video is None or not (video.filename or "").strip():
-            raise HTTPException(400, "video file is required")
-        suffix = Path(video.filename or "input.mp4").suffix.lower() or ".mp4"
-        if suffix not in VIDEO_SUFFIXES:
-            raise HTTPException(400, f"unsupported video type {suffix}")
-        tmp_dir = Path(st.data_dir) / "uploads" / "_incoming"
-        tmp_dir.mkdir(parents=True, exist_ok=True)
-        tmp = tmp_dir / f"up_{os.getpid()}_{video.filename}"
+        for raw, key in ((targets, "targets_override"), (tracks, "tracks_override")):
+            raw = (raw or "").strip()
+            if raw:
+                try:
+                    payload[key] = json.loads(raw)
+                except json.JSONDecodeError as exc:
+                    raise HTTPException(400, f"{key} must be JSON: {exc}") from exc
+        if (masks or "").strip():
+            try:
+                payload["masks"] = [int(x) for x in masks.split(",") if x.strip()]
+            except ValueError as exc:
+                raise HTTPException(400, f"masks must be comma-separated frame numbers: {exc}") from exc
+        if mode.strip():
+            payload["mode"] = mode.strip()
+        for name in ("start", "count", "stride"):
+            val = {"start": start, "count": count, "stride": stride}[name]
+            if val.strip():
+                payload[name] = int(val)
+        if indices.strip():
+            payload["indices"] = [int(i) for i in indices.split(",") if i.strip()]
+        if all_.strip():
+            payload["all"] = True
+        if sum(1 for k in ("targets_override", "tracks_override", "masks") if payload.get(k)) > 1:
+            raise HTTPException(400, "targets, tracks and masks are mutually exclusive")
+
+        source_row = None
+        if source_id.strip():
+            source_row = st.sources.get(source_id.strip())
+            if source_row is None:
+                raise HTTPException(404, f"unknown source {source_id.strip()}")
         try:
-            await _save_upload(video, tmp)
-            job_id = queue_clean_job(
-                st, tmp, prompt, payload, original_name=video.filename or tmp.name
-            )
+            if kind == "run":
+                if source_row is not None:
+                    job_id = queue_source_run(st, source_row, prompt, payload)
+                elif video is not None and (video.filename or "").strip():
+                    suffix = Path(video.filename).suffix.lower()
+                    if suffix not in VIDEO_SUFFIXES:
+                        raise HTTPException(400, f"unsupported video type {suffix}")
+                    tmp_dir = Path(st.data_dir) / "uploads" / "_incoming"
+                    tmp_dir.mkdir(parents=True, exist_ok=True)
+                    tmp = tmp_dir / f"up_{os.getpid()}_{video.filename}"
+                    try:
+                        await _save_upload(video, tmp)
+                        sid = register_source(st, tmp, video.filename)
+                    finally:
+                        tmp.unlink(missing_ok=True)
+                    job_id = queue_source_run(st, st.sources.get(sid), prompt, payload)
+                else:
+                    raise HTTPException(400, "provide a video file or source_id")
+            elif kind == "preview":
+                if source_row is None:
+                    raise HTTPException(400, "preview from the editor requires source_id")
+                job_id = queue_source_preview(st, source_row, prompt, payload)
+            else:
+                if source_row is None:
+                    raise HTTPException(400, "prompt interpretation requires source_id")
+                job_id = queue_source_prompt(st, source_row, prompt, payload)
         except PipelineError as exc:
             raise HTTPException(400, str(exc)) from exc
-        finally:
-            tmp.unlink(missing_ok=True)
         row = st.jobs.get(job_id)
         body = job_dict(st, row) if row is not None else {"id": job_id, "state": "QUEUED"}
         body["poll"] = f"/api/jobs/{job_id}"
-        body["download"] = f"/api/jobs/{job_id}/output"
+        body["download"] = f"/api/jobs/{job_id}/output" if kind == "run" else None
         return JSONResponse(body, status_code=201)
 
     @app.get("/api/jobs/{job_id}/output")
