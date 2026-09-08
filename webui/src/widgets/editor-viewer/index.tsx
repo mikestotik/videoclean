@@ -138,18 +138,18 @@ export function EditorViewer({
           {mode === "detect" && <MaskOverlay url={detectMaskUrl} opacity={maskOpacity} />}
           {mode === "detect" &&
             detectBoxes.map((box, i) =>
-              box && box.length >= 4 ? (
+              box && box.length >= 4 && width > 0 && height > 0 ? (
                 <div
                   key={i}
-                  className="pointer-events-none absolute border border-[#E5484D]"
+                  className="pointer-events-none absolute border border-mask"
                   style={{
-                    left: `${box[0]}%`,
-                    top: `${box[1]}%`,
-                    width: `${box[2] - box[0]}%`,
-                    height: `${box[3] - box[1]}%`,
+                    left: `${(box[0] / width) * 100}%`,
+                    top: `${(box[1] / height) * 100}%`,
+                    width: `${((box[2] - box[0]) / width) * 100}%`,
+                    height: `${((box[3] - box[1]) / height) * 100}%`,
                   }}
                 >
-                  <span className="absolute -top-4 left-0 bg-background/80 px-1 text-[10px] text-[#E5484D]">
+                  <span className="absolute -top-4 left-0 bg-background/80 px-1 text-[10px] text-mask">
                     {i}
                   </span>
                 </div>
