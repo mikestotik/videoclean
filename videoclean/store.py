@@ -75,6 +75,7 @@ _JOB_COLUMNS = (
     ("progress_json", "TEXT"),
     ("error", "TEXT"),
     ("cancel_requested", "INTEGER NOT NULL DEFAULT 0"),
+    ("source_id", "TEXT"),
 )
 
 
@@ -143,6 +144,7 @@ class JobIndex:
         progress: dict[str, Any] | None = None,
         error: str | None = None,
         cancel_requested: bool | None = None,
+        source_id: str | None = None,
     ) -> None:
         now = utc_now().isoformat()
         with self._connect() as con:
@@ -168,7 +170,8 @@ class JobIndex:
                         request_json = COALESCE(?, request_json),
                         progress_json = COALESCE(?, progress_json),
                         error = COALESCE(?, error),
-                        cancel_requested = COALESCE(?, cancel_requested)
+                        cancel_requested = COALESCE(?, cancel_requested),
+                        source_id = COALESCE(?, source_id)
                     WHERE id = ?
                     """,
                     (
@@ -182,6 +185,7 @@ class JobIndex:
                         progress_payload,
                         error,
                         cancel_val,
+                        source_id,
                         job_id,
                     ),
                 )
@@ -191,9 +195,9 @@ class JobIndex:
                     INSERT INTO jobs (
                         id, created_at, updated_at, state, input_path, output_path,
                         prompt, report_json, request_json, progress_json, error,
-                        cancel_requested
+                        cancel_requested, source_id
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         job_id,
@@ -208,6 +212,7 @@ class JobIndex:
                         progress_payload,
                         error,
                         cancel_val if cancel_val is not None else 0,
+                        source_id,
                     ),
                 )
 

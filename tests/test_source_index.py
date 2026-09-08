@@ -29,3 +29,13 @@ def test_missing_source_returns_none(tmp_path: Path):
 def test_new_source_id_format():
     sid = new_source_id()
     assert sid.startswith("s_") and len(sid.split("_")) == 4
+
+
+def test_job_upsert_persists_source_id(tmp_path: Path):
+    from videoclean.store import JobIndex
+
+    idx = JobIndex(tmp_path / "jobs.sqlite")
+    idx.upsert("job_s1", "QUEUED", source_id="s_abc")
+    idx.upsert("job_s1", "RUNNING", source_id=None)  # COALESCE: не затирает
+    row = idx.get("job_s1")
+    assert row["source_id"] == "s_abc"

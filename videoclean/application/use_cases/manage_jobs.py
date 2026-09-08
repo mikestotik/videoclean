@@ -57,6 +57,7 @@ class ManageJobs:
         output_path: Path,
         prompt: str,
         job_id: str | None = None,
+        source_id: str | None = None,
     ) -> str:
         job_id = job_id or new_job_id()
         payload = dict(request_dict or {})
@@ -70,6 +71,7 @@ class ManageJobs:
             output_path=str(output_path),
             prompt=prompt,
             request=payload,
+            source_id=source_id,
         )
         return job_id
 
