@@ -346,6 +346,28 @@ def create_app(state: AppState) -> FastAPI:
             raise HTTPException(404, "input file missing")
         return FileResponse(path, filename=path.name, media_type="application/octet-stream")
 
+    @app.get("/api/jobs/{job_id}/probe")
+    def job_probe(job_id: str, st: AppState = Depends(get_state)):
+        row = st.jobs.get(job_id)
+        if row is None:
+            raise HTTPException(404, f"unknown job {job_id}")
+        path = Path(row["input_path"] or "")
+        if not path.is_file():
+            raise HTTPException(404, "input file missing")
+        from videoclean.adapters.media.ffmpeg import FFmpegMedia
+
+        try:
+            m = FFmpegMedia().probe(path)
+        except PipelineError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        return {
+            "fps": m.fps,
+            "duration_s": m.duration_s,
+            "width": m.width,
+            "height": m.height,
+            "frame_count": m.frame_count,
+        }
+
     @app.post("/api/jobs/{job_id}/cancel")
     def cancel_job(job_id: str, st: AppState = Depends(get_state)):
         row = st.jobs.get(job_id)
