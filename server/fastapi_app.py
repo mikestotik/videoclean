@@ -24,10 +24,12 @@ from server.service import (
     cancel_downloads,
     default_device,
     delete_mask,
+    delete_preset,
     doctor_payload,
     downloads_payload,
     grouped_models,
     job_dict,
+    list_presets,
     mask_path,
     options_payload,
     queue_preview_from_job,
@@ -37,6 +39,7 @@ from server.service import (
     queue_source_run,
     register_source,
     save_mask,
+    save_preset,
     serialize_clean_form,
     source_dict,
     source_frame_path,
@@ -261,6 +264,25 @@ def create_app(state: AppState) -> FastAPI:
     def source_annotations(source_id: str, st: AppState = Depends(get_state)):
         row = _source_or_404(st, source_id)
         return annotations_payload(st, row)
+
+    @app.get("/api/presets")
+    def presets(st: AppState = Depends(get_state)):
+        return list_presets(st.data_dir)
+
+    @app.post("/api/presets")
+    def create_preset(body: dict[str, Any], st: AppState = Depends(get_state)):
+        data = body or {}
+        try:
+            item = save_preset(st.data_dir, str(data.get("name") or ""), data.get("payload"))
+        except PipelineError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return JSONResponse(item, status_code=201)
+
+    @app.delete("/api/presets/{preset_id}")
+    def remove_preset(preset_id: str, st: AppState = Depends(get_state)):
+        if not delete_preset(st.data_dir, preset_id):
+            raise HTTPException(404, f"unknown preset {preset_id}")
+        return {"ok": True, "id": preset_id}
 
     @app.get("/api/poll")
     def poll(st: AppState = Depends(get_state)):

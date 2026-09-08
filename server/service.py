@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import threading
+import uuid
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,7 +28,7 @@ from videoclean.application.config import (
 )
 from videoclean.application.errors import PipelineError
 from videoclean.progress import STAGES, _fmt_seconds
-from videoclean.store import new_job_id, new_source_id
+from videoclean.store import new_job_id, new_source_id, utc_now
 
 VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 
@@ -315,6 +316,48 @@ def preview_artifact_path(state: AppState, job_id: str, name: str) -> Path | Non
     if not path.is_file() or path.parent != root:
         return None
     return path
+
+
+def _presets_file(data_dir: Path) -> Path:
+    return Path(data_dir) / "presets.json"
+
+
+def list_presets(data_dir: Path) -> list[dict[str, Any]]:
+    f = _presets_file(data_dir)
+    if not f.is_file():
+        return []
+    try:
+        data = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    return data if isinstance(data, list) else []
+
+
+def save_preset(data_dir: Path, name: str, payload: Any) -> dict[str, Any]:
+    name = (name or "").strip()
+    if not name:
+        raise PipelineError("preset name is required")
+    if not isinstance(payload, dict):
+        raise PipelineError("preset payload must be an object of pipeline fields")
+    presets = list_presets(data_dir)
+    item = {
+        "id": f"p_{uuid.uuid4().hex[:8]}",
+        "name": name,
+        "payload": payload,
+        "createdAt": utc_now().isoformat(),
+    }
+    presets.append(item)
+    _presets_file(data_dir).write_text(json.dumps(presets, ensure_ascii=False, indent=2), encoding="utf-8")
+    return item
+
+
+def delete_preset(data_dir: Path, preset_id: str) -> bool:
+    presets = list_presets(data_dir)
+    rest = [p for p in presets if p.get("id") != preset_id]
+    if len(rest) == len(presets):
+        return False
+    _presets_file(data_dir).write_text(json.dumps(rest, ensure_ascii=False, indent=2), encoding="utf-8")
+    return True
 
 
 def source_dict(row) -> dict[str, Any]:
