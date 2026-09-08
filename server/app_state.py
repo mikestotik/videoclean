@@ -7,7 +7,7 @@ from typing import Any
 from videoclean.application.jobs.worker import JobWorker
 from videoclean.application.use_cases.download_component import DownloadComponent
 from videoclean.application.use_cases.manage_jobs import ManageJobs
-from videoclean.store import JobIndex
+from videoclean.store import JobIndex, SourceIndex
 
 
 @dataclass
@@ -16,6 +16,7 @@ class AppState:
     jobs: JobIndex
     manage: ManageJobs
     catalog: Any
+    sources: SourceIndex | None = None
     worker: JobWorker | None = None
     downloader: DownloadComponent | None = None
     # Last finished download line so the UI does not snap back to 0%/idle.
@@ -33,6 +34,7 @@ def build_app_state(
     data_dir = Path(data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
     jobs = JobIndex(data_dir / "jobs.sqlite")
+    sources = SourceIndex(data_dir / "jobs.sqlite")
     manage = ManageJobs(jobs)
     if catalog is None:
         from videoclean.adapters.models.catalog import ModelCatalog
@@ -59,6 +61,7 @@ def build_app_state(
         jobs=jobs,
         manage=manage,
         catalog=catalog,
+        sources=sources,
         worker=worker_obj,
         downloader=downloader_obj,
     )

@@ -27,7 +27,9 @@ from videoclean.application.config import (
 )
 from videoclean.application.errors import PipelineError
 from videoclean.progress import STAGES, _fmt_seconds
-from videoclean.store import new_job_id
+from videoclean.store import new_job_id, new_source_id
+
+VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 
 _doctor_cache: tuple[float, dict[str, str]] | None = None
 _DOCTOR_TTL_S = 60.0
@@ -225,6 +227,72 @@ def preview_artifact_path(state: AppState, job_id: str, name: str) -> Path | Non
     if not path.is_file() or path.parent != root:
         return None
     return path
+
+
+def source_dict(row) -> dict[str, Any]:
+    probe = _as_dict(row["probe_json"])
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "createdAt": row["created_at"],
+        "probe": probe,
+        "video_url": f"/api/sources/{row['id']}/video",
+        "annotations_url": f"/api/sources/{row['id']}/annotations",
+    }
+
+
+def register_source(state: AppState, tmp: Path, original_name: str) -> str:
+    """Store an uploaded video under sources/{id}/ and probe it."""
+    from videoclean.adapters.media.ffmpeg import FFmpegMedia
+
+    suffix = Path(original_name).suffix.lower()
+    if suffix not in VIDEO_SUFFIXES:
+        raise PipelineError(f"unsupported video type {suffix}")
+    source_id = new_source_id()
+    dest_dir = Path(state.data_dir) / "sources" / source_id
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / f"input{suffix}"
+    shutil.copy2(tmp, dest)
+    try:
+        m = FFmpegMedia().probe(dest)
+    except Exception:  # noqa: BLE001
+        shutil.rmtree(dest_dir, ignore_errors=True)
+        raise
+    probe = {
+        "fps": m.fps, "duration_s": m.duration_s, "width": m.width, "height": m.height,
+        "frame_count": m.frame_count, "has_audio": m.has_audio,
+    }
+    state.sources.register(source_id, Path(original_name).name or dest.name, str(dest), probe=probe)
+    return source_id
+
+
+def source_frame_path(state: AppState, source_row, n: int) -> Path | None:
+    """Extract one frame as JPEG; cached on disk. None if out of range or ffmpeg fails."""
+    probe = _as_dict(source_row["probe_json"])
+    fc = int(probe.get("frame_count") or 0)
+    if n < 0 or (fc and n >= fc):
+        return None
+    src = Path(source_row["path"])
+    out = src.parent / "frames" / f"{n:06d}.jpg"
+    if out.is_file():
+        return out
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fps = float(probe.get("fps") or 0) or 25.0
+    import subprocess
+
+    cmd = [
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-ss", f"{n / fps:.6f}", "-i", str(src),
+        "-frames:v", "1", "-q:v", "2", str(out),
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0 or not out.is_file():
+        out.unlink(missing_ok=True)
+        return None
+    return out
 
 
 def job_dict(state: AppState, row) -> dict[str, Any]:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import shutil
 import signal
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from videoclean.adapters.models.catalog import add_extra, ollama_model_names
 from server.app_state import AppState, build_app_state
 from server.service import (
+    VIDEO_SUFFIXES,
     api_token,
     auth_from_env,
     cancel_downloads,
@@ -28,7 +30,10 @@ from server.service import (
     queue_clean_job,
     queue_preview_from_job,
     queue_preview_job,
+    register_source,
     serialize_clean_form,
+    source_dict,
+    source_frame_path,
     start_download,
 )
 from videoclean.application.errors import PipelineError
@@ -42,7 +47,6 @@ _PLACEHOLDER_HTML = """<!doctype html><html lang="en"><meta charset="utf-8">
 <pre>cd webui &amp;&amp; bun install &amp;&amp; bun run build</pre>
 <p>Then restart <code>videoclean serve</code>. API docs: <a href="/api/docs">/api/docs</a></p>
 </body></html>"""
-VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 
 
 class BasicOrBearerAuth(BaseHTTPMiddleware):
@@ -110,6 +114,12 @@ def create_app(state: AppState) -> FastAPI:
     def get_state() -> AppState:
         return app.state.vc
 
+    def _source_or_404(st: AppState, source_id: str):
+        row = st.sources.get(source_id)
+        if row is None:
+            raise HTTPException(404, f"unknown source {source_id}")
+        return row
+
     @app.get("/health")
     def health():
         return {"ok": True}
@@ -153,6 +163,62 @@ def create_app(state: AppState) -> FastAPI:
                 "GET /api/jobs/{id}/preview/{name}": "preview.json or frame artifacts",
             },
         }
+
+    @app.post("/api/sources")
+    async def create_source(st: AppState = Depends(get_state), video: UploadFile = File(...)):
+        if not (video.filename or "").strip():
+            raise HTTPException(400, "video file is required")
+        tmp_dir = Path(st.data_dir) / "uploads" / "_incoming"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        tmp = tmp_dir / f"src_{os.getpid()}_{video.filename}"
+        try:
+            await _save_upload(video, tmp)
+            sid = register_source(st, tmp, video.filename)
+        except PipelineError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        finally:
+            tmp.unlink(missing_ok=True)
+        return JSONResponse(source_dict(st.sources.get(sid)), status_code=201)
+
+    @app.get("/api/sources")
+    def list_sources(st: AppState = Depends(get_state)):
+        return [source_dict(row) for row in st.sources.list()]
+
+    @app.get("/api/sources/{source_id}")
+    def get_source(source_id: str, st: AppState = Depends(get_state)):
+        return source_dict(_source_or_404(st, source_id))
+
+    @app.delete("/api/sources/{source_id}")
+    def delete_source(source_id: str, st: AppState = Depends(get_state)):
+        row = _source_or_404(st, source_id)
+        for job_row in st.jobs.list_jobs_full(limit=10_000):
+            if job_row["source_id"] == source_id and job_row["state"] in {"QUEUED", "RUNNING"}:
+                raise HTTPException(409, "source has active jobs; cancel them first")
+        st.sources.delete(source_id)
+        shutil.rmtree(Path(st.data_dir) / "sources" / source_id, ignore_errors=True)
+        return {"ok": True, "id": source_id}
+
+    @app.get("/api/sources/{source_id}/video")
+    def source_video(source_id: str, st: AppState = Depends(get_state)):
+        row = _source_or_404(st, source_id)
+        path = Path(row["path"])
+        if not path.is_file():
+            raise HTTPException(404, "source file missing")
+        media_type = "video/webm" if path.suffix.lower() == ".webm" else "video/mp4"
+        return FileResponse(path, media_type=media_type, filename=path.name)
+
+    @app.get("/api/sources/{source_id}/frames/{n}.jpg")
+    @app.get("/api/sources/{source_id}/frames/{n}")
+    def source_frame(source_id: str, n: str, st: AppState = Depends(get_state)):
+        row = _source_or_404(st, source_id)
+        try:
+            frame = int(n.removesuffix(".jpg"))
+        except ValueError as exc:
+            raise HTTPException(404, f"frame {n} unavailable") from exc
+        path = source_frame_path(st, row, frame)
+        if path is None:
+            raise HTTPException(404, f"frame {frame} unavailable")
+        return FileResponse(path, media_type="image/jpeg")
 
     @app.get("/api/poll")
     def poll(st: AppState = Depends(get_state)):
