@@ -1,5 +1,6 @@
 # tests/test_build_prompt.py
 """BuildPrompt: frames + drawn masks → VLM → editable prompt + detector targets."""
+import json
 from pathlib import Path
 
 import cv2
@@ -9,7 +10,7 @@ import pytest
 from videoclean.adapters.progress.silent import SilentProgress
 from videoclean.application.config import PipelineConfig
 from videoclean.application.errors import AdapterUnavailable, PipelineError
-from videoclean.application.use_cases.build_prompt import BuildPrompt, BuildPromptRequest
+from videoclean.application.use_cases.build_prompt import BuildPrompt, BuildPromptRequest, PromptPaths
 from videoclean.domain.media import MediaManifest
 from videoclean.store import JobPaths
 
@@ -60,7 +61,7 @@ REPLY = (
 )
 
 
-def _build_prompt(tmp_path: Path, llm: FakeLlm) -> BuildPrompt:
+def _build_prompt(tmp_path: Path, llm: FakeLlm, make_paths=JobPaths.create) -> BuildPrompt:
     frame = np.zeros((H, W, 3), dtype=np.uint8)
 
     def to_jpeg(img) -> bytes:
@@ -75,7 +76,7 @@ def _build_prompt(tmp_path: Path, llm: FakeLlm) -> BuildPrompt:
         jobs=FakeJobs(),
         progress=SilentProgress(),
         new_job_id=lambda: "j-prompt",
-        make_paths=JobPaths.create,
+        make_paths=make_paths,
         read_image=lambda path: frame,
         to_jpeg=to_jpeg,
     )
@@ -163,3 +164,18 @@ def test_nonjson_reply_fails(tmp_path: Path):
         _build_prompt(tmp_path, FakeLlm("no json here")).execute(_req(tmp_path, annotations=[
             {"frame": 0, "mask": str(mask)},
         ]), tmp_path)
+
+
+def test_failure_writes_report(tmp_path: Path):
+    src = tmp_path / "in.mp4"
+    src.write_bytes(b"fake")
+    mask = _write_mask(tmp_path, "m.png")
+    with pytest.raises(PipelineError):
+        _build_prompt(tmp_path, FakeLlm("no json here"), make_paths=PromptPaths.create).execute(_req(tmp_path, annotations=[
+            {"frame": 0, "mask": str(mask)},
+        ]), tmp_path)
+    report_file = tmp_path / "jobs" / "j-prompt" / "output" / "report.json"
+    assert report_file.is_file(), "failure report must be written even when output/ did not exist"
+    data = json.loads(report_file.read_text(encoding="utf-8"))
+    assert data["state"] == "FAILED"
+    assert data["jobId"] == "j-prompt"

@@ -118,6 +118,7 @@ class BuildPrompt:
             report["state"] = "FAILED"
             report["error"] = str(exc)
             try:
+                paths.report_file.parent.mkdir(parents=True, exist_ok=True)
                 paths.report_file.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
             except OSError:
                 pass
