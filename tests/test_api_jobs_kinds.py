@@ -95,6 +95,24 @@ def test_preview_from_source_all_frames(client):
     assert payload["segmenter"] == "sam2", "detect stage forces the per-frame segmenter"
 
 
+def test_preview_detect_from_source_with_targets(client):
+    client, state, tmp_path = client
+    src = _source(client, tmp_path)
+    resp = client.post(
+        "/api/jobs",
+        data={
+            "kind": "preview", "source_id": src["id"], "mode": "detect",
+            "targets": json.dumps([{"kind": "object", "query": "mug"}]),
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    payload = _payload(state.jobs.get(resp.json()["id"]))
+    assert payload["kind"] == "preview"
+    assert payload["mode"] == "detect"
+    assert payload["targets"] == [{"kind": "object", "query": "mug"}]
+    assert payload["segmenter"] == "sam2"
+
+
 def test_prompt_job_collects_source_masks(client):
     client, state, tmp_path = client
     src = _source(client, tmp_path)

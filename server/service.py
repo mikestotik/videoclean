@@ -234,15 +234,18 @@ def queue_source_preview(state: AppState, source_row, prompt: str, request: dict
         raise PipelineError("source file missing")
     prompt = (prompt or "").strip()
     mode = str((request or {}).get("mode") or "parse")
+    targets = request.get("targets") or request.get("targets_override")
     if mode not in {"parse", "detect"}:
         raise PipelineError("preview mode must be parse | detect")
     if mode == "parse" and not prompt:
         raise PipelineError("prompt is required for mode=parse")
-    if mode == "detect" and not request.get("targets"):
+    if mode == "detect" and not targets:
         raise PipelineError("targets are required for mode=detect")
     job_id = new_job_id()
     payload = dict(request or {})
     payload["kind"] = "preview"
+    if mode == "detect":
+        payload["targets"] = targets
     payload["input_path"] = str(src)
     payload["prompt"] = prompt
     payload["source_id"] = source_row["id"]
