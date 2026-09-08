@@ -1,5 +1,5 @@
 import { useRef, useState } from "react"
-import { submitRun, type Job } from "@/entities/job"
+import { submitJob, type Job } from "@/entities/job"
 import { Button } from "@/shared/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card"
 import { Input } from "@/shared/ui/input"
@@ -32,7 +32,7 @@ export function RunForm({ onSubmitted }: Props) {
     setBusy(true)
     setError("")
     try {
-      const job = await submitRun(file, prompt.trim(), values)
+      const job = await submitJob({ kind: "run", video: file, prompt: prompt.trim(), params: values })
       onSubmitted(job)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))

@@ -7,11 +7,73 @@ export const cancelJob = (id: string) => api<Job>(`/api/jobs/${id}/cancel`, { me
 export const retryJob = (id: string) => api<Job>(`/api/jobs/${id}/retry`, { method: "POST" })
 export const deleteJob = (id: string) => api<{ ok: boolean }>(`/api/jobs/${id}`, { method: "DELETE" })
 export const probeJob = (id: string) => api<MediaProbe>(`/api/jobs/${id}/probe`)
+export const fetchJobReport = (id: string) => api<unknown>(`/api/jobs/${id}/report`)
 
-export function submitRun(video: File, prompt: string, fields: Record<string, string>): Promise<Job> {
+export type SubmitJobFields = {
+  kind: "run" | "preview" | "prompt"
+  source_id?: string
+  prompt?: string
+  targets?: unknown[]
+  tracks?: unknown[]
+  masks?: number[]
+  mode?: "parse" | "detect"
+  start?: number
+  count?: number
+  stride?: number
+  indices?: number[]
+  all?: boolean
+  params?: Record<string, string | number | boolean>
+  video?: File
+}
+
+export function submitJob(fields: SubmitJobFields): Promise<Job> {
   const form = new FormData()
-  form.append("video", video)
-  form.append("prompt", prompt)
-  for (const [k, v] of Object.entries(fields)) if (v) form.append(k, v)
+  if (fields.video) form.append("video", fields.video)
+  form.append("kind", fields.kind)
+  if (fields.source_id) form.append("source_id", fields.source_id)
+  if (fields.prompt) form.append("prompt", fields.prompt)
+  if (fields.targets) form.append("targets", JSON.stringify(fields.targets))
+  if (fields.tracks) form.append("tracks", JSON.stringify(fields.tracks))
+  if (fields.masks && fields.masks.length > 0) form.append("masks", fields.masks.join(","))
+  if (fields.mode) form.append("mode", fields.mode)
+  if (fields.start !== undefined) form.append("start", String(fields.start))
+  if (fields.count !== undefined) form.append("count", String(fields.count))
+  if (fields.stride !== undefined) form.append("stride", String(fields.stride))
+  if (fields.indices) form.append("indices", fields.indices.join(","))
+  if (fields.all) form.append("all", "1")
+  for (const [k, v] of Object.entries(fields.params ?? {})) {
+    if (v === "" || v === undefined || v === null) continue
+    form.append(k, String(v))
+  }
   return api<Job>("/api/jobs", { method: "POST", body: form })
+}
+
+export async function pollJobToCompletion(
+  id: string,
+  onProgress?: (j: Job) => void,
+  intervalMs = 1000,
+  maxSeconds = 1800,
+): Promise<Job> {
+  const deadline = Date.now() + maxSeconds * 1000
+  for (;;) {
+    let job: Job
+    try {
+      job = await getJob(id)
+    } catch (e) {
+      if (Date.now() >= deadline) throw e
+      await sleep(intervalMs)
+      continue
+    }
+    onProgress?.(job)
+    if (job.state === "COMPLETED") return job
+    if (job.state === "FAILED" || job.state === "CANCELLED") {
+      throw new Error(job.error || `job ${id} ${job.state.toLowerCase()}`)
+    }
+    if (Date.now() >= deadline) throw new Error(`job ${id} poll timed out`)
+    await sleep(intervalMs)
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
