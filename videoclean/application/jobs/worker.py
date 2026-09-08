@@ -18,11 +18,13 @@ class JobWorker:
         build_runner: Callable[..., Any],
         idle_s: float = 0.05,
         build_preview_runner: Callable[..., Any] | None = None,
+        build_prompt_runner: Callable[..., Any] | None = None,
     ) -> None:
         self.data_dir = Path(data_dir)
         self.jobs = jobs
         self.build_runner = build_runner
         self.build_preview_runner = build_preview_runner or build_runner
+        self.build_prompt_runner = build_prompt_runner
         self._idle_s = idle_s
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -91,6 +93,9 @@ class JobWorker:
         if payload.get("kind") == "preview":
             self._run_preview(job_id, row, payload)
             return
+        if payload.get("kind") == "prompt":
+            self._run_prompt(job_id, row, payload)
+            return
         try:
             req = cleanup_request_from_row(row)
             runner = self.build_runner(req.config, None, self.jobs, job_id)
@@ -142,6 +147,46 @@ class JobWorker:
                 job_id=job_id,
             )
             runner = self.build_preview_runner(config, None, self.jobs, job_id)
+            report = runner.execute(req, self.data_dir)
+        except JobCancelled:
+            self.jobs.upsert(job_id, "CANCELLED", error="cancelled")
+            return
+        except Exception as exc:  # noqa: BLE001 — queue must isolate job failures
+            current = self.jobs.get(job_id)
+            if current is None:
+                return
+            if current["state"] in {"FAILED", "CANCELLED"}:
+                return
+            if self.jobs.is_cancel_requested(job_id):
+                self.jobs.upsert(job_id, "CANCELLED", error=str(exc)[:500])
+            else:
+                self.jobs.upsert(job_id, "FAILED", error=str(exc)[:800])
+            return
+        current = self.jobs.get(job_id)
+        if current is not None and current["state"] == "RUNNING":
+            self.jobs.upsert(job_id, "COMPLETED", report=report)
+
+    def _run_prompt(self, job_id: str, row, payload: dict) -> None:
+        from videoclean.application.use_cases.build_prompt import BuildPromptRequest
+
+        try:
+            if self.build_prompt_runner is None:
+                raise RuntimeError("prompt runner is not configured")
+            config = self._config_from_payload(payload)
+            input_path = Path(row["input_path"] or payload.get("input_path") or "")
+            annotations = [
+                {"frame": int(a["frame"]), "mask": Path(str(a.get("mask") or ""))}
+                for a in (payload.get("annotations") or [])
+                if str(a.get("mask") or "").strip()
+            ]
+            req = BuildPromptRequest(
+                input_path=input_path,
+                prompt=payload.get("prompt") or "",
+                annotations=annotations,
+                config=config,
+                job_id=job_id,
+            )
+            runner = self.build_prompt_runner(config, None, self.jobs, job_id)
             report = runner.execute(req, self.data_dir)
         except JobCancelled:
             self.jobs.upsert(job_id, "CANCELLED", error="cancelled")

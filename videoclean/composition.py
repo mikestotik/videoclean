@@ -274,6 +274,36 @@ def PreviewPathsFactory(root: Path):
     return PreviewPaths.create(root)
 
 
+def PromptPathsFactory(root: Path):
+    from videoclean.application.use_cases.build_prompt import PromptPaths
+
+    return PromptPaths.create(root)
+
+
+def build_build_prompt(
+    cfg: PipelineConfig,
+    progress: ProgressPort | None,
+    jobs: JobIndex | None = None,
+    job_id: str | None = None,
+):
+    from videoclean.adapters.prompt.frames import bgr_to_jpeg
+    from videoclean.adapters.prompt.llm import interpret_system_prompt
+    from videoclean.application.use_cases.build_prompt import BuildPrompt
+
+    id_factory = (lambda: job_id) if job_id else new_job_id
+    return BuildPrompt(
+        media=FFmpegMedia(),
+        llm=resolve_llm(cfg),
+        system_prompt=interpret_system_prompt(cfg.prompt_templates),
+        jobs=jobs or JobIndex(Path.home() / ".videoclean" / "jobs.sqlite"),
+        progress=progress,
+        new_job_id=id_factory,
+        make_paths=PromptPathsFactory,
+        read_image=read_bgr,
+        to_jpeg=bgr_to_jpeg,
+    )
+
+
 def build_packager() -> PackageMedia:
     return PackageMedia(FFmpegMedia())
 
@@ -297,7 +327,21 @@ def build_job_worker(data_dir: Path, jobs: JobIndex) -> JobWorker:
             job_id=job_id,
         )
 
-    return JobWorker(data_dir=data_dir, jobs=jobs, build_runner=factory, build_preview_runner=preview_factory)
+    def prompt_factory(cfg, progress, jobs, job_id):
+        return build_build_prompt(
+            cfg,
+            progress or ProgressBridge(jobs, job_id),
+            jobs,
+            job_id=job_id,
+        )
+
+    return JobWorker(
+        data_dir=data_dir,
+        jobs=jobs,
+        build_runner=factory,
+        build_preview_runner=preview_factory,
+        build_prompt_runner=prompt_factory,
+    )
 
 
 def build_catalog(jobs: JobIndex | None = None):

@@ -239,6 +239,40 @@ def test_progress_bridge_raises_on_cancel(tmp_path: Path):
         bridge.start("inpaint")
 
 
+def test_worker_dispatches_prompt_kind(tmp_path):
+    """kind=prompt jobs go to the prompt runner, not cleanup."""
+    jobs = JobIndex(tmp_path / "jobs.sqlite")
+    seen = {"prompt": 0, "cleanup": 0}
+
+    class PromptRunner:
+        def __init__(self, *args):
+            pass
+
+        def execute(self, req, data_dir):
+            return {"jobId": req.job_id, "state": "COMPLETED", "kind": "prompt"}
+
+    def cleanup_factory(*a):
+        seen["cleanup"] += 1
+        return PromptRunner()
+
+    def prompt_factory(*a):
+        seen["prompt"] += 1
+        return PromptRunner()
+
+    worker = JobWorker(tmp_path, jobs, build_runner=cleanup_factory, build_prompt_runner=prompt_factory)
+    jobs.upsert(
+        "job-p",
+        "QUEUED",
+        input_path=str(tmp_path / "in.mp4"),
+        request={"kind": "prompt", "prompt": "x", "annotations": [{"frame": 0, "mask": str(tmp_path / "m.png")}]},
+        prompt="x",
+    )
+    worker.start()
+    worker.stop(timeout=5)
+    assert seen["prompt"] == 1 and seen["cleanup"] == 0
+    assert jobs.get("job-p")["state"] == "COMPLETED"
+
+
 def test_build_job_worker_wires_factory(tmp_path: Path):
     from videoclean.composition import build_job_worker
 
