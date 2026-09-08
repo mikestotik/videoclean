@@ -144,3 +144,13 @@ def test_run_upload_registers_source(client):
     row = state.jobs.get(job["id"])
     assert row["source_id"], "upload created an implicit source"
     assert state.sources.get(row["source_id"]) is not None
+
+
+def test_job_dict_carries_source_fields(client):
+    client, state, tmp_path = client
+    src = _source(client, tmp_path)
+    resp = client.post("/api/jobs", data={"kind": "run", "source_id": src["id"], "prompt": "p"})
+    assert resp.status_code == 201
+    job = resp.json()
+    assert job["source_id"] == src["id"]
+    assert job["source_name"] == "clip.mp4"

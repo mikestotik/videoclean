@@ -498,7 +498,7 @@ def job_dict(state: AppState, row) -> dict[str, Any]:
     state_name = row["state"] or ""
     has_output = bool(output_path and output_path.is_file() and state_name == "COMPLETED")
     has_input = bool(input_path and input_path.is_file())
-    return {
+    out = {
         "id": job_id,
         "state": state_name,
         "prompt": row["prompt"] or "",
@@ -511,7 +511,8 @@ def job_dict(state: AppState, row) -> dict[str, Any]:
         "detail": progress.get("detail") or "",
         "eta": eta_label(row),
         "stages": _stage_marks(progress.get("stage") or ""),
-        "kind": _as_dict(row["request_json"] if "request_json" in row.keys() else None).get("kind") or "run",
+        "kind": request.get("kind") or "run",
+        "source_id": (row["source_id"] if "source_id" in row.keys() else None) or request.get("source_id"),
         "request": {
             "device": request.get("device"),
             "detector": request.get("detector"),
@@ -529,6 +530,14 @@ def job_dict(state: AppState, row) -> dict[str, Any]:
         "input_url": f"/api/jobs/{job_id}/input" if has_input else None,
         "status_url": f"/api/jobs/{job_id}",
     }
+    sid = out["source_id"]
+    source_name = None
+    if sid and state.sources is not None:
+        srow = state.sources.get(sid)
+        if srow is not None:
+            source_name = srow["name"]
+    out["source_name"] = source_name
+    return out
 
 
 def eta_label(row, now: datetime | None = None) -> str:

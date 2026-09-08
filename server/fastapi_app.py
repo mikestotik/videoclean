@@ -149,8 +149,18 @@ def create_app(state: AppState) -> FastAPI:
                 "browser": "HTTP Basic (VIDEOCLEAN_UI_USER / VIDEOCLEAN_UI_PASSWORD)",
                 "api": "Authorization: Bearer VIDEOCLEAN_API_TOKEN (falls back to UI password)",
             },
+            "sources": {
+                "POST /api/sources": "multipart video upload",
+                "GET /api/sources": "list",
+                "GET /api/sources/{id}": "detail",
+                "DELETE /api/sources/{id}": "delete (409 if active jobs)",
+                "GET /api/sources/{id}/video": "stream source video",
+                "GET /api/sources/{id}/frames/{n}": "extracted frame jpeg",
+                "PUT/GET/DELETE /api/sources/{id}/masks/{n}": "per-frame annotation mask",
+                "GET /api/sources/{id}/annotations": "list annotated frames",
+            },
             "jobs": {
-                "POST /api/jobs": "multipart: video + prompt (+ optional pipeline fields)",
+                "POST /api/jobs": "multipart: kind=run|preview|prompt, source_id or video, prompt, pipeline fields, targets/tracks/masks overrides",
                 "GET /api/jobs": "list",
                 "GET /api/jobs/{id}": "status",
                 "GET /api/jobs/{id}/output": "download cleaned file when COMPLETED",
@@ -170,6 +180,10 @@ def create_app(state: AppState) -> FastAPI:
                 "POST /api/preview": "multipart: video + prompt/indices (kind=preview)",
                 "POST /api/preview/from-job": "JSON: reuse input of an existing job",
                 "GET /api/jobs/{id}/preview/{name}": "preview.json or frame artifacts",
+            },
+            "presets": {
+                "GET/POST /api/presets": "pipeline presets",
+                "DELETE /api/presets/{id}": "",
             },
         }
 
