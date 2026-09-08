@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import { JobsSidebar } from "@widgets/jobs-sidebar"
 import { RunForm } from "@widgets/run-form"
+import { TargetTable } from "@widgets/target-table"
 import { useFrameSelection } from "@features/frame-selection"
 import { usePreviewRun } from "@features/preview-run"
 import { Filmstrip } from "@widgets/filmstrip"
@@ -17,7 +18,7 @@ export function WorkspacePage() {
   const [probe, setProbe] = useState<MediaProbe | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
   const [previewPrompt, setPreviewPrompt] = useState("")
-  const [targets] = useState<TargetRow[]>([])
+  const [targets, setTargets] = useState<TargetRow[]>([])
   const selection = useFrameSelection()
   const preview = usePreviewRun(selectedJob, selection.selected, targets)
 
@@ -93,6 +94,7 @@ export function WorkspacePage() {
         {preview.jobId && preview.manifest && (
           <PreviewGrid jobId={preview.jobId} manifest={preview.manifest} />
         )}
+        <TargetTable rows={targets} onChange={setTargets} />
         <RunForm onSubmitted={() => setRefreshKey((k) => k + 1)} />
       </div>
       <JobsSidebar
