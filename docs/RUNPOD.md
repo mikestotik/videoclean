@@ -73,7 +73,7 @@ exec uv run videoclean serve --host 0.0.0.0 --port "$VIDEOCLEAN_PORT"
 
 First boot: several minutes (`uv sync` + CUDA torch + sam2). Weights are **not** downloaded here. After the UI is up, open `https://<POD_ID>-7860.proxy.runpod.net`, log in, **Конфиг**, download `grounding-dino`, `sam2-tiny`, then `propainter` for max quality. Ollama: if the process is up, models appear under LLM; pull a tag there (for example `llama3.2`).
 
-Local LLM without Ollama will stay grey. Cloud LLM: set `XAI_API_KEY` or `OPENAI_API_KEY` and pick `cloud`.
+Local LLM without Ollama will stay grey. Cloud LLM is disabled by default — everything runs locally.
 
 ## 1. Build and push the image
 
@@ -108,8 +108,6 @@ docker push mikestotik/videoclean:runpod
 | `VIDEOCLEAN_PROPAINTER_ROOT` | optional override (else `$VIDEOCLEAN_DATA_DIR/vendor/ProPainter`) |
 | `VIDEOCLEAN_PROPAINTER_WEIGHTS` | optional override (else `$VIDEOCLEAN_DATA_DIR/weights/propainter`) |
 | `LAMA_MODEL` | optional path to `big-lama.pt` (else `$VIDEOCLEAN_DATA_DIR/weights/lama/big-lama.pt`) |
-| `XAI_API_KEY` | optional cloud LLM |
-| `OPENAI_API_KEY` | optional |
 
 Point data + HF cache at `/workspace` so downloads survive pod stop/terminate when a network volume is attached. Defaults in the image are `/root/.videoclean` and `/root/.cache/huggingface` (container disk only). Catalog status honors `HF_HUB_CACHE` / `HF_HOME` (huggingface_hub), not only `~/.cache/huggingface`.
 
@@ -144,7 +142,7 @@ Then **Clean** works: grounding-dino + sam2 + opencv-telea.
 4. Optional: `inpainter:lama`
 5. Last / hungry: `segmenter:sam2-large` (~900 MB weights, ~24 GB VRAM — easy OOM on 4090; prefer tiny)
 
-Ollama rows stay unavailable unless you run Ollama yourself. Cloud LLM: set `XAI_API_KEY` or `OPENAI_API_KEY` and pick `cloud` on Clean.
+Ollama rows stay unavailable unless you run Ollama yourself. Cloud LLM is disabled by default.
 
 Do not start a second cleanup while one is RUNNING — it queues FIFO.
 

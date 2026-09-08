@@ -9,8 +9,6 @@ from videoclean.application.config import PipelineConfig
 
 DEFAULT_LOCAL_URL = "http://127.0.0.1:11434/v1"
 DEFAULT_LOCAL_MODEL = "llama3.2"
-DEFAULT_XAI_URL = "https://api.x.ai/v1"
-DEFAULT_XAI_MODEL = "grok-4.5"
 DEFAULT_OPENAI_URL = "https://api.openai.com/v1"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 
@@ -61,11 +59,9 @@ def resolve_llm(cfg: PipelineConfig):
     key = (
         cfg.llm_api_key
         or os.environ.get("VIDEOCLEAN_LLM_API_KEY")
-        or os.environ.get("XAI_API_KEY")
         or os.environ.get("OPENAI_API_KEY")
         or ""
     ).strip()
-    xai_key = (os.environ.get("XAI_API_KEY") or "").strip()
     openai_key = (os.environ.get("OPENAI_API_KEY") or "").strip()
 
     if place == "auto":
@@ -75,7 +71,7 @@ def resolve_llm(cfg: PipelineConfig):
             place = "local"
         elif base and not is_local_url(base):
             place = "cloud"
-        elif xai_key or openai_key or (key and not is_local_url(base)):
+        elif openai_key or (key and not is_local_url(base)):
             place = "cloud"
         else:
             place = "local"
@@ -89,23 +85,14 @@ def resolve_llm(cfg: PipelineConfig):
 
     if place == "cloud":
         if not base:
-            if xai_key or (key and not openai_key):
-                base = DEFAULT_XAI_URL
-                model = model or DEFAULT_XAI_MODEL
-            else:
-                base = DEFAULT_OPENAI_URL
-                model = model or DEFAULT_OPENAI_MODEL
-        elif "x.ai" in base and not model:
-            model = DEFAULT_XAI_MODEL
+            base = DEFAULT_OPENAI_URL
+            model = model or DEFAULT_OPENAI_MODEL
         elif not model:
             model = DEFAULT_OPENAI_MODEL
-        if "x.ai" in base:
-            key = xai_key or key
-            model = model or DEFAULT_XAI_MODEL
         if not key:
             return UnconfiguredLlm(
-                "cloud LLM needs an API key. Set XAI_API_KEY or OPENAI_API_KEY "
-                "or VIDEOCLEAN_LLM_API_KEY, or switch to --llm local"
+                "cloud LLM needs an API key. Set OPENAI_API_KEY or VIDEOCLEAN_LLM_API_KEY, "
+                "or switch to --llm local"
             )
         return OpenAiCompatLlm(place="cloud", base_url=base, model=model, api_key=key)
 

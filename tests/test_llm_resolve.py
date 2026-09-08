@@ -2,16 +2,15 @@ from videoclean.adapters.llm.resolve import resolve_llm
 from videoclean.application.config import PipelineConfig
 
 
-def test_explicit_cloud_uses_xai_when_key_present(monkeypatch):
-    monkeypatch.setenv("XAI_API_KEY", "xai-test")
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+def test_explicit_cloud_uses_openai_when_key_present(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "oai-test")
     monkeypatch.delenv("VIDEOCLEAN_LLM_BASE_URL", raising=False)
     cfg = PipelineConfig(llm_place="cloud")
     client = resolve_llm(cfg)
     assert client.status().startswith("ready")
     assert "cloud" in client.status()
-    assert "api.x.ai" in client.status()
-    assert "grok" in client.status().lower() or "grok-4.5" in client.model
+    assert "api.openai.com" in client.status()
+    assert client.model == "gpt-4o-mini"
 
 
 def test_explicit_local_defaults_to_ollama(monkeypatch):
@@ -43,7 +42,7 @@ def test_local_gguf_path(tmp_path, monkeypatch):
 
 
 def test_auto_prefers_local_url_over_cloud_key(monkeypatch):
-    monkeypatch.setenv("XAI_API_KEY", "xai-test")
+    monkeypatch.setenv("OPENAI_API_KEY", "oai-test")
     cfg = PipelineConfig(
         llm_place="auto",
         llm_base_url="http://127.0.0.1:8080/v1",

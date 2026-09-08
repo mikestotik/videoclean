@@ -110,7 +110,7 @@ uv run videoclean run \
 
 GGUF: `uv sync --extra local-llm` и `--llm-model /path/to/model.gguf`.
 
-Облако: `XAI_API_KEY` + `--llm cloud --llm-model grok-4.5`, либо `OPENAI_API_KEY` / `VIDEOCLEAN_LLM_API_KEY` и `--llm-base-url https://api.openai.com/v1`.
+Облако (если когда-нибудь понадобится): `VIDEOCLEAN_LLM_API_KEY` (или `OPENAI_API_KEY`) и `--llm-base-url https://api.openai.com/v1` — любой OpenAI-compatible эндпоинт. По умолчанию проект работает только с локальными моделями.
 
 `--llm auto` выбирает local при локальном URL или `.gguf`, иначе cloud при наличии ключа.
 

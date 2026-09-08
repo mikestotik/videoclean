@@ -9,7 +9,7 @@ from videoclean.application.errors import AdapterUnavailable
 
 
 class OpenAiCompatLlm:
-    """Any OpenAI-compatible /v1/chat/completions: Ollama, vLLM, llama.cpp server, xAI, OpenAI."""
+    """Any OpenAI-compatible /v1/chat/completions: Ollama, vLLM, llama.cpp server, OpenAI."""
 
     name = "openai-compat"
 

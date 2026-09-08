@@ -221,7 +221,7 @@ def _llm_url_opt() -> str:
     return typer.Option(
         "",
         "--llm-base-url",
-        help="OpenAI-compatible /v1 root. Local default http://127.0.0.1:11434/v1. Cloud: api.x.ai or api.openai.com.",
+        help="OpenAI-compatible /v1 root. Local default http://127.0.0.1:11434/v1.",
     )
 
 
