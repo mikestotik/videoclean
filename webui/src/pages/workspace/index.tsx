@@ -13,10 +13,7 @@ export function WorkspacePage() {
   const selection = useFrameSelection()
 
   useEffect(() => {
-    if (!selectedJob) {
-      setProbe(null)
-      return
-    }
+    if (!selectedJob) return
     let alive = true
     probeJob(selectedJob.id)
       .then((p) => {
@@ -57,7 +54,10 @@ export function WorkspacePage() {
       </div>
       <JobsSidebar
         selectedId={selectedJob?.id ?? null}
-        onSelect={(j: Job) => setSelectedJob(j)}
+        onSelect={(j: Job) => {
+          setProbe(null)
+          setSelectedJob(j)
+        }}
         refreshKey={refreshKey}
       />
     </div>
