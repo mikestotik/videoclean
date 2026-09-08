@@ -40,6 +40,7 @@ export function WorkspacePage() {
   const [params, setParams] = useState<EditorParams>(DEFAULT_PARAMS)
   const [maskOpacity, setMaskOpacity] = useState(0.6)
   const [runAllBusy, setRunAllBusy] = useState(false)
+  const [runAllError, setRunAllError] = useState("")
   const [resultJob, setResultJob] = useState<Job | null>(null)
 
   const sourceId = source?.id ?? null
@@ -61,6 +62,7 @@ export function WorkspacePage() {
     setParams(DEFAULT_PARAMS)
     setMaskOpacity(0.6)
     setResultJob(null)
+    setRunAllError("")
   }
 
   const [prevDetectJob, setPrevDetectJob] = useState<string | null>(null)
@@ -117,6 +119,7 @@ export function WorkspacePage() {
   const runAll = async () => {
     if (!source || runAllBusy) return
     const prompt = params.prompt.trim()
+    setRunAllError("")
     if (prompt && masks.length === 0) {
       await inpaint.run(
         { mode: "prompt", prompt, targets: enabledTargets(params) },
@@ -128,6 +131,14 @@ export function WorkspacePage() {
     try {
       const interp = await interpret.run(prompt)
       const targets = interp ? toTargetRows(interp.targets) : enabledTargets(params)
+      if (targets.length === 0) {
+        setRunAllError(
+          interp
+            ? "Таргеты не найдены — уточните промпт"
+            : interpret.error || "Не удалось интерпретировать промпт",
+        )
+        return
+      }
       await inpaint.run(
         { mode: "prompt", prompt: interp?.prompt || params.prompt, targets },
         toRunParams(params),
@@ -218,6 +229,7 @@ export function WorkspacePage() {
           masks={masks}
           onRunAll={() => void runAll()}
           runAllBusy={runAllBusy}
+          runAllError={runAllError}
           onOpenConfig={openConfig}
           onOpenResult={() => setViewerMode("result")}
         />

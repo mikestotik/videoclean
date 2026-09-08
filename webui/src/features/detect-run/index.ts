@@ -78,13 +78,19 @@ export function useDetectRun(source: Source | null) {
       setTracks([])
       setProgress({ fraction: 0, detail: "", eta: "" })
       try {
+        const stride = payload.all ? undefined : payload.stride
+        const count =
+          stride && source.probe.frame_count > 0
+            ? Math.ceil(source.probe.frame_count / stride)
+            : undefined
         const job = await submitJob({
           kind: "preview",
           source_id: source.id,
           mode: payload.mode,
           prompt: payload.prompt,
           targets: payload.targets,
-          stride: payload.all ? undefined : payload.stride,
+          stride,
+          count,
           all: payload.all,
         })
         if (runId === runIdRef.current) setJobId(job.id)

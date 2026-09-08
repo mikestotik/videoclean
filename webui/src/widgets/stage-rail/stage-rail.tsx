@@ -36,6 +36,7 @@ type Props = {
   masks?: number[]
   onRunAll?: () => void
   runAllBusy?: boolean
+  runAllError?: string
   onOpenConfig?: () => void
   onOpenResult?: () => void
 }
@@ -52,6 +53,7 @@ export function StageRail({
   masks,
   onRunAll,
   runAllBusy,
+  runAllError,
   onOpenConfig,
   onOpenResult,
 }: Props) {
@@ -127,6 +129,7 @@ export function StageRail({
           </Button>
         )}
       </div>
+      {runAllError && <p className="px-3 pb-2 text-xs text-destructive">{runAllError}</p>}
       <StageSection n={1} title="Вход" active={activeStage === 1}>
         <Textarea
           value={params.prompt}

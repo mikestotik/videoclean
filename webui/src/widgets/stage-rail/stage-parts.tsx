@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { deletePreset, listPresets, savePreset, type Preset } from "@/entities/preset"
 import { usePoll } from "@/shared/hooks/usePoll"
 import { api } from "@/shared/api/client"
@@ -43,11 +43,12 @@ export function StageSection({
 
 export function LlmChip({ onOpenConfig }: { onOpenConfig?: () => void }) {
   const [ok, setOk] = useState<boolean | null>(null)
-  usePoll(() => {
+  const poll = useCallback(() => {
     return api<PollShape>("/api/poll")
       .then((r) => setOk(Boolean(r.ollama?.ok)))
       .catch(() => setOk(false))
-  }, 5000)
+  }, [])
+  usePoll(poll, 5000)
 
   if (ok === null) return <span className="text-xs text-muted-foreground">LLM: проверяю…</span>
   if (ok) return <Badge variant="secondary" className="text-ok">LLM готов</Badge>
@@ -136,6 +137,7 @@ export function AdvancedFields({
       <div className="flex items-center gap-2 text-xs">
         <Label className="w-40 shrink-0">llm_api_key</Label>
         <Input
+          type="password"
           value={params.run.llm_api_key}
           onChange={(e) => onParamsChange({ ...params, run: { ...params.run, llm_api_key: e.target.value } })}
           disabled={disabled}

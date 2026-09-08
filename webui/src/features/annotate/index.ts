@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { deleteMask, putMask } from "@/entities/annotation"
-import { canvasToPngBlob, renderStrokesToCanvas } from "@/entities/annotation/mask"
+import {
+  canvasToPngBlob,
+  deleteMask,
+  fetchAnnotations,
+  putMask,
+  renderStrokesToCanvas,
+} from "@/entities/annotation"
 import type { Source } from "@/entities/source"
 import type { Stroke, Tool } from "@/entities/annotation"
 
@@ -27,6 +32,27 @@ export function useAnnotate(source: Source | null, videoSize: VideoSize | null) 
   useEffect(() => {
     strokesRef.current = strokesByFrame
   })
+
+  useEffect(() => {
+    if (!source) return
+    let alive = true
+    fetchAnnotations(source.id)
+      .then(({ frames }) => {
+        if (!alive) return
+        const restored: Record<number, Stroke[]> = {}
+        for (const f of frames) {
+          if (f.strokes.length > 0) restored[f.frame] = f.strokes
+        }
+        if (Object.keys(restored).length > 0) {
+          strokesRef.current = restored
+          setStrokesByFrame(restored)
+        }
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [source])
 
   const saveFrameMask = useCallback(
     async (frame: number, strokes: Stroke[]) => {
