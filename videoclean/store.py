@@ -388,3 +388,55 @@ class JobIndex:
                 (now, download_id),
             )
             return cur.rowcount > 0
+
+
+def new_source_id() -> str:
+    stamp = utc_now().strftime("%Y%m%d_%H%M%S")
+    return f"s_{stamp}_{uuid.uuid4().hex[:8]}"
+
+
+class SourceIndex:
+    """Uploaded videos independent of jobs. Same sqlite file as JobIndex."""
+
+    def __init__(self, db_path: Path):
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.db_path = db_path
+        with self._connect() as con:
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sources (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    path TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    probe_json TEXT
+                )
+                """
+            )
+
+    def _connect(self) -> sqlite3.Connection:
+        con = sqlite3.connect(self.db_path, timeout=SQLITE_TIMEOUT_S)
+        con.row_factory = sqlite3.Row
+        con.execute("PRAGMA journal_mode=WAL")
+        return con
+
+    def register(self, source_id: str, name: str, path: str, probe: dict[str, Any] | None = None) -> None:
+        now = utc_now().isoformat()
+        with self._connect() as con:
+            con.execute(
+                "INSERT OR REPLACE INTO sources (id, name, path, created_at, probe_json) VALUES (?, ?, ?, ?, ?)",
+                (source_id, name, path, now, json.dumps(probe or {}, ensure_ascii=False)),
+            )
+
+    def list(self, limit: int = 200) -> list[sqlite3.Row]:
+        with self._connect() as con:
+            return list(con.execute("SELECT * FROM sources ORDER BY created_at DESC LIMIT ?", (limit,)))
+
+    def get(self, source_id: str) -> sqlite3.Row | None:
+        with self._connect() as con:
+            return con.execute("SELECT * FROM sources WHERE id = ?", (source_id,)).fetchone()
+
+    def delete(self, source_id: str) -> bool:
+        with self._connect() as con:
+            cur = con.execute("DELETE FROM sources WHERE id = ?", (source_id,))
+            return cur.rowcount > 0
