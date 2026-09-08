@@ -93,7 +93,8 @@ class ManageJobs:
         input_path = Path(row["input_path"] or payload.get("input_path") or "")
         output_path = Path(row["output_path"] or payload.get("output_path") or "")
         prompt = row["prompt"] if row["prompt"] is not None else payload.get("prompt") or ""
-        return self.submit(payload, input_path, output_path, prompt)
+        source_id = row["source_id"] if "source_id" in row.keys() else payload.get("source_id")
+        return self.submit(payload, input_path, output_path, prompt, source_id=source_id)
 
     def delete(self, job_id: str, data_dir: Path) -> None:
         self.jobs.delete(job_id)

@@ -175,6 +175,15 @@ def test_retry_clones_request(tmp_path: Path):
     assert request["inpainter"] == "lama"
 
 
+def test_retry_preserves_source_id(tmp_path: Path):
+    jobs = JobIndex(tmp_path / "j.sqlite")
+    mgr = ManageJobs(jobs)
+    jid = mgr.submit({}, tmp_path / "in.mp4", tmp_path / "out.mp4", "x", source_id="s_abc")
+    mgr.mark_failed(jid, "boom")
+    new_id = mgr.retry(jid)
+    assert jobs.get(new_id)["source_id"] == "s_abc"
+
+
 def test_recover_orphans(tmp_path: Path):
     jobs = JobIndex(tmp_path / "j.sqlite")
     mgr = ManageJobs(jobs)
