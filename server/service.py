@@ -295,6 +295,69 @@ def source_frame_path(state: AppState, source_row, n: int) -> Path | None:
     return out
 
 
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+
+
+def source_masks_dir(state: AppState, source_row) -> Path:
+    return Path(state.data_dir) / "sources" / source_row["id"] / "masks"
+
+
+def save_mask(state: AppState, source_row, n: int, png: bytes, strokes: str) -> None:
+    probe = _as_dict(source_row["probe_json"])
+    fc = int(probe.get("frame_count") or 0)
+    if fc and not 0 <= n < fc:
+        raise PipelineError(f"frame {n} out of range (0..{fc - 1})")
+    if not png.startswith(PNG_MAGIC):
+        raise PipelineError("mask must be a PNG image")
+    directory = source_masks_dir(state, source_row)
+    directory.mkdir(parents=True, exist_ok=True)
+    try:
+        strokes_data = json.loads(strokes) if strokes and strokes.strip() else []
+    except json.JSONDecodeError as exc:
+        raise PipelineError(f"strokes must be JSON: {exc}") from exc
+    (directory / f"{n:06d}.png").write_bytes(png)
+    (directory / f"{n:06d}.json").write_text(
+        json.dumps(strokes_data, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def mask_path(state: AppState, source_row, n: int) -> Path | None:
+    p = source_masks_dir(state, source_row) / f"{n:06d}.png"
+    return p if p.is_file() else None
+
+
+def delete_mask(state: AppState, source_row, n: int) -> bool:
+    directory = source_masks_dir(state, source_row)
+    png = directory / f"{n:06d}.png"
+    meta = directory / f"{n:06d}.json"
+    existed = png.is_file()
+    png.unlink(missing_ok=True)
+    meta.unlink(missing_ok=True)
+    return existed
+
+
+def annotations_payload(state: AppState, source_row) -> dict[str, Any]:
+    out = []
+    directory = source_masks_dir(state, source_row)
+    for p in sorted(directory.glob("*.png")):
+        try:
+            frame = int(p.stem)
+        except ValueError:
+            continue
+        meta = p.with_suffix(".json")
+        try:
+            strokes = json.loads(meta.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            strokes = []
+        out.append({
+            "frame": frame,
+            "url": f"/api/sources/{source_row['id']}/masks/{frame}",
+            "strokes": strokes if isinstance(strokes, list) else [],
+            "updatedAt": datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc).isoformat(),
+        })
+    return {"frames": out}
+
+
 def job_dict(state: AppState, row) -> dict[str, Any]:
     job_id = row["id"]
     progress = _as_dict(row["progress_json"] if "progress_json" in row.keys() else None)

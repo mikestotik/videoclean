@@ -77,3 +77,66 @@ def test_video_stream_and_frame(client, tmp_path: Path):
         assert r.status_code == 200, path
         assert r.headers["content-type"] == "image/jpeg"
     assert client.get(f"/api/sources/{src['id']}/frames/99").status_code == 404
+
+
+def _png_bytes() -> bytes:
+    import cv2
+    import numpy as np
+
+    ok, buf = cv2.imencode(".png", np.zeros((64, 64), np.uint8))
+    assert ok
+    return buf.tobytes()
+
+
+def test_mask_put_get_delete_and_annotations(client, tmp_path: Path):
+    client, state, _ = client
+    src, _ = _upload(client, tmp_path)
+    sid = src["id"]
+    png = _png_bytes()
+    resp = client.put(
+        f"/api/sources/{sid}/masks/3",
+        files={"mask": ("m.png", png, "image/png")},
+        data={"strokes": '[{"tool":"brush","points":[1,2,3],"size":40}]'},
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json() == {"ok": True, "frame": 3}
+    got = client.get(f"/api/sources/{sid}/masks/3")
+    assert got.status_code == 200 and got.headers["content-type"] == "image/png"
+    ann = client.get(f"/api/sources/{sid}/annotations").json()
+    assert len(ann["frames"]) == 1
+    frame_entry = ann["frames"][0]
+    assert frame_entry["frame"] == 3
+    assert frame_entry["url"] == f"/api/sources/{sid}/masks/3"
+    assert frame_entry["strokes"] == [{"tool": "brush", "points": [1, 2, 3], "size": 40}]
+    assert frame_entry["updatedAt"]
+    assert client.delete(f"/api/sources/{sid}/masks/3").status_code == 200
+    assert client.get(f"/api/sources/{sid}/masks/3").status_code == 404
+    assert client.get(f"/api/sources/{sid}/annotations").json()["frames"] == []
+
+
+def test_mask_delete_missing_returns_404(client, tmp_path: Path):
+    client, state, _ = client
+    src, _ = _upload(client, tmp_path)
+    assert client.delete(f"/api/sources/{src['id']}/masks/0").status_code == 404
+
+
+def test_mask_out_of_range(client, tmp_path: Path):
+    client, state, _ = client
+    src, _ = _upload(client, tmp_path)
+    resp = client.put(
+        f"/api/sources/{src['id']}/masks/99",
+        files={"mask": ("m.png", _png_bytes(), "image/png")},
+        data={"strokes": "[]"},
+    )
+    assert resp.status_code == 400
+
+
+def test_mask_rejects_non_png(client, tmp_path: Path):
+    client, state, _ = client
+    src, _ = _upload(client, tmp_path)
+    resp = client.put(
+        f"/api/sources/{src['id']}/masks/0",
+        files={"mask": ("m.png", b"not a png", "image/png")},
+        data={"strokes": "[]"},
+    )
+    assert resp.status_code == 400

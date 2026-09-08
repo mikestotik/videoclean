@@ -18,19 +18,23 @@ from videoclean.adapters.models.catalog import add_extra, ollama_model_names
 from server.app_state import AppState, build_app_state
 from server.service import (
     VIDEO_SUFFIXES,
+    annotations_payload,
     api_token,
     auth_from_env,
     cancel_downloads,
     default_device,
+    delete_mask,
     doctor_payload,
     downloads_payload,
     grouped_models,
     job_dict,
+    mask_path,
     options_payload,
     queue_clean_job,
     queue_preview_from_job,
     queue_preview_job,
     register_source,
+    save_mask,
     serialize_clean_form,
     source_dict,
     source_frame_path,
@@ -219,6 +223,42 @@ def create_app(state: AppState) -> FastAPI:
         if path is None:
             raise HTTPException(404, f"frame {frame} unavailable")
         return FileResponse(path, media_type="image/jpeg")
+
+    @app.put("/api/sources/{source_id}/masks/{n}")
+    async def put_mask(
+        source_id: str,
+        n: int,
+        st: AppState = Depends(get_state),
+        mask: UploadFile = File(...),
+        strokes: str = Form(""),
+    ):
+        row = _source_or_404(st, source_id)
+        data = await mask.read()
+        try:
+            save_mask(st, row, n, data, strokes)
+        except PipelineError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return JSONResponse({"ok": True, "frame": n}, status_code=201)
+
+    @app.get("/api/sources/{source_id}/masks/{n}")
+    def get_mask(source_id: str, n: int, st: AppState = Depends(get_state)):
+        row = _source_or_404(st, source_id)
+        path = mask_path(st, row, n)
+        if path is None:
+            raise HTTPException(404, f"mask for frame {n} not found")
+        return FileResponse(path, media_type="image/png")
+
+    @app.delete("/api/sources/{source_id}/masks/{n}")
+    def remove_mask(source_id: str, n: int, st: AppState = Depends(get_state)):
+        row = _source_or_404(st, source_id)
+        if not delete_mask(st, row, n):
+            raise HTTPException(404, f"mask for frame {n} not found")
+        return {"ok": True, "frame": n}
+
+    @app.get("/api/sources/{source_id}/annotations")
+    def source_annotations(source_id: str, st: AppState = Depends(get_state)):
+        row = _source_or_404(st, source_id)
+        return annotations_payload(st, row)
 
     @app.get("/api/poll")
     def poll(st: AppState = Depends(get_state)):
