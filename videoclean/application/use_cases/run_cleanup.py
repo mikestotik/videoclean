@@ -4,6 +4,7 @@ import json
 import shutil
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 from videoclean.application.config import PipelineConfig, RunCleanupRequest
@@ -19,8 +20,8 @@ from videoclean.application.frames_sample import sample_frame_indices
 from videoclean.application.frames import LazyFrames
 from videoclean.application.select import explain_unmatched, select_tracks
 from videoclean.domain.formats import resolve_dest
-from videoclean.domain.intent import Intent
-from videoclean.domain.tracks import Detection, tracks_to_json
+from videoclean.domain.intent import Intent, Target
+from videoclean.domain.tracks import Detection, Track, tracks_from_json, tracks_to_json
 
 
 class RunCleanup:
@@ -56,8 +57,13 @@ class RunCleanup:
     def execute(self, req: RunCleanupRequest, data_dir: Path) -> dict:
         cfg = req.config
         cfg.validate()
-        if not (req.prompt or "").strip() and not req.targets_override:
-            raise PipelineError("--prompt is required (or pass manual targets)")
+        if (
+            not (req.prompt or "").strip()
+            and not req.targets_override
+            and not req.tracks_override
+            and not req.masks_override
+        ):
+            raise PipelineError("--prompt is required (or pass manual targets/tracks/masks)")
         if not req.input_path.is_file():
             raise FileNotFoundError(req.input_path)
         for fmt in cfg.formats:
@@ -113,7 +119,7 @@ class RunCleanup:
             raise
 
     def _run(self, req: RunCleanupRequest, cfg: PipelineConfig, job_id: str, paths, manifest, report: dict) -> dict:
-        self._ensure_ready()
+        self._ensure_ready(req)
         self.progress.start("validate")
         (paths.input_dir / "input_manifest.json").write_text(
             json.dumps(
@@ -146,78 +152,114 @@ class RunCleanup:
         first = images[0]
         h, w = first.shape[:2]
 
-        parse_st = self.parser.status() if hasattr(self.parser, "status") else "llm"
-        sample_idxs = sample_frame_indices(len(frames), cfg.prompt_frame_stride, cfg.prompt_frame_max)
-        sample_frames = [images[i] for i in sample_idxs] if sample_idxs else None
-        if req.targets_override:
-            from videoclean.application.use_cases.run_preview import targets_from_json
-
-            targets = targets_from_json(req.targets_override)
-            intent = Intent(targets=targets, parse_mode="manual", raw=req.prompt or "")
-            detail = f"manual targets: {len(targets)}"
-            label = ", ".join(_target_label(t) for t in intent.targets)
+        used_detector: str = "manual"
+        attempts: list[str] = []
+        if req.masks_override:
+            self.progress.start("parse", detail="manual masks")
+            intent = Intent(targets=[], parse_mode="manual-masks", raw=req.prompt or "")
+            self.progress.finish("parse", f"{len(req.masks_override)} masks")
+            self.progress.start("detect", total=len(frames), detail="manual masks")
+            base = self._or_masks(req.masks_override, (h, w))
+            if base is None:
+                raise PipelineError("masks_override: no readable mask images")
+            if cfg.mask_dilate_px > 0:
+                kernel = cv2.getStructuringElement(
+                    cv2.MORPH_ELLIPSE, (cfg.mask_dilate_px * 2 + 1, cfg.mask_dilate_px * 2 + 1)
+                )
+                base = cv2.dilate(base, kernel)
+            masks = [base.copy() for _ in frames]
+            tracks = []
+            self.progress.finish("detect", "manual masks")
+        elif req.tracks_override:
+            self.progress.start("parse", detail="manual tracks")
+            try:
+                tracks = tracks_from_json(req.tracks_override)
+            except ValueError as exc:
+                raise PipelineError(f"tracks_override: {exc}") from exc
+            labels = list(dict.fromkeys(tr.label for tr in tracks))
+            intent = Intent(
+                targets=[Target(kind="object", query=lb) for lb in labels] or [Target(kind="object", query="target")],
+                parse_mode="manual-tracks",
+                raw=req.prompt or "",
+            )
+            self.progress.finish("parse", ", ".join(labels))
+            self.progress.start("detect", total=len(frames), detail="manual tracks")
+            masks = self.segmenter.masks(images, tracks)
+            self.progress.finish("detect", f"manual: {len(tracks)} tracks")
         else:
-            detail = f"llm  {parse_st}"
-            if sample_idxs:
-                detail += f"  vision frames={len(sample_idxs)} stride={cfg.prompt_frame_stride}"
-            self.progress.start("parse", detail=detail)
-            intent = self.parser.parse(
-                req.prompt,
-                frames=sample_frames,
-                frame_indices=sample_idxs,
-                parse_chunk_frames=cfg.parse_chunk_frames,
-            )
-        (paths.root / "analysis" / "prompt.json").write_text(
-            json.dumps(
-                {
-                    "targets": [_target_json(t) for t in intent.targets],
-                    "queries": intent.queries,
-                    "parseMode": intent.parse_mode,
-                    "defaulted": intent.defaulted,
-                    "raw": intent.raw,
-                    "visionFrameIndices": sample_idxs,
-                    "promptFrameStride": cfg.prompt_frame_stride,
-                    "promptFrameMax": cfg.prompt_frame_max,
-                },
-                indent=2,
-                ensure_ascii=False,
-            ),
-            encoding="utf-8",
-        )
-        label = ", ".join(_target_label(t) for t in intent.targets)
-        if intent.parse_mode != "manual":
-            if intent.defaulted:
-                label += " (default)"
-            if intent.parse_mode == "llm-vision":
-                label += f"  (vision×{len(sample_idxs)})"
-        self.progress.finish("parse", label)
+            parse_st = self.parser.status() if hasattr(self.parser, "status") else "llm"
+            sample_idxs = sample_frame_indices(len(frames), cfg.prompt_frame_stride, cfg.prompt_frame_max)
+            sample_frames = [images[i] for i in sample_idxs] if sample_idxs else None
+            if req.targets_override:
+                from videoclean.application.use_cases.run_preview import targets_from_json
 
-        self.progress.start("detect", total=len(frames), detail="read frames")
-        used_detector, attempts, raw_tracks = self._discover(images, intent.queries, stage="detect")
-        tracks = select_tracks(raw_tracks, intent, width=w, height=h, relax=True)
-        if raw_tracks and not tracks:
-            raise PipelineError(
-                explain_unmatched(raw_tracks, intent, w, h) + f" detectors tried: {attempts}"
+                targets = targets_from_json(req.targets_override)
+                intent = Intent(targets=targets, parse_mode="manual", raw=req.prompt or "")
+                detail = f"manual targets: {len(targets)}"
+                label = ", ".join(_target_label(t) for t in intent.targets)
+            else:
+                detail = f"llm  {parse_st}"
+                if sample_idxs:
+                    detail += f"  vision frames={len(sample_idxs)} stride={cfg.prompt_frame_stride}"
+                self.progress.start("parse", detail=detail)
+                intent = self.parser.parse(
+                    req.prompt,
+                    frames=sample_frames,
+                    frame_indices=sample_idxs,
+                    parse_chunk_frames=cfg.parse_chunk_frames,
+                )
+            (paths.root / "analysis" / "prompt.json").write_text(
+                json.dumps(
+                    {
+                        "targets": [_target_json(t) for t in intent.targets],
+                        "queries": intent.queries,
+                        "parseMode": intent.parse_mode,
+                        "defaulted": intent.defaulted,
+                        "raw": intent.raw,
+                        "visionFrameIndices": sample_idxs,
+                        "promptFrameStride": cfg.prompt_frame_stride,
+                        "promptFrameMax": cfg.prompt_frame_max,
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
             )
-        if not raw_tracks:
-            raise PipelineError(
-                f"detector found no boxes for queries {intent.queries} "
-                f"({', '.join(_target_label(t) for t in intent.targets)}). "
-                f"detectors tried: {attempts}"
+            label = ", ".join(_target_label(t) for t in intent.targets)
+            if intent.parse_mode != "manual":
+                if intent.defaulted:
+                    label += " (default)"
+                if intent.parse_mode == "llm-vision":
+                    label += f"  (vision×{len(sample_idxs)})"
+            self.progress.finish("parse", label)
+
+            self.progress.start("detect", total=len(frames), detail="read frames")
+            used_detector, attempts, raw_tracks = self._discover(images, intent.queries, stage="detect")
+            tracks = select_tracks(raw_tracks, intent, width=w, height=h, relax=True)
+            if raw_tracks and not tracks:
+                raise PipelineError(
+                    explain_unmatched(raw_tracks, intent, w, h) + f" detectors tried: {attempts}"
+                )
+            if not raw_tracks:
+                raise PipelineError(
+                    f"detector found no boxes for queries {intent.queries} "
+                    f"({', '.join(_target_label(t) for t in intent.targets)}). "
+                    f"detectors tried: {attempts}"
+                )
+            (paths.root / "analysis" / "tracks_raw.json").write_text(
+                json.dumps(tracks_to_json(raw_tracks), indent=2),
+                encoding="utf-8",
             )
-        (paths.root / "analysis" / "tracks_raw.json").write_text(
-            json.dumps(tracks_to_json(raw_tracks), indent=2),
-            encoding="utf-8",
-        )
-        (paths.root / "analysis" / "tracks.json").write_text(
-            json.dumps(tracks_to_json(tracks), indent=2),
-            encoding="utf-8",
-        )
-        (paths.root / "analysis" / "detector.json").write_text(
-            json.dumps({"used": used_detector, "attempts": attempts}, indent=2),
-            encoding="utf-8",
-        )
-        masks = self.segmenter.masks(images, tracks)
+            (paths.root / "analysis" / "detector.json").write_text(
+                json.dumps({"used": used_detector, "attempts": attempts}, indent=2),
+                encoding="utf-8",
+            )
+            masks = self.segmenter.masks(images, tracks)
+
+        if tracks:
+            (paths.root / "analysis" / "tracks.json").write_text(
+                json.dumps(tracks_to_json(tracks), indent=2), encoding="utf-8"
+            )
         for frame_path, mask in zip(frames, masks):
             self._write_image(paths.masks_dir / frame_path.name, mask)
         mean_cov = float(np.mean([np.count_nonzero(m) / m.size for m in masks])) if masks else 0.0
@@ -248,7 +290,7 @@ class RunCleanup:
         self.progress.finish("inpaint", self.inpainter.name)
 
         verify_passes = 0
-        if cfg.verify:
+        if cfg.verify and not req.masks_override:
             self.progress.start("verify", total=len(frames), detail="read inpainted frames")
             cleaned_paths = [paths.inpainted_dir / p.name for p in frames]
             cleaned = LazyFrames(cleaned_paths, self._read_image, cache_size=cache_n)
@@ -279,8 +321,9 @@ class RunCleanup:
                 why = "clean" if not leftover else f"leftover {still:.2%} outside [{cfg.min_mask_coverage:.4%}, {cap:.2%}] ({v_attempts})"
                 self.progress.finish("verify", why)
         else:
+            why = "skipped (manual masks)" if req.masks_override else "skipped"
             self.progress.start("verify")
-            self.progress.finish("verify", "skipped")
+            self.progress.finish("verify", why)
 
         self.progress.start("encode", detail="ffmpeg mezzanine")
         mezz = paths.inpainted_dir.parent / "mezzanine.mp4"
@@ -388,7 +431,13 @@ class RunCleanup:
             )
         return "none", attempts, []
 
-    def _ensure_ready(self) -> None:
+    def _ensure_ready(self, req: RunCleanupRequest) -> None:
+        if req.masks_override:
+            return
+        if req.tracks_override:
+            if not self.segmenter or not getattr(self.segmenter, "name", ""):
+                raise AdapterUnavailable("segmenter unavailable for manual tracks")
+            return
         if hasattr(self.parser, "status"):
             st = self.parser.status()
             if not st.startswith("ready"):
@@ -402,6 +451,18 @@ class RunCleanup:
                 ready = True
         if self.detectors and not ready:
             raise AdapterUnavailable("no detector could run. " + " | ".join(notes))
+
+    def _or_masks(self, mask_paths: list[str], shape: tuple[int, int]) -> np.ndarray | None:
+        """OR all user masks; resize to frame shape."""
+        out: np.ndarray | None = None
+        for raw in mask_paths or []:
+            m = cv2.imdecode(np.fromfile(raw, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+            if m is None:
+                continue
+            if m.shape != (shape[0], shape[1]):
+                m = cv2.resize(m, (shape[1], shape[0]), interpolation=cv2.INTER_NEAREST)
+            out = m if out is None else np.maximum(out, m)
+        return out
 
 
 def _target_json(t) -> dict:
