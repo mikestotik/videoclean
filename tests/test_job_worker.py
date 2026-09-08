@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from videoclean.adapters.web.progress_bridge import ProgressBridge
+from videoclean.adapters.progress.job_store import ProgressBridge
 from videoclean.application.errors import JobCancelled
 from videoclean.application.jobs.worker import JobWorker
 from videoclean.application.use_cases.manage_jobs import ManageJobs

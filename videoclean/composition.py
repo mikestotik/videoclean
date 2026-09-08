@@ -279,7 +279,7 @@ def build_packager() -> PackageMedia:
 
 
 def build_job_worker(data_dir: Path, jobs: JobIndex) -> JobWorker:
-    from videoclean.adapters.web.progress_bridge import ProgressBridge
+    from videoclean.adapters.progress.job_store import ProgressBridge
 
     def factory(cfg, progress, jobs, job_id):
         return build_run_cleanup(
