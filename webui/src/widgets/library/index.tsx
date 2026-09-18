@@ -177,7 +177,7 @@ function StageGroup({
 
   return (
     <div className="space-y-0.5">
-      <div className="flex h-5 items-center gap-1.5 px-2 text-[11px] font-medium text-muted-foreground">
+      <div className="flex h-5 items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
         <Icon className="size-3.5 shrink-0" />
         <span>{meta.label}</span>
       </div>
@@ -375,7 +375,7 @@ export function Library({
                 </div>
 
                 {selected && sourceJobs.length > 0 && (
-                  <div className="ml-6 mt-0.5 space-y-2">
+                  <div className="ml-3 mt-0.5 space-y-2">
                     {KIND_ORDER.map((kind) =>
                       jobsByKind[kind].length > 0 ? (
                         <StageGroup
