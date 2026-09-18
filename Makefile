@@ -10,7 +10,8 @@ help: ## список команд
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-10s\033[0m %s\n", $$1, $$2}'
 
 setup: ## разовая установка: python-зависимости + bun install
-	uv sync --extra web
+	# web = FastAPI/uvicorn; lama = simple-lama-inpainting. Together — иначе один --extra снимает другой.
+	uv sync --extra web --extra lama
 	cd webui && bun install
 
 web: ## собрать фронт → server/static_dist/

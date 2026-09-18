@@ -49,6 +49,13 @@ web = [
     "huggingface-hub>=0.23",
     "hf-transfer>=0.1.6",
 ]
+# uv sync --extra X replaces previously enabled extras. Install web+lama together:
+#   uv sync --extra web --extra lama
+# or:
+#   uv sync --extra ui
+ui = [
+    "videoclean[web,lama]",
+]
 
 [dependency-groups]
 dev = [

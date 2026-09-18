@@ -16,6 +16,7 @@ export type EditorParams = {
   maskPolicy: MaskPolicy
   run: {
     inpainter: string
+    inpainter_model: string
     mask_dilate_px: number
     telea_radius: number
     verify: boolean
@@ -39,7 +40,15 @@ export const INPAINTER_OPTIONS = ["opencv-telea", "lama", "propainter"] as const
 
 export const DEVICE_OPTIONS = ["cpu", "cuda", "mps"] as const
 
-export const OUTPUT_FORMATS = ["mp4", "mov", "mkv", "webm"] as const
+export const OUTPUT_FORMATS = [
+  "mp4",
+  "mov",
+  "mkv",
+  "webm",
+  "hls-fmp4",
+  "hls-ts",
+  "dash",
+] as const
 
 export const ADVANCED_DEFAULTS: Record<string, string> = {
   detector_threshold: "0.15",
@@ -66,6 +75,7 @@ export const DEFAULT_PARAMS: EditorParams = {
   maskPolicy: "static",
   run: {
     inpainter: "opencv-telea",
+    inpainter_model: "",
     mask_dilate_px: 3,
     telea_radius: 9,
     verify: true,
@@ -102,6 +112,7 @@ export function enabledTargets(params: EditorParams): TargetRow[] {
 export function toRunParams(params: EditorParams): Record<string, string | number | boolean> {
   const out: Record<string, string | number | boolean> = {
     inpainter: params.run.inpainter,
+    inpainter_model: params.run.inpainter_model,
     mask_dilate_px: params.run.mask_dilate_px,
     telea_radius: params.run.telea_radius,
     verify: params.run.verify ? "1" : "0",
@@ -162,6 +173,7 @@ export function applyPreset(params: EditorParams, payload: Record<string, unknow
 function pickRun(run: Record<string, unknown>): Partial<EditorParams["run"]> {
   const out: Partial<EditorParams["run"]> = {}
   if (typeof run.inpainter === "string") out.inpainter = run.inpainter
+  if (typeof run.inpainter_model === "string") out.inpainter_model = run.inpainter_model
   if (typeof run.mask_dilate_px === "number") out.mask_dilate_px = run.mask_dilate_px
   if (typeof run.telea_radius === "number") out.telea_radius = run.telea_radius
   if (typeof run.verify === "boolean") out.verify = run.verify

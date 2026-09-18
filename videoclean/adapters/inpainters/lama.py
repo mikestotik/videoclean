@@ -134,7 +134,7 @@ class LamaInpainter:
                 return False, self._load_error
             self._load_error = (
                 f"simple-lama-inpainting helpers missing ({exc}). "
-                "Install: uv sync --extra lama"
+                "Install: uv sync --extra web --extra lama"
             )
             return False, self._load_error
 

@@ -578,6 +578,27 @@ def save_job_tracks(state: AppState, job_id: str, tracks_raw: Any) -> dict[str, 
     return {"ok": True, "id": job_id, "tracks": len(tracks)}
 
 
+def job_output_artifacts(row) -> dict[str, Path]:
+    """Map format name → artifact path from report.outputs (file or package dir)."""
+    report = _as_dict(row["report_json"] if "report_json" in row.keys() else None)
+    raw = report.get("outputs")
+    out: dict[str, Path] = {}
+    if isinstance(raw, dict):
+        for fmt, path_str in raw.items():
+            if not fmt or path_str is None:
+                continue
+            path = Path(str(path_str))
+            if path.exists():
+                out[str(fmt)] = path
+    if out:
+        return out
+    output_path = Path(row["output_path"] or "") if row["output_path"] else None
+    if output_path and output_path.is_file():
+        suffix = output_path.suffix.lstrip(".").lower() or "mp4"
+        out[suffix] = output_path
+    return out
+
+
 def job_dict(state: AppState, row) -> dict[str, Any]:
     job_id = row["id"]
     progress = _as_dict(row["progress_json"] if "progress_json" in row.keys() else None)
@@ -585,8 +606,21 @@ def job_dict(state: AppState, row) -> dict[str, Any]:
     output_path = Path(row["output_path"] or "") if row["output_path"] else None
     input_path = Path(row["input_path"] or "") if row["input_path"] else None
     state_name = row["state"] or ""
-    has_output = bool(output_path and output_path.is_file() and state_name == "COMPLETED")
+    artifacts = job_output_artifacts(row) if state_name == "COMPLETED" else {}
+    has_output = bool(artifacts) or bool(output_path and output_path.is_file() and state_name == "COMPLETED")
     has_input = bool(input_path and input_path.is_file())
+    outputs = {
+        fmt: f"/api/jobs/{job_id}/output?fmt={fmt}" for fmt in artifacts
+    } if has_output and artifacts else {}
+    primary_url = None
+    if has_output:
+        if artifacts:
+            # Prefer a single-file container for the default download link.
+            preferred = next((f for f in ("mp4", "mov", "mkv", "webm") if f in artifacts), None)
+            primary_fmt = preferred or next(iter(artifacts))
+            primary_url = f"/api/jobs/{job_id}/output?fmt={primary_fmt}"
+        else:
+            primary_url = f"/api/jobs/{job_id}/output"
     out = {
         "id": job_id,
         "state": state_name,
@@ -615,7 +649,8 @@ def job_dict(state: AppState, row) -> dict[str, Any]:
         },
         "has_output": has_output,
         "has_input": has_input,
-        "output_url": f"/api/jobs/{job_id}/output" if has_output else None,
+        "output_url": primary_url,
+        "outputs": outputs,
         "input_url": f"/api/jobs/{job_id}/input" if has_input else None,
         "status_url": f"/api/jobs/{job_id}",
     }
@@ -695,11 +730,13 @@ def options_payload(state: AppState) -> dict[str, Any]:
         }
         for info in SEGMENTER_COMPONENTS
     ]
+    from videoclean.domain.formats import known_format_names
+
     # Drivers are always listed; readiness is per weights (segmenter_models), not per driver name.
     return {
         "device": default_device(),
         "devices": ["cpu", "cuda", "mps"],
-        "formats": ["mp4", "mov", "mkv", "webm"],
+        "formats": known_format_names(),
         "llm_places": list(LLM_PLACES),
         "llm_models": llm_names,
         "detectors": [name for name in DETECTORS if backend_ready("detector", name, catalog=catalog)],

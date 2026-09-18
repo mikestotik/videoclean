@@ -19,6 +19,8 @@ export type Job = {
   has_output: boolean
   has_input: boolean
   output_url: string | null
+  /** fmt → download URL (mp4/… or zip for HLS/DASH packages). */
+  outputs?: Record<string, string>
   input_url: string | null
   status_url: string
 }

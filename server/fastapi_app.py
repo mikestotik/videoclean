@@ -8,9 +8,12 @@ import signal
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+import io
+import zipfile
+
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -29,6 +32,7 @@ from server.service import (
     downloads_payload,
     grouped_models,
     job_dict,
+    job_output_artifacts,
     list_presets,
     mask_path,
     options_payload,
@@ -537,15 +541,33 @@ def create_app(state: AppState) -> FastAPI:
             raise HTTPException(400, str(exc)) from exc
 
     @app.get("/api/jobs/{job_id}/output")
-    def job_output(job_id: str, st: AppState = Depends(get_state)):
+    def job_output(
+        job_id: str,
+        fmt: str | None = Query(None),
+        st: AppState = Depends(get_state),
+    ):
         row = st.jobs.get(job_id)
         if row is None:
             raise HTTPException(404, f"unknown job {job_id}")
         if row["state"] != "COMPLETED":
             raise HTTPException(409, f"job is {row['state']}")
-        path = Path(row["output_path"] or "")
-        if not path.is_file():
+        artifacts = job_output_artifacts(row)
+        path: Path | None = None
+        if fmt:
+            key = fmt.strip().lower()
+            path = artifacts.get(key)
+            if path is None:
+                raise HTTPException(404, f"format {key!r} not in job outputs")
+        elif artifacts:
+            preferred = next((f for f in ("mp4", "mov", "mkv", "webm") if f in artifacts), None)
+            path = artifacts[preferred or next(iter(artifacts))]
+        else:
+            candidate = Path(row["output_path"] or "")
+            path = candidate if candidate.is_file() else None
+        if path is None or not path.exists():
             raise HTTPException(404, "output file missing")
+        if path.is_dir():
+            return _zip_directory_response(path)
         return FileResponse(path, filename=path.name, media_type="application/octet-stream")
 
     @app.post("/api/preview")
@@ -766,6 +788,22 @@ def create_app(state: AppState) -> FastAPI:
         return _ollama_payload()
 
     return app
+
+
+def _zip_directory_response(path: Path) -> StreamingResponse:
+    """Zip an HLS/DASH package directory for download."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for file_path in sorted(path.rglob("*")):
+            if file_path.is_file():
+                zf.write(file_path, file_path.relative_to(path).as_posix())
+    buf.seek(0)
+    filename = f"{path.name}.zip"
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 def _ollama_payload() -> dict[str, Any]:

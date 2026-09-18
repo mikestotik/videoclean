@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
+import { CircleHelp } from "lucide-react"
 import { deletePreset, listPresets, savePreset, type Preset } from "@/entities/preset"
 import { usePoll } from "@/shared/hooks/usePoll"
 import { api } from "@/shared/api/client"
@@ -9,8 +10,23 @@ import { Label } from "@/shared/ui/label"
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select"
 import { Slider } from "@/shared/ui/slider"
+import { Switch } from "@/shared/ui/switch"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/shared/ui/tooltip"
 import { cn } from "@/shared/lib/utils"
-import { ADVANCED_DEFAULTS, applyPreset, presetSnapshot, type EditorParams } from "./params"
+import {
+  ADVANCED_META,
+  DEVICE_META,
+  INPAINTER_META,
+  RUN_PARAM_META,
+} from "./param-meta"
+import {
+  ADVANCED_DEFAULTS,
+  DEVICE_OPTIONS,
+  INPAINTER_OPTIONS,
+  applyPreset,
+  presetSnapshot,
+  type EditorParams,
+} from "./params"
 
 type PollShape = { ollama: { ok: boolean; models: string[] } }
 
@@ -22,11 +38,23 @@ type SegmenterModelOpt = {
   ready?: boolean
 }
 
+type InpainterModelOpt = {
+  id: string
+  title: string
+  backend: string
+  model_ref: string
+  size_hint?: string
+  state?: string
+  message?: string
+}
+
 type OptionsShape = {
   detectors: string[]
   segmenters: string[]
+  inpainters?: string[]
   segmenter_models?: SegmenterModelOpt[]
   default_segmenter_model?: string
+  models?: { inpainter?: InpainterModelOpt[] }
 }
 
 export function BackendSelectors({
@@ -68,7 +96,7 @@ export function BackendSelectors({
   return (
     <div className="flex flex-col gap-1.5 text-xs">
       <div className="flex items-center gap-2">
-        <Label className="w-20 shrink-0">Детектор</Label>
+        <FieldLabel hint="Какая нейросеть ищет объекты по тексту цели.">Детектор</FieldLabel>
         <Select value={detector} onValueChange={(v) => { if (v) onChange({ detector: v }) }} disabled={disabled}>
           <SelectTrigger size="sm" className="flex-1">
             <SelectValue placeholder="grounding-dino" />
@@ -83,7 +111,7 @@ export function BackendSelectors({
       {!detectorOnly && (
         <>
           <div className="flex items-center gap-2">
-            <Label className="w-20 shrink-0">Режим</Label>
+            <FieldLabel hint="Как строить маску: покадрово (sam2) или с пропагацией по клипу (sam2-video).">Режим</FieldLabel>
             <Select value={segmenter} onValueChange={(v) => { if (v) onChange({ segmenter: v }) }} disabled={disabled}>
               <SelectTrigger size="sm" className="flex-1">
                 <SelectValue placeholder="sam2" />
@@ -98,7 +126,7 @@ export function BackendSelectors({
             </Select>
           </div>
           <div className="flex items-center gap-2">
-            <Label className="w-20 shrink-0">Модель</Label>
+            <FieldLabel hint="Веса сегментатора. Крупнее — точнее и тяжелее.">Модель</FieldLabel>
             <Select
               value={modelValue}
               onValueChange={(v) => { if (v) onChange({ segmenter_model: v }) }}
@@ -121,6 +149,46 @@ export function BackendSelectors({
         </>
       )}
     </div>
+  )
+}
+
+export function FieldLabel({
+  children,
+  hint,
+  className,
+}: {
+  children: React.ReactNode
+  hint?: string
+  className?: string
+}) {
+  return (
+    <div className={cn("flex min-w-0 items-center gap-1", className)}>
+      <Label className="truncate">{children}</Label>
+      {hint ? <ParamHint text={hint} /> : null}
+    </div>
+  )
+}
+
+export function ParamHint({ text }: { text: string }) {
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              className="inline-flex size-4 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:text-foreground"
+              aria-label="Подсказка"
+            >
+              <CircleHelp className="size-3.5" />
+            </button>
+          }
+        />
+        <TooltipContent side="top" className="max-w-[240px] text-left leading-snug">
+          {text}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   )
 }
 
@@ -241,35 +309,263 @@ export function LlmChip({
 
 export function ParamSlider({
   label,
+  hint,
   value,
   min,
   max,
+  step = 1,
   disabled,
   onChange,
+  formatValue,
 }: {
   label: string
+  hint?: string
   value: number
   min: number
   max: number
+  step?: number
   disabled?: boolean
   onChange: (v: number) => void
+  formatValue?: (v: number) => string
 }) {
+  const shown =
+    formatValue?.(value) ??
+    (step < 0.001 ? value.toFixed(4) : step < 0.01 ? value.toFixed(3) : step < 1 ? value.toFixed(2) : String(value))
   return (
     <div className="flex items-center gap-2 text-xs">
-      <Label className="w-20 shrink-0">{label}</Label>
+      <FieldLabel hint={hint} className="w-[7.5rem] shrink-0">
+        {label}
+      </FieldLabel>
       <Slider
-        className="w-32"
+        className="min-w-0 flex-1"
         min={min}
         max={max}
-        value={value}
+        step={step}
+        value={[value]}
         disabled={disabled}
         onValueChange={(v) => {
-          if (typeof v === "number") onChange(v)
+          const n = Array.isArray(v) ? v[0] : v
+          if (typeof n === "number" && Number.isFinite(n)) onChange(n)
         }}
       />
-      <span className="text-muted-foreground">{value}</span>
+      <span className="w-12 shrink-0 text-right tabular-nums text-muted-foreground">{shown}</span>
     </div>
   )
+}
+
+/** API/HF refs for the form; never use raw download URLs (LaMa catalog uses a GitHub URL). */
+function modelRefForApi(m: InpainterModelOpt): string {
+  if (m.backend === "lama") return "big-lama"
+  if (m.model_ref.startsWith("http://") || m.model_ref.startsWith("https://")) {
+    return m.title
+  }
+  return m.model_ref
+}
+
+export function InpaintControls({
+  params,
+  onParamsChange,
+  disabled,
+}: {
+  params: EditorParams
+  onParamsChange: (p: EditorParams) => void
+  disabled?: boolean
+}) {
+  const [opts, setOpts] = useState<OptionsShape>({ detectors: [], segmenters: [] })
+  useEffect(() => {
+    api<OptionsShape>("/api/options")
+      .then(setOpts)
+      .catch(() => setOpts({ detectors: [], segmenters: [] }))
+  }, [])
+
+  const setRun = (patch: Partial<EditorParams["run"]>) =>
+    onParamsChange({ ...params, run: { ...params.run, ...patch } })
+
+  const inpainters =
+    opts.inpainters?.length ? opts.inpainters : [...INPAINTER_OPTIONS]
+  const catalog = opts.models?.inpainter ?? []
+  const modelChoices = catalog.filter((m) => m.backend === params.run.inpainter)
+  const needsModel = params.run.inpainter === "lama" || params.run.inpainter === "propainter"
+  // Select by catalog id — model_ref for LaMa is a GitHub URL and looks broken in the trigger.
+  const selectedModel =
+    modelChoices.find((m) => m.id === params.run.inpainter_model) ||
+    modelChoices.find((m) => m.model_ref === params.run.inpainter_model) ||
+    modelChoices.find((m) => modelRefForApi(m) === params.run.inpainter_model) ||
+    modelChoices.find((m) => m.state === "ready") ||
+    modelChoices[0]
+  const modelSelectValue = selectedModel?.id ?? ""
+
+  return (
+    <div className="flex flex-col gap-2 text-xs">
+      <div className="flex items-center gap-2">
+        <FieldLabel
+          className="w-[7.5rem] shrink-0"
+          hint="Чем заполнять вырезанные области. Для финального качества на GPU — ProPainter; на CPU — LaMa."
+        >
+          Инпейнтер
+        </FieldLabel>
+        <Select
+          value={params.run.inpainter}
+          onValueChange={(v) => {
+            if (!v) return
+            const nextModels = catalog.filter((m) => m.backend === v)
+            const next =
+              nextModels.find((m) => m.state === "ready") || nextModels[0]
+            setRun({
+              inpainter: v,
+              // Prefer HF id / short ref; never persist raw download URLs in the UI value path.
+              inpainter_model: next ? modelRefForApi(next) : "",
+            })
+          }}
+          disabled={disabled}
+        >
+          <SelectTrigger size="sm" className="flex-1">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {inpainters.map((o) => (
+              <SelectItem key={o} value={o}>
+                {INPAINTER_META[o]?.label ?? o}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select
+          value={params.run.device || "cpu"}
+          onValueChange={(v) => { if (v) setRun({ device: v }) }}
+          disabled={disabled}
+        >
+          <SelectTrigger size="sm" className="w-28">
+            <SelectValue placeholder="device" />
+          </SelectTrigger>
+          <SelectContent>
+            {DEVICE_OPTIONS.map((d) => (
+              <SelectItem key={d} value={d}>
+                {DEVICE_META[d]?.label ?? d}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <ParamHint text={DEVICE_META[params.run.device || "cpu"]?.hint ?? "Где считать нейросети."} />
+      </div>
+
+      {needsModel && (
+        <div className="flex items-center gap-2">
+          <FieldLabel
+            className="w-[7.5rem] shrink-0"
+            hint="Веса выбранного инпейнтера из каталога моделей. Скачать недостающие можно в Настройках."
+          >
+            Модель
+          </FieldLabel>
+          <Select
+            value={modelSelectValue}
+            onValueChange={(id) => {
+              if (!id) return
+              const m = modelChoices.find((x) => x.id === id)
+              if (m) setRun({ inpainter_model: modelRefForApi(m) })
+            }}
+            disabled={disabled || modelChoices.length === 0}
+          >
+            <SelectTrigger size="sm" className="flex-1">
+              <SelectValue placeholder="Выберите модель">
+                {selectedModel
+                  ? `${selectedModel.title}${selectedModel.size_hint ? ` · ${selectedModel.size_hint}` : ""}`
+                  : null}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {modelChoices.map((m) => (
+                <SelectItem key={m.id} value={m.id}>
+                  {m.title}
+                  {m.size_hint ? ` · ${m.size_hint}` : ""}
+                  {m.state && m.state !== "ready" ? ` · ${m.state}` : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
+      {params.run.inpainter === "opencv-telea" && (
+        <ParamSlider
+          label={RUN_PARAM_META.telea_radius.label}
+          hint={RUN_PARAM_META.telea_radius.hint}
+          value={params.run.telea_radius}
+          min={RUN_PARAM_META.telea_radius.min}
+          max={RUN_PARAM_META.telea_radius.max}
+          step={RUN_PARAM_META.telea_radius.step}
+          disabled={disabled}
+          onChange={(v) => setRun({ telea_radius: v })}
+        />
+      )}
+
+      <ParamSlider
+        label={RUN_PARAM_META.mask_dilate_px.label}
+        hint={RUN_PARAM_META.mask_dilate_px.hint}
+        value={params.run.mask_dilate_px}
+        min={RUN_PARAM_META.mask_dilate_px.min}
+        max={RUN_PARAM_META.mask_dilate_px.max}
+        step={RUN_PARAM_META.mask_dilate_px.step}
+        disabled={disabled}
+        onChange={(v) => setRun({ mask_dilate_px: v })}
+      />
+
+      {params.run.inpainter === "propainter" && (
+        <>
+          {(["propainter_mask_dilation", "propainter_ref_stride", "propainter_neighbor_length", "propainter_subvideo_length", "propainter_raft_iter"] as const).map((key) => {
+            const meta = ADVANCED_META[key]
+            const raw = Number(params.advanced[key] ?? ADVANCED_DEFAULTS[key] ?? 0)
+            return (
+              <ParamSlider
+                key={key}
+                label={meta.label}
+                hint={meta.hint}
+                value={Number.isFinite(raw) ? raw : meta.min ?? 0}
+                min={meta.min ?? 0}
+                max={meta.max ?? 100}
+                step={meta.step ?? 1}
+                disabled={disabled}
+                onChange={(v) =>
+                  onParamsChange({
+                    ...params,
+                    advanced: { ...params.advanced, [key]: String(v) },
+                  })
+                }
+              />
+            )
+          })}
+        </>
+      )}
+
+      <div className="flex items-center gap-2">
+        <FieldLabel className="flex-1" hint={RUN_PARAM_META.verify.hint}>
+          {RUN_PARAM_META.verify.label}
+        </FieldLabel>
+        <Switch
+          checked={params.run.verify}
+          onCheckedChange={(checked) => setRun({ verify: checked })}
+          disabled={disabled}
+        />
+      </div>
+      <div className="flex items-center gap-2">
+        <FieldLabel className="flex-1" hint={RUN_PARAM_META.keep_workdir.hint}>
+          {RUN_PARAM_META.keep_workdir.label}
+        </FieldLabel>
+        <Switch
+          checked={params.run.keep_workdir}
+          onCheckedChange={(checked) => setRun({ keep_workdir: checked })}
+          disabled={disabled}
+        />
+      </div>
+    </div>
+  )
+}
+
+function advancedNumber(params: EditorParams, key: string, fallback: number): number {
+  const raw = params.advanced[key]
+  if (raw === undefined || raw === "") return fallback
+  const n = Number(raw)
+  return Number.isFinite(n) ? n : fallback
 }
 
 export function AdvancedFields({
@@ -281,62 +577,121 @@ export function AdvancedFields({
   onParamsChange: (p: EditorParams) => void
   disabled?: boolean
 }) {
+  const setAdvanced = (key: string, value: string) =>
+    onParamsChange({ ...params, advanced: { ...params.advanced, [key]: value } })
+
+  const sliderKeys = [
+    "detector_threshold",
+    "detector_nms_iou",
+    "detector_max_box_area",
+    "tracker_min_score",
+    "tracker_max_template_area",
+    "prompt_frame_stride",
+    "prompt_frame_max",
+    "parse_chunk_frames",
+    "vision_batch",
+    "propainter_mask_dilation",
+    "propainter_ref_stride",
+    "propainter_neighbor_length",
+    "propainter_subvideo_length",
+    "propainter_raft_iter",
+  ] as const
+
   return (
-    <div className="flex flex-col gap-1.5 rounded-md border p-2">
-      {Object.keys(ADVANCED_DEFAULTS).map((key) => (
-        <div key={key} className="flex items-center gap-2 text-xs">
-          <Label className="w-40 shrink-0 truncate" title={key}>{key}</Label>
-          <Input
-            value={params.advanced[key] ?? ""}
-            onChange={(e) =>
-              onParamsChange({
-                ...params,
-                advanced: { ...params.advanced, [key]: e.target.value },
-              })
-            }
+    <div className="flex flex-col gap-2 rounded-md border border-border/60 p-2">
+      <ParamSlider
+        label={ADVANCED_META.detector_keyframes.label}
+        hint={`${ADVANCED_META.detector_keyframes.hint} 0 = авто.`}
+        value={advancedNumber(params, "detector_keyframes", 0)}
+        min={0}
+        max={ADVANCED_META.detector_keyframes.max ?? 40}
+        step={1}
+        disabled={disabled}
+        formatValue={(v) => (v <= 0 ? "авто" : String(v))}
+        onChange={(v) => setAdvanced("detector_keyframes", v <= 0 ? "" : String(v))}
+      />
+      {sliderKeys.map((key) => {
+        const meta = ADVANCED_META[key]
+        const fallback = Number(ADVANCED_DEFAULTS[key] || 0)
+        return (
+          <ParamSlider
+            key={key}
+            label={meta.label}
+            hint={meta.hint}
+            value={advancedNumber(params, key, fallback)}
+            min={meta.min ?? 0}
+            max={meta.max ?? 100}
+            step={meta.step ?? 1}
             disabled={disabled}
-            placeholder={ADVANCED_DEFAULTS[key] || "—"}
-            className="h-6 flex-1 text-xs"
+            onChange={(v) => setAdvanced(key, String(v))}
           />
-        </div>
-      ))}
+        )
+      })}
+      <ParamSlider
+        label={RUN_PARAM_META.min_mask_coverage.label}
+        hint={RUN_PARAM_META.min_mask_coverage.hint}
+        value={params.run.min_mask_coverage}
+        min={RUN_PARAM_META.min_mask_coverage.min}
+        max={RUN_PARAM_META.min_mask_coverage.max}
+        step={RUN_PARAM_META.min_mask_coverage.step}
+        disabled={disabled}
+        onChange={(v) => onParamsChange({ ...params, run: { ...params.run, min_mask_coverage: v } })}
+      />
+      <ParamSlider
+        label={RUN_PARAM_META.verify_max_coverage.label}
+        hint={RUN_PARAM_META.verify_max_coverage.hint}
+        value={params.run.verify_max_coverage}
+        min={RUN_PARAM_META.verify_max_coverage.min}
+        max={RUN_PARAM_META.verify_max_coverage.max}
+        step={RUN_PARAM_META.verify_max_coverage.step}
+        disabled={disabled}
+        onChange={(v) => onParamsChange({ ...params, run: { ...params.run, verify_max_coverage: v } })}
+      />
       <div className="flex items-center gap-2 text-xs">
-        <Label className="w-40 shrink-0">detector_model</Label>
+        <FieldLabel className="w-[7.5rem] shrink-0" hint="Свой HF id детектора, если нужен не дефолтный.">
+          Модель детектора
+        </FieldLabel>
         <Input
           value={params.run.detector_model}
           onChange={(e) => onParamsChange({ ...params, run: { ...params.run, detector_model: e.target.value } })}
           disabled={disabled}
           placeholder="IDEA-Research/grounding-dino-tiny"
-          className="h-6 flex-1 text-xs"
+          className="h-7 flex-1 font-mono text-xs"
         />
       </div>
       <div className="flex items-center gap-2 text-xs">
-        <Label className="w-40 shrink-0" title="Свой HF id, если нет в списке Модель">segmenter_model</Label>
+        <FieldLabel className="w-[7.5rem] shrink-0" hint="Свой HF id сегментатора, если нет в списке выше.">
+          Модель SAM
+        </FieldLabel>
         <Input
           value={params.run.segmenter_model}
           onChange={(e) => onParamsChange({ ...params, run: { ...params.run, segmenter_model: e.target.value } })}
           disabled={disabled}
           placeholder="facebook/sam2.1-hiera-small"
-          className="h-6 flex-1 font-mono text-xs"
+          className="h-7 flex-1 font-mono text-xs"
         />
       </div>
       <div className="flex items-center gap-2 text-xs">
-        <Label className="w-40 shrink-0">llm_base_url</Label>
+        <FieldLabel className="w-[7.5rem] shrink-0" hint="Свой OpenAI-совместимый URL вместо локальной Ollama.">
+          LLM URL
+        </FieldLabel>
         <Input
           value={params.run.llm_base_url}
           onChange={(e) => onParamsChange({ ...params, run: { ...params.run, llm_base_url: e.target.value } })}
           disabled={disabled}
-          className="h-6 flex-1 text-xs"
+          className="h-7 flex-1 text-xs"
         />
       </div>
       <div className="flex items-center gap-2 text-xs">
-        <Label className="w-40 shrink-0">llm_api_key</Label>
+        <FieldLabel className="w-[7.5rem] shrink-0" hint="Ключ для удалённого LLM API.">
+          LLM ключ
+        </FieldLabel>
         <Input
           type="password"
           value={params.run.llm_api_key}
           onChange={(e) => onParamsChange({ ...params, run: { ...params.run, llm_api_key: e.target.value } })}
           disabled={disabled}
-          className="h-6 flex-1 text-xs"
+          className="h-7 flex-1 text-xs"
         />
       </div>
     </div>

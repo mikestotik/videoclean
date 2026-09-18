@@ -6,16 +6,24 @@ import { cancelJob, type Job } from "@/entities/job"
 import type { Source } from "@/entities/source"
 import { Button } from "@/shared/ui/button"
 import { Label } from "@/shared/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select"
 import { Slider } from "@/shared/ui/slider"
 import { Switch } from "@/shared/ui/switch"
 import { Textarea } from "@/shared/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/shared/ui/toggle-group"
 import { TargetsEditor } from "./targets-editor"
-import { AdvancedFields, BackendSelectors, LlmChip, ParamSlider, PresetsPopover, StageSection } from "./stage-parts"
 import {
-  DEVICE_OPTIONS,
-  INPAINTER_OPTIONS,
+  AdvancedFields,
+  BackendSelectors,
+  FieldLabel,
+  InpaintControls,
+  LlmChip,
+  ParamHint,
+  ParamSlider,
+  PresetsPopover,
+  StageSection,
+} from "./stage-parts"
+import { ADVANCED_META, FORMAT_META, MODE_HINTS, RUN_PARAM_META } from "./param-meta"
+import {
   OUTPUT_FORMATS,
   autoStride,
   enabledTargets,
@@ -235,27 +243,32 @@ export function StageRail({
         open={stageOpen(3)}
         onOpenChange={(o) => setStageOpen(3, o)}
       >
-        <ToggleGroup
-          variant="outline"
-          size="sm"
-          value={[params.detect.all ? "all" : "stride"]}
-          onValueChange={(v) => {
-            const next = v.at(-1)
-            if (next) set({ detect: { ...params.detect, all: next === "all" } })
-          }}
-        >
-          <ToggleGroupItem value="all">Всё видео</ToggleGroupItem>
-          <ToggleGroupItem value="stride">Каждый N-й кадр</ToggleGroupItem>
-        </ToggleGroup>
+        <div className="flex items-center gap-1.5">
+          <ToggleGroup
+            variant="outline"
+            size="sm"
+            value={[params.detect.all ? "all" : "stride"]}
+            onValueChange={(v) => {
+              const next = v.at(-1)
+              if (next) set({ detect: { ...params.detect, all: next === "all" } })
+            }}
+          >
+            <ToggleGroupItem value="all">Всё видео</ToggleGroupItem>
+            <ToggleGroupItem value="stride">Каждый N-й кадр</ToggleGroupItem>
+          </ToggleGroup>
+          <ParamHint text={params.detect.all ? MODE_HINTS.detectAll : MODE_HINTS.detectStride} />
+        </div>
         {!params.detect.all && (
           <div className="flex items-center gap-2 text-xs">
             <Slider
               className="w-32"
               min={1}
               max={30}
-              value={params.detect.stride}
+              step={1}
+              value={[params.detect.stride]}
               onValueChange={(v) => {
-                if (typeof v === "number") set({ detect: { ...params.detect, stride: v } })
+                const n = Array.isArray(v) ? v[0] : v
+                if (typeof n === "number") set({ detect: { ...params.detect, stride: n } })
               }}
             />
             <span className="text-muted-foreground">шаг {params.detect.stride}</span>
@@ -289,33 +302,30 @@ export function StageRail({
           disabled={noSource}
           detectorOnly
         />
-        <div className="flex items-center gap-2 text-xs">
-          <Label className="w-28 shrink-0">Порог</Label>
-          <input
-            className="h-8 w-20 rounded-md border border-input bg-transparent px-2 text-xs"
-            type="number"
-            min={0.05}
-            max={0.5}
-            step={0.01}
-            disabled={noSource}
-            value={params.advanced.detector_threshold ?? "0.15"}
-            onChange={(e) => setAdvanced("detector_threshold", e.target.value)}
-          />
-        </div>
-        <div className="flex items-center gap-2 text-xs">
-          <Label className="w-28 shrink-0">Keyframes</Label>
-          <input
-            className="h-8 w-20 rounded-md border border-input bg-transparent px-2 text-xs"
-            type="number"
-            min={1}
-            placeholder="auto"
-            disabled={noSource}
-            value={params.advanced.detector_keyframes ?? ""}
-            onChange={(e) => setAdvanced("detector_keyframes", e.target.value)}
-          />
-        </div>
         <ParamSlider
-          label="Dilate масок, px"
+          label={ADVANCED_META.detector_threshold.label}
+          hint={ADVANCED_META.detector_threshold.hint}
+          value={Number(params.advanced.detector_threshold || 0.15)}
+          min={ADVANCED_META.detector_threshold.min ?? 0.05}
+          max={ADVANCED_META.detector_threshold.max ?? 0.5}
+          step={ADVANCED_META.detector_threshold.step ?? 0.01}
+          disabled={noSource}
+          onChange={(v) => setAdvanced("detector_threshold", String(v))}
+        />
+        <ParamSlider
+          label={ADVANCED_META.detector_keyframes.label}
+          hint={`${ADVANCED_META.detector_keyframes.hint} 0 = авто.`}
+          value={Number(params.advanced.detector_keyframes || 0)}
+          min={0}
+          max={ADVANCED_META.detector_keyframes.max ?? 40}
+          step={1}
+          disabled={noSource}
+          formatValue={(v) => (v <= 0 ? "авто" : String(v))}
+          onChange={(v) => setAdvanced("detector_keyframes", v <= 0 ? "" : String(v))}
+        />
+        <ParamSlider
+          label={RUN_PARAM_META.mask_dilate_px.label}
+          hint={RUN_PARAM_META.mask_dilate_px.hint}
           value={params.run.mask_dilate_px}
           min={0}
           max={15}
@@ -346,7 +356,10 @@ export function StageRail({
         )}
         {hasDetectResult && (
           <div className="space-y-1.5">
-            <Label className="text-[11px] text-muted-foreground">Правка рамки</Label>
+            <div className="flex items-center gap-1.5">
+              <Label className="text-[11px] text-muted-foreground">Правка рамки</Label>
+              <ParamHint text={detect.boxEditMode === "hold" ? MODE_HINTS.boxHold : MODE_HINTS.boxFrame} />
+            </div>
             <ToggleGroup
               variant="outline"
               size="sm"
@@ -386,83 +399,59 @@ export function StageRail({
         open={stageOpen(4)}
         onOpenChange={(o) => setStageOpen(4, o)}
       >
-        <ToggleGroup
-          variant="outline"
-          size="sm"
-          value={[inpaintMode]}
-          onValueChange={(v) => {
-            const next = v.at(-1)
-            if (next === "tracks" || next === "masks" || next === "prompt") setInpaintMode(next)
-          }}
-        >
-          <ToggleGroupItem value="tracks">По трекам</ToggleGroupItem>
-          <ToggleGroupItem value="masks">По маскам</ToggleGroupItem>
-          <ToggleGroupItem value="prompt">По промпту</ToggleGroupItem>
-        </ToggleGroup>
-        {inpaintMode === "masks" && (
+        <div className="flex items-center gap-1.5">
           <ToggleGroup
             variant="outline"
             size="sm"
-            value={[params.maskPolicy]}
+            value={[inpaintMode]}
             onValueChange={(v) => {
               const next = v.at(-1)
-              if (next === "static" || next === "propagate") set({ maskPolicy: next })
+              if (next === "tracks" || next === "masks" || next === "prompt") setInpaintMode(next)
             }}
           >
-            <ToggleGroupItem value="static">Держать</ToggleGroupItem>
-            <ToggleGroupItem value="propagate">Протянуть</ToggleGroupItem>
+            <ToggleGroupItem value="tracks">По трекам</ToggleGroupItem>
+            <ToggleGroupItem value="masks">По маскам</ToggleGroupItem>
+            <ToggleGroupItem value="prompt">По промпту</ToggleGroupItem>
           </ToggleGroup>
-        )}
-        <BackendSelectors
-          detector={params.run.detector}
-          segmenter={params.run.segmenter}
-          segmenterModel={params.run.segmenter_model}
-          onChange={(patch) => set({ run: { ...params.run, ...patch } })}
-          disabled={noSource}
-        />
-        <div className="flex items-center gap-2 text-xs">
-          <Label className="w-20 shrink-0">Инпейнтер</Label>
-          <Select value={params.run.inpainter} onValueChange={(v) => { if (v) set({ run: { ...params.run, inpainter: v } }) }} disabled={noSource}>
-            <SelectTrigger size="sm" className="flex-1">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {INPAINTER_OPTIONS.map((o) => (
-                <SelectItem key={o} value={o}>{o}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={params.run.device} onValueChange={(v) => { if (v) set({ run: { ...params.run, device: v } }) }} disabled={noSource}>
-            <SelectTrigger size="sm" className="w-24">
-              <SelectValue placeholder="device" />
-            </SelectTrigger>
-            <SelectContent>
-              {DEVICE_OPTIONS.map((d) => (
-                <SelectItem key={d} value={d}>{d}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        {params.run.inpainter === "opencv-telea" && (
-          <ParamSlider
-            label="TELEA radius"
-            value={params.run.telea_radius}
-            min={1}
-            max={30}
-            disabled={noSource}
-            onChange={(v) => set({ run: { ...params.run, telea_radius: v } })}
-          />
-        )}
-        <div className="flex items-center gap-2 text-xs">
-          <Label className="flex-1">Проверять leftover</Label>
-          <Switch
-            checked={params.run.verify}
-            onCheckedChange={(checked) => set({ run: { ...params.run, verify: checked } })}
-            disabled={noSource}
+          <ParamHint
+            text={
+              inpaintMode === "tracks"
+                ? MODE_HINTS.inpaintTracks
+                : inpaintMode === "masks"
+                  ? MODE_HINTS.inpaintMasks
+                  : MODE_HINTS.inpaintPrompt
+            }
           />
         </div>
+        {inpaintMode === "masks" && (
+          <div className="flex items-center gap-1.5">
+            <ToggleGroup
+              variant="outline"
+              size="sm"
+              value={[params.maskPolicy]}
+              onValueChange={(v) => {
+                const next = v.at(-1)
+                if (next === "static" || next === "propagate") set({ maskPolicy: next })
+              }}
+            >
+              <ToggleGroupItem value="static">Держать</ToggleGroupItem>
+              <ToggleGroupItem value="propagate">Протянуть</ToggleGroupItem>
+            </ToggleGroup>
+            <ParamHint text={params.maskPolicy === "static" ? MODE_HINTS.maskStatic : MODE_HINTS.maskPropagate} />
+          </div>
+        )}
+        {inpaintMode === "prompt" && (
+          <BackendSelectors
+            detector={params.run.detector}
+            segmenter={params.run.segmenter}
+            segmenterModel={params.run.segmenter_model}
+            onChange={(patch) => set({ run: { ...params.run, ...patch } })}
+            disabled={noSource}
+          />
+        )}
+        <InpaintControls params={params} onParamsChange={onParamsChange} disabled={noSource} />
         <Button size="sm" variant="ghost" className="self-start" onClick={() => setAdvancedOpen((o) => !o)}>
-          {advancedOpen ? "Скрыть параметры" : "Все параметры"}
+          {advancedOpen ? "Скрыть тонкие настройки" : "Тонкие настройки"}
         </Button>
         {advancedOpen && (
           <AdvancedFields
@@ -482,7 +471,7 @@ export function StageRail({
           }
           onClick={runInpaint}
         >
-          Запустить
+          Запустить удаление
         </Button>
         {inpaint.running && (
           <div className="flex items-center gap-2 text-xs">
@@ -500,58 +489,73 @@ export function StageRail({
       <StageSection
         n={5}
         title="Результат"
-        hint="Скачать или сравнить до/после"
+        hint="Форматы, скачивание и сравнение до/после"
         active={activeStage === 5}
         done={stageDone[5]}
         open={stageOpen(5)}
         onOpenChange={(o) => setStageOpen(5, o)}
       >
+        <div className="flex flex-col gap-1.5 text-xs">
+          <FieldLabel hint="Что собрать после удаления. HLS/DASH — пакеты со плейлистом (скачиваются zip).">
+            Форматы вывода
+          </FieldLabel>
+          <div className="flex flex-col gap-1.5">
+            {OUTPUT_FORMATS.map((f) => {
+              const meta = FORMAT_META[f]
+              return (
+                <label key={f} className="flex items-center gap-2">
+                  <Switch
+                    size="sm"
+                    checked={params.run.formats.includes(f)}
+                    disabled={noSource}
+                    onCheckedChange={(checked) => {
+                      const next = checked
+                        ? [...params.run.formats, f]
+                        : params.run.formats.filter((x) => x !== f)
+                      set({
+                        run: {
+                          ...params.run,
+                          formats: next.length ? next : ["mp4"],
+                        },
+                      })
+                    }}
+                  />
+                  <span className="min-w-0 flex-1">{meta?.label ?? f}</span>
+                  {meta?.hint ? <ParamHint text={meta.hint} /> : null}
+                </label>
+              )
+            })}
+          </div>
+        </div>
         {resultJob?.state === "COMPLETED" ? (
           <>
-            <p className="text-xs text-ok">Готово. Можно открыть сравнение в просмотрщике.</p>
-            <div className="flex gap-2">
+            <p className="text-xs text-ok">Готово.</p>
+            <div className="flex flex-wrap gap-2">
               {onOpenResult && (
                 <Button size="sm" variant="outline" onClick={onOpenResult}>
-                  Открыть сравнение
+                  Сравнить до/после
                 </Button>
               )}
-              <Button
-                size="sm"
-                disabled={!resultJob.output_url}
-                render={resultJob.output_url ? <a href={resultJob.output_url} download /> : undefined}
-              >
-                Скачать
-              </Button>
+              {(resultJob.outputs && Object.keys(resultJob.outputs).length > 0
+                ? Object.entries(resultJob.outputs)
+                : resultJob.output_url
+                  ? [["default", resultJob.output_url] as const]
+                  : []
+              ).map(([fmt, url]) => (
+                <Button
+                  key={fmt}
+                  size="sm"
+                  nativeButton={false}
+                  render={<a href={url} download />}
+                >
+                  Скачать {FORMAT_META[fmt]?.label ?? (fmt === "default" ? "файл" : fmt)}
+                </Button>
+              ))}
             </div>
           </>
         ) : (
           <p className="text-xs text-muted-foreground">Результата ещё нет. Запустите удаление выше.</p>
         )}
-        <div className="flex flex-col gap-1 text-xs">
-          <Label>Форматы вывода</Label>
-          <div className="flex flex-wrap gap-x-3 gap-y-1">
-            {OUTPUT_FORMATS.map((f) => (
-              <label key={f} className="flex items-center gap-1.5">
-                <Switch
-                  size="sm"
-                  checked={params.run.formats.includes(f)}
-                  disabled={noSource}
-                  onCheckedChange={(checked) =>
-                    set({
-                      run: {
-                        ...params.run,
-                        formats: checked
-                          ? [...params.run.formats, f]
-                          : params.run.formats.filter((x) => x !== f),
-                      },
-                    })
-                  }
-                />
-                {f}
-              </label>
-            ))}
-          </div>
-        </div>
       </StageSection>
       </div>
 
