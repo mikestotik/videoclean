@@ -26,6 +26,69 @@ OLLAMA_NEG_TTL_S = 30.0
 _ollama_neg_lock = threading.Lock()
 _ollama_neg_until = 0.0
 
+# Segmenter weights: driver is sam2 | sam2-video; these are the HF checkpoints.
+SEGMENTER_COMPONENTS: tuple[ComponentInfo, ...] = (
+    ComponentInfo(
+        id="segmenter:sam2-tiny",
+        title="SAM2 tiny",
+        kind="segmenter",
+        model_ref="facebook/sam2-hiera-tiny",
+        size_hint="~160 MB",
+    ),
+    ComponentInfo(
+        id="segmenter:sam2-small",
+        title="SAM2 small",
+        kind="segmenter",
+        model_ref="facebook/sam2-hiera-small",
+        size_hint="~180 MB",
+    ),
+    ComponentInfo(
+        id="segmenter:sam2-base-plus",
+        title="SAM2 base+",
+        kind="segmenter",
+        model_ref="facebook/sam2-hiera-base-plus",
+        size_hint="~320 MB",
+    ),
+    ComponentInfo(
+        id="segmenter:sam2-large",
+        title="SAM2 large",
+        kind="segmenter",
+        model_ref="facebook/sam2-hiera-large",
+        size_hint="~900 MB",
+    ),
+    ComponentInfo(
+        id="segmenter:sam21-tiny",
+        title="SAM2.1 tiny",
+        kind="segmenter",
+        model_ref="facebook/sam2.1-hiera-tiny",
+        size_hint="~160 MB",
+    ),
+    ComponentInfo(
+        id="segmenter:sam21-small",
+        title="SAM2.1 small",
+        kind="segmenter",
+        model_ref="facebook/sam2.1-hiera-small",
+        size_hint="~185 MB",
+    ),
+    ComponentInfo(
+        id="segmenter:sam21-base-plus",
+        title="SAM2.1 base+",
+        kind="segmenter",
+        model_ref="facebook/sam2.1-hiera-base-plus",
+        size_hint="~320 MB",
+    ),
+    ComponentInfo(
+        id="segmenter:sam21-large",
+        title="SAM2.1 large",
+        kind="segmenter",
+        model_ref="facebook/sam2.1-hiera-large",
+        size_hint="~900 MB",
+    ),
+)
+
+SEGMENTER_MODEL_REFS: tuple[str, ...] = tuple(c.model_ref for c in SEGMENTER_COMPONENTS)
+_SEGMENTER_REF_TO_ID: dict[str, str] = {c.model_ref.casefold(): c.id for c in SEGMENTER_COMPONENTS}
+
 COMPONENTS: tuple[ComponentInfo, ...] = (
     ComponentInfo(
         id="detector:grounding-dino",
@@ -34,20 +97,7 @@ COMPONENTS: tuple[ComponentInfo, ...] = (
         model_ref="IDEA-Research/grounding-dino-tiny",
         size_hint="~650 MB",
     ),
-    ComponentInfo(
-        id="segmenter:sam2-tiny",
-        title="SAM2 Hiera tiny",
-        kind="segmenter",
-        model_ref="facebook/sam2-hiera-tiny",
-        size_hint="~160 MB",
-    ),
-    ComponentInfo(
-        id="segmenter:sam2-large",
-        title="SAM2 Hiera large",
-        kind="segmenter",
-        model_ref="facebook/sam2-hiera-large",
-        size_hint="~900 MB",
-    ),
+    *SEGMENTER_COMPONENTS,
     ComponentInfo(
         id="inpainter:lama",
         title="LaMa (big-lama.pt)",
@@ -109,11 +159,31 @@ def component_id_for(kind: str, name: str, segmenter_model: str = "") -> str | N
     if kind == "inpainter" and name == "opencv-telea":
         return None
     if kind == "segmenter" and name in {"sam2", "sam2-video"}:
-        model = (segmenter_model or "").strip().lower()
-        if "large" in model:
-            return "segmenter:sam2-large"
-        return "segmenter:sam2-tiny"
+        return segmenter_component_id(segmenter_model)
     return _BACKEND_TO_COMPONENT.get((kind, name))
+
+
+def segmenter_component_id(segmenter_model: str = "") -> str:
+    """Resolve HF segmenter checkpoint → catalog id (default tiny)."""
+    model = (segmenter_model or "").strip().casefold()
+    if model in _SEGMENTER_REF_TO_ID:
+        return _SEGMENTER_REF_TO_ID[model]
+    # Fuzzy match for custom / abbreviated refs.
+    if "2.1" in model or "sam21" in model or "sam2.1" in model:
+        if "large" in model:
+            return "segmenter:sam21-large"
+        if "base" in model:
+            return "segmenter:sam21-base-plus"
+        if "small" in model:
+            return "segmenter:sam21-small"
+        return "segmenter:sam21-tiny"
+    if "large" in model:
+        return "segmenter:sam2-large"
+    if "base" in model:
+        return "segmenter:sam2-base-plus"
+    if "small" in model:
+        return "segmenter:sam2-small"
+    return "segmenter:sam2-tiny"
 
 
 def backend_ready(

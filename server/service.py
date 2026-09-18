@@ -596,6 +596,19 @@ def grouped_models(state: AppState) -> dict[str, list[dict[str, Any]]]:
 def options_payload(state: AppState) -> dict[str, Any]:
     catalog = state.catalog
     llm_names = ollama_model_names(timeout=2.0) or []
+    from videoclean.adapters.models.catalog import SEGMENTER_COMPONENTS
+
+    segmenter_models = [
+        {
+            "id": info.id,
+            "title": info.title,
+            "model_ref": info.model_ref,
+            "size_hint": info.size_hint,
+            "ready": catalog.is_ready(info.id),
+        }
+        for info in SEGMENTER_COMPONENTS
+    ]
+    # Drivers are always listed; readiness is per weights (segmenter_models), not per driver name.
     return {
         "device": default_device(),
         "devices": ["cpu", "cuda", "mps"],
@@ -603,9 +616,9 @@ def options_payload(state: AppState) -> dict[str, Any]:
         "llm_places": list(LLM_PLACES),
         "llm_models": llm_names,
         "detectors": [name for name in DETECTORS if backend_ready("detector", name, catalog=catalog)],
-        "segmenters": [
-            name for name in SEGMENTERS if backend_ready("segmenter", name, catalog=catalog)
-        ],
+        "segmenters": list(SEGMENTERS),
+        "segmenter_models": segmenter_models,
+        "default_segmenter_model": DEFAULT_SEGMENTER_MODEL,
         "inpainters": [
             name for name in INPAINTERS if backend_ready("inpainter", name, catalog=catalog)
         ],

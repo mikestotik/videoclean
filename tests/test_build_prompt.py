@@ -122,7 +122,88 @@ def test_masks_and_text_are_interpreted(tmp_path: Path):
     assert len(llm.calls[0]["images"]) == 1, "one jpeg per requested frame"
     assert "убери это" in llm.calls[0]["user"]
     assert "frame 3" in llm.calls[0]["user"]
-    assert "red overlay" in llm.calls[0]["user"]
+    assert "annotation marker" in llm.calls[0]["user"]
+    assert "MUST be English" in llm.calls[0]["user"]
+    assert "never call the object red" in llm.calls[0]["user"]
+
+
+def test_cjk_prompt_repaired_when_user_wrote_nothing(tmp_path: Path):
+    """Gemma-like models invent Chinese; pipeline prompt must stay usable for DINO."""
+    src = tmp_path / "in.mp4"
+    src.write_bytes(b"fake")
+    mask = _write_mask(tmp_path, "m.png")
+    reply = (
+        '{"prompt":"请移除视频顶部的水印和底部的文字叠加层。",'
+        '"targets":[{"kind":"watermark","query":"channel logo","where":"top","motion":"static"},'
+        '{"kind":"text_overlay","query":"bottom caption","where":"bottom","motion":"static"}]}'
+    )
+    llm = FakeLlm(reply)
+    out = _build_prompt(tmp_path, llm).execute(
+        _req(tmp_path, prompt="", annotations=[{"frame": 0, "mask": str(mask)}]),
+        tmp_path,
+    )
+    assert out["state"] == "COMPLETED"
+    assert "请" not in out["prompt"]
+    assert out["prompt"].startswith("Remove:")
+    assert "channel logo" in out["prompt"]
+    assert "bottom caption" in out["prompt"]
+
+
+def test_mask_geometry_overrides_vlm_where(tmp_path: Path):
+    """Painted top-right must not become VLM 'top' / center."""
+    src = tmp_path / "in.mp4"
+    src.write_bytes(b"fake")
+    m = np.zeros((H, W), dtype=np.uint8)
+    m[0:2, 5:8] = 255  # top-right on 8x8
+    mask = tmp_path / "tr.png"
+    cv2.imwrite(str(mask), m)
+    reply = (
+        '{"prompt":"Remove the logo at the top",'
+        '"targets":[{"kind":"watermark","query":"logo","where":"top","motion":"static"}]}'
+    )
+    llm = FakeLlm(reply)
+    out = _build_prompt(tmp_path, llm).execute(
+        _req(tmp_path, prompt="", annotations=[{"frame": 0, "mask": str(mask)}]),
+        tmp_path,
+    )
+    assert out["targets"][0]["where"] == "top-right"
+    assert out["maskRegions"][0]["where"] == "top-right"
+    assert "Mask geometry is AUTHORITATIVE" in llm.calls[0]["user"]
+
+
+def test_annotation_paint_color_stripped_from_prompt_and_query(tmp_path: Path):
+    """Red tint on masks must not become 'red logo' when the object is not red."""
+    src = tmp_path / "in.mp4"
+    src.write_bytes(b"fake")
+    mask = _write_mask(tmp_path, "m.png")
+    reply = (
+        '{"prompt":"Remove the red logo at the top and the text overlay at the bottom.",'
+        '"targets":[{"kind":"watermark","query":"red logo","where":"top","motion":"static"},'
+        '{"kind":"text_overlay","query":"text overlay","where":"bottom","motion":"static"}]}'
+    )
+    out = _build_prompt(tmp_path, FakeLlm(reply)).execute(
+        _req(tmp_path, prompt="", annotations=[{"frame": 0, "mask": str(mask)}]),
+        tmp_path,
+    )
+    assert "red" not in out["prompt"].casefold()
+    assert out["targets"][0]["query"] == "logo"
+    assert "red" not in out["targets"][0]["query"].casefold()
+
+
+def test_user_named_red_is_kept(tmp_path: Path):
+    src = tmp_path / "in.mp4"
+    src.write_bytes(b"fake")
+    mask = _write_mask(tmp_path, "m.png")
+    reply = (
+        '{"prompt":"Remove the red logo",'
+        '"targets":[{"kind":"watermark","query":"red logo","where":"top","motion":"static"}]}'
+    )
+    out = _build_prompt(tmp_path, FakeLlm(reply)).execute(
+        _req(tmp_path, prompt="remove the red logo", annotations=[{"frame": 0, "mask": str(mask)}]),
+        tmp_path,
+    )
+    assert "red logo" in out["prompt"].casefold()
+    assert out["targets"][0]["query"] == "red logo"
 
 
 def test_text_only_uses_sampled_frames(tmp_path: Path):

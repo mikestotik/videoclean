@@ -252,6 +252,7 @@ export function StageRail({
         <BackendSelectors
           detector={params.run.detector}
           segmenter={params.run.segmenter}
+          segmenterModel={params.run.segmenter_model}
           onChange={(patch) => set({ run: { ...params.run, ...patch } })}
           disabled={noSource}
         />

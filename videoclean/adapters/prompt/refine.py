@@ -25,6 +25,35 @@ _TEXT_QUERIES = {
 }
 _MARK_QUERIES = {"logo", "watermark", "emblem", "bug", "channel logo", "mark"}
 
+# OCR / location scraps that VLM sometimes puts in query. Collapse only these — not
+# concrete multi-word Grounding DINO phrases.
+_JUNK_QUERY_WORDS = {
+    "wrong",
+    "side",
+    "any",
+    "left",
+    "right",
+    "top",
+    "bottom",
+    "middle",
+    "center",
+    "centre",
+    "corner",
+    "area",
+    "region",
+    "part",
+    "thing",
+    "stuff",
+    "object",
+    "overlay",
+    "image",
+    "frame",
+    "video",
+    "the",
+    "a",
+    "an",
+}
+
 # Longer / more specific patterns first. Russian can be "правом нижнем" or "нижнем правом".
 _WHERE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"верхн\w*.{0,16}прав|прав\w*.{0,16}верхн|top[-\s]?right|upper[-\s]?right", re.I), "top-right"),
@@ -124,14 +153,37 @@ def _treat_object_as_overlay(query: str) -> bool:
 
 
 def _rewrite_query(kind: str, query: str) -> str:
+    """Keep usable open-vocab phrases; collapse only junk OCR scraps for overlay kinds."""
     q = " ".join((query or "").split())
     low = q.casefold()
     if kind == "text_overlay":
         if any(token in low for token in _TEXT_QUERIES):
             return q
+        if _usable_dino_phrase(low):
+            return q
         return "text"
     if kind == "watermark":
         if any(token in low for token in _MARK_QUERIES):
             return q
+        if _usable_dino_phrase(low):
+            return q
         return "logo"
     return q
+
+
+def _usable_dino_phrase(low: str) -> bool:
+    """True when the query looks like a searchable English phrase, not OCR scrap."""
+    words = [w for w in low.replace("-", " ").split() if w]
+    if not words:
+        return False
+    if all(w in _JUNK_QUERY_WORDS for w in words):
+        return False
+    content = [w for w in words if w not in _JUNK_QUERY_WORDS]
+    if not content:
+        return False
+    # Multi-word with at least one content word: keep for Grounding DINO.
+    if len(words) >= 2:
+        return all(ch.isalpha() or ch in "-'" for w in words for ch in w)
+    # Single content word: keep if long enough and not junk (e.g. "ticker").
+    w = content[0]
+    return len(w) >= 4 and w not in _JUNK_QUERY_WORDS

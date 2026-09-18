@@ -29,12 +29,14 @@ export function useInterpret(source: Source | null) {
   const [running, setRunning] = useState(false)
   const [error, setError] = useState("")
   const [result, setResult] = useState<InterpretResult | null>(null)
+  const [lastJobId, setLastJobId] = useState<string | null>(null)
   const runIdRef = useRef(0)
 
   const [prevSourceId, setPrevSourceId] = useState(source?.id)
   if (prevSourceId !== source?.id) {
     setPrevSourceId(source?.id)
     setResult(null)
+    setLastJobId(null)
     setError("")
   }
 
@@ -61,6 +63,7 @@ export function useInterpret(source: Source | null) {
           targets: parseReportTargets(report.targets),
         }
         setResult(parsed)
+        setLastJobId(job.id)
         return parsed
       } catch (e) {
         if (runId === runIdRef.current) setError(e instanceof Error ? e.message : String(e))
@@ -72,5 +75,22 @@ export function useInterpret(source: Source | null) {
     [running, source],
   )
 
-  return { run, running, error, result }
+  const loadFromJob = useCallback(async (jobId: string): Promise<InterpretResult | null> => {
+    setError("")
+    try {
+      const report = (await fetchJobReport(jobId)) as ReportBody
+      const parsed: InterpretResult = {
+        prompt: String(report.prompt ?? ""),
+        targets: parseReportTargets(report.targets),
+      }
+      setResult(parsed)
+      setLastJobId(jobId)
+      return parsed
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      return null
+    }
+  }, [])
+
+  return { run, running, error, result, lastJobId, loadFromJob }
 }

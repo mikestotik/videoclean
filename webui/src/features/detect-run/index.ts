@@ -120,5 +120,21 @@ export function useDetectRun(source: Source | null) {
     [running, source],
   )
 
-  return { run, running, jobId, lastJobId, progress, error, manifest, tracks }
+  const loadFromJob = useCallback(async (jobId: string) => {
+    setError("")
+    try {
+      const [m, report] = await Promise.all([
+        fetchPreviewManifest(jobId),
+        fetchJobReport(jobId).catch(() => null),
+      ])
+      setManifest(m)
+      setTracks(parseTracks((report as ReportBody | null)?.tracks))
+      setLastJobId(jobId)
+      setProgress({ fraction: 1, detail: "", eta: "" })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }, [])
+
+  return { run, running, jobId, lastJobId, progress, error, manifest, tracks, loadFromJob }
 }

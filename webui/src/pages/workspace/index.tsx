@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { Film, Upload } from "lucide-react"
 import { EditorViewer, type EditorMode } from "@widgets/editor-viewer"
 import { Library } from "@widgets/library"
@@ -8,13 +8,14 @@ import {
   enabledTargets,
   toRunParams,
   type EditorParams,
+  type StageTarget,
 } from "@widgets/stage-rail"
 import { Timeline } from "@widgets/timeline"
 import { useAnnotate } from "@features/annotate"
 import { useDetectRun } from "@features/detect-run"
 import { useInpaintRun } from "@features/inpaint-run"
 import { useInterpret, type InterpretTarget } from "@features/interpret"
-import { getJob, type Job } from "@/entities/job"
+import { fetchJobReport, getJob, type Job } from "@/entities/job"
 import { previewArtifactUrl } from "@/entities/preview"
 import type { TargetKind, TargetRow } from "@/entities/targets"
 import type { Source } from "@/entities/source"
@@ -35,6 +36,38 @@ function toTargetRows(targets: InterpretTarget[]): TargetRow[] {
     }))
 }
 
+function stageTargetsFromReport(value: unknown): StageTarget[] {
+  if (!Array.isArray(value)) return []
+  const rows: StageTarget[] = []
+  for (const item of value) {
+    const r = (item ?? {}) as Record<string, unknown>
+    const query = String(r.query ?? "").trim()
+    if (!query) continue
+    const kindRaw = String(r.kind ?? "object")
+    rows.push({
+      kind: kindRaw === "watermark" || kindRaw === "text_overlay" ? kindRaw : "object",
+      query,
+      where: r.where ? String(r.where) : null,
+      enabled: true,
+      source: "auto",
+    })
+  }
+  return rows
+}
+
+function applyReportToParams(
+  prev: EditorParams,
+  report: { prompt?: unknown; targets?: unknown },
+): EditorParams {
+  const targets = stageTargetsFromReport(report.targets)
+  const prompt = String(report.prompt ?? "").trim()
+  return {
+    ...prev,
+    prompt: prompt || prev.prompt,
+    targets: targets.length > 0 ? targets : prev.targets,
+  }
+}
+
 export function WorkspacePage() {
   const [source, setSource] = useState<Source | null>(null)
   const [currentFrame, setCurrentFrame] = useState(0)
@@ -45,6 +78,7 @@ export function WorkspacePage() {
   const [runAllError, setRunAllError] = useState("")
   const [resultJob, setResultJob] = useState<Job | null>(null)
   const [libraryTick, setLibraryTick] = useState(0)
+  const [restoreError, setRestoreError] = useState("")
 
   const sourceId = source?.id ?? null
   const probe = source?.probe
@@ -57,6 +91,15 @@ export function WorkspacePage() {
   const detect = useDetectRun(source)
   const inpaint = useInpaintRun(source)
 
+  const activeJobs = useMemo(
+    () => ({
+      prompt: interpret.lastJobId,
+      preview: detect.lastJobId,
+      run: inpaint.lastJobId,
+    }),
+    [detect.lastJobId, inpaint.lastJobId, interpret.lastJobId],
+  )
+
   const [prevSourceId, setPrevSourceId] = useState<string | null>(sourceId)
   if (prevSourceId !== sourceId) {
     setPrevSourceId(sourceId)
@@ -65,8 +108,50 @@ export function WorkspacePage() {
     setParams(DEFAULT_PARAMS)
     setMaskOpacity(0.6)
     setResultJob(null)
+    setRestoreError("")
     setRunAllError("")
   }
+
+  const selectJob = useCallback(
+    async (job: Job) => {
+      if (job.state !== "COMPLETED") return
+      setRestoreError("")
+      try {
+        if (job.kind === "prompt") {
+          const loaded = await interpret.loadFromJob(job.id)
+          if (!loaded) {
+            setRestoreError("Не удалось загрузить результат промпта")
+            return
+          }
+          setParams((prev) => applyReportToParams(prev, loaded))
+          setViewerMode("annotate")
+          return
+        }
+        if (job.kind === "preview") {
+          const report = (await fetchJobReport(job.id).catch(() => null)) as
+            | { prompt?: unknown; targets?: unknown }
+            | null
+          if (report) setParams((prev) => applyReportToParams(prev, report))
+          await detect.loadFromJob(job.id)
+          setViewerMode("detect")
+          return
+        }
+        if (job.kind === "run") {
+          const report = (await fetchJobReport(job.id).catch(() => null)) as
+            | { prompt?: unknown; targets?: unknown }
+            | null
+          if (report) setParams((prev) => applyReportToParams(prev, report))
+          inpaint.loadFromJob(job.id)
+          const full = await getJob(job.id)
+          setResultJob(full)
+          setViewerMode("result")
+        }
+      } catch (e) {
+        setRestoreError(e instanceof Error ? e.message : String(e))
+      }
+    },
+    [detect, inpaint, interpret],
+  )
 
   const [prevDetectJob, setPrevDetectJob] = useState<string | null>(null)
   if (detect.lastJobId && detect.lastJobId !== prevDetectJob) {
@@ -162,9 +247,16 @@ export function WorkspacePage() {
           selectedId={sourceId}
           onSelect={setSource}
           onClearSelection={() => setSource(null)}
+          activeJobs={activeJobs}
+          onSelectJob={(job) => void selectJob(job)}
           refreshKey={libraryTick}
           onUploaded={() => setLibraryTick((t) => t + 1)}
         />
+        {restoreError && (
+          <p className="shrink-0 border-t border-border/70 px-3 py-2 text-xs text-destructive">
+            {restoreError}
+          </p>
+        )}
       </aside>
 
       {source && probe ? (

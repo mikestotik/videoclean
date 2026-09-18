@@ -14,28 +14,53 @@ import { ADVANCED_DEFAULTS, applyPreset, presetSnapshot, type EditorParams } fro
 
 type PollShape = { ollama: { ok: boolean; models: string[] } }
 
+type SegmenterModelOpt = {
+  id: string
+  title: string
+  model_ref: string
+  size_hint?: string
+  ready?: boolean
+}
+
 type OptionsShape = {
   detectors: string[]
   segmenters: string[]
+  segmenter_models?: SegmenterModelOpt[]
+  default_segmenter_model?: string
 }
 
 export function BackendSelectors({
   detector,
   segmenter,
+  segmenterModel,
   onChange,
   disabled,
 }: {
   detector: string
   segmenter: string
-  onChange: (patch: { detector?: string; segmenter?: string }) => void
+  segmenterModel: string
+  onChange: (patch: { detector?: string; segmenter?: string; segmenter_model?: string }) => void
   disabled?: boolean
 }) {
   const [opts, setOpts] = useState<OptionsShape>({ detectors: [], segmenters: [] })
   useEffect(() => {
     api<OptionsShape>("/api/options")
-      .then((r) => setOpts({ detectors: r.detectors ?? [], segmenters: r.segmenters ?? [] }))
+      .then((r) =>
+        setOpts({
+          detectors: r.detectors ?? [],
+          segmenters: r.segmenters ?? [],
+          segmenter_models: r.segmenter_models ?? [],
+          default_segmenter_model: r.default_segmenter_model,
+        }),
+      )
       .catch(() => setOpts({ detectors: [], segmenters: [] }))
   }, [])
+
+  const modelValue =
+    segmenterModel ||
+    opts.default_segmenter_model ||
+    opts.segmenter_models?.[0]?.model_ref ||
+    "facebook/sam2-hiera-tiny"
 
   return (
     <div className="flex flex-col gap-1.5 text-xs">
@@ -53,14 +78,37 @@ export function BackendSelectors({
         </Select>
       </div>
       <div className="flex items-center gap-2">
-        <Label className="w-20 shrink-0">Сегментер</Label>
+        <Label className="w-20 shrink-0">Режим</Label>
         <Select value={segmenter} onValueChange={(v) => { if (v) onChange({ segmenter: v }) }} disabled={disabled}>
           <SelectTrigger size="sm" className="flex-1">
-            <SelectValue placeholder="sam2-video" />
+            <SelectValue placeholder="sam2" />
           </SelectTrigger>
           <SelectContent>
-            {opts.segmenters.map((s) => (
-              <SelectItem key={s} value={s}>{s}</SelectItem>
+            {(opts.segmenters.length ? opts.segmenters : ["sam2", "sam2-video"]).map((s) => (
+              <SelectItem key={s} value={s}>
+                {s === "sam2-video" ? "sam2-video (пропагация)" : "sam2 (покадрово)"}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="flex items-center gap-2">
+        <Label className="w-20 shrink-0">Модель</Label>
+        <Select
+          value={modelValue}
+          onValueChange={(v) => { if (v) onChange({ segmenter_model: v }) }}
+          disabled={disabled}
+        >
+          <SelectTrigger size="sm" className="flex-1">
+            <SelectValue placeholder="SAM2 tiny" />
+          </SelectTrigger>
+          <SelectContent>
+            {(opts.segmenter_models ?? []).map((m) => (
+              <SelectItem key={m.id} value={m.model_ref}>
+                {m.title}
+                {m.size_hint ? ` · ${m.size_hint}` : ""}
+                {m.ready === false ? " · не скачана" : ""}
+              </SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -249,13 +297,13 @@ export function AdvancedFields({
         />
       </div>
       <div className="flex items-center gap-2 text-xs">
-        <Label className="w-40 shrink-0">segmenter_model</Label>
+        <Label className="w-40 shrink-0" title="Свой HF id, если нет в списке Модель">segmenter_model</Label>
         <Input
           value={params.run.segmenter_model}
           onChange={(e) => onParamsChange({ ...params, run: { ...params.run, segmenter_model: e.target.value } })}
           disabled={disabled}
-          placeholder="facebook/sam2-hiera-tiny"
-          className="h-6 flex-1 text-xs"
+          placeholder="facebook/sam2.1-hiera-small"
+          className="h-6 flex-1 font-mono text-xs"
         />
       </div>
       <div className="flex items-center gap-2 text-xs">

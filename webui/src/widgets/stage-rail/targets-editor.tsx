@@ -2,9 +2,9 @@ import type { TargetKind } from "@/entities/targets"
 import type { StageTarget } from "./params"
 import { Badge } from "@/shared/ui/badge"
 import { Button } from "@/shared/ui/button"
-import { Input } from "@/shared/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select"
 import { Switch } from "@/shared/ui/switch"
+import { Textarea } from "@/shared/ui/textarea"
 
 const KINDS: { value: TargetKind; label: string }[] = [
   { value: "text_overlay", label: "Текст" },
@@ -60,13 +60,36 @@ export function TargetsEditor({ targets, onChange, disabled }: Props) {
     <div className="flex flex-col gap-2">
       {targets.map((t, i) => (
         <div key={i} className="flex flex-col gap-1.5 rounded-md border border-border/70 bg-background/40 p-2">
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center justify-between gap-1.5">
+            <Badge variant={t.source === "auto" ? "secondary" : "outline"} className="text-[10px]">
+              {t.source === "auto" ? "авто" : "вручную"}
+            </Badge>
+            <div className="flex items-center gap-1.5">
+              <Switch
+                size="sm"
+                checked={t.enabled}
+                onCheckedChange={(checked) => update(i, { enabled: checked })}
+                aria-label="Использовать цель"
+                disabled={disabled}
+              />
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                aria-label="Удалить цель"
+                disabled={disabled}
+                onClick={() => remove(i)}
+              >
+                ×
+              </Button>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-1.5">
             <Select
               value={t.kind}
               onValueChange={(v) => update(i, { kind: v as TargetKind })}
               disabled={disabled}
             >
-              <SelectTrigger size="sm" className="w-[7.5rem] shrink-0">
+              <SelectTrigger size="sm" className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -77,37 +100,12 @@ export function TargetsEditor({ targets, onChange, disabled }: Props) {
                 ))}
               </SelectContent>
             </Select>
-            <Input
-              value={t.query}
-              onChange={(e) => update(i, { query: e.target.value })}
-              placeholder="Что удалить"
-              disabled={disabled}
-              className="h-7 flex-1 text-xs"
-            />
-            <Switch
-              size="sm"
-              checked={t.enabled}
-              onCheckedChange={(checked) => update(i, { enabled: checked })}
-              aria-label="Использовать цель"
-              disabled={disabled}
-            />
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              aria-label="Удалить цель"
-              disabled={disabled}
-              onClick={() => remove(i)}
-            >
-              ×
-            </Button>
-          </div>
-          <div className="flex items-center gap-1.5">
             <Select
               value={t.where ?? ""}
               onValueChange={(v) => update(i, { where: v || null })}
               disabled={disabled}
             >
-              <SelectTrigger size="sm" className="w-[7.5rem] shrink-0">
+              <SelectTrigger size="sm" className="w-full">
                 <SelectValue placeholder="Где угодно" />
               </SelectTrigger>
               <SelectContent>
@@ -118,10 +116,15 @@ export function TargetsEditor({ targets, onChange, disabled }: Props) {
                 ))}
               </SelectContent>
             </Select>
-            <Badge variant={t.source === "auto" ? "secondary" : "outline"} className="text-[10px]">
-              {t.source === "auto" ? "авто" : "вручную"}
-            </Badge>
           </div>
+          <Textarea
+            value={t.query}
+            onChange={(e) => update(i, { query: e.target.value })}
+            placeholder="Что искать (англ.), напр. red channel logo"
+            disabled={disabled}
+            rows={2}
+            className="min-h-8 w-full resize-y px-2 py-1.5 text-xs leading-snug"
+          />
         </div>
       ))}
       <Button size="sm" variant="outline" className="self-start" disabled={disabled} onClick={add}>

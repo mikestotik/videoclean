@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 import re
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import cv2
 import numpy as np
 
+from videoclean.adapters.prompt.locations import MaskRegion, mask_regions
 from videoclean.application.config import PipelineConfig
 from videoclean.application.errors import AdapterUnavailable, JobCancelled, PipelineError
 from videoclean.application.frames_sample import sample_frame_indices
@@ -147,30 +148,45 @@ class BuildPrompt:
             self._to_jpeg(self._overlay(img, ann_by_frame[idx]) if idx in ann_by_frame else img)
             for img, idx in zip(images, idxs)
         ]
+        geo_regions = _geometry_regions(ann_by_frame)
         self.progress.finish("normalize", f"{len(jpegs)} frames")
 
         st = self.llm.status()
         if not st.startswith("ready"):
             raise AdapterUnavailable(f"prompt-parser llm: {st}")
         self.progress.start("parse", detail=f"llm {self.llm.model}")
-        raw = self.llm.complete(self._system_prompt, self._user_message(req.prompt, ann_by_frame, idxs), images=jpegs)
+        raw = self.llm.complete(
+            self._system_prompt,
+            self._user_message(req.prompt, ann_by_frame, idxs, geo_regions),
+            images=jpegs,
+        )
         data = _extract_json(raw)
         if data is None:
             snippet = " ".join((raw or "").split())[:200]
             raise PipelineError(f"build-prompt: model returned no JSON object; raw: {snippet or '(empty)'}")
         targets_json = data.get("targets") or []
         targets = targets_from_json(targets_json) if targets_json else []
+        targets = apply_mask_wheres(targets, geo_regions)
+        user_prompt = (req.prompt or "").strip()
+        if ann_by_frame:
+            targets = strip_annotation_paint_colors(targets, user_prompt)
         out_prompt = str(data.get("prompt") or "").strip()
-        if not out_prompt:
-            out_prompt = ", ".join(t.query for t in targets) or (req.prompt or "").strip()
+        if not out_prompt or _prompt_language_mismatch(user_prompt, out_prompt):
+            out_prompt = _english_prompt_from_targets(targets) or user_prompt
+        elif ann_by_frame:
+            out_prompt = strip_annotation_paint_colors_text(out_prompt, user_prompt)
         self.progress.finish("parse", ", ".join(t.query for t in targets) or "(no targets)")
 
         report.update(
             {
                 "state": "COMPLETED",
                 "prompt": out_prompt,
-                "userPrompt": (req.prompt or "").strip(),
+                "userPrompt": user_prompt,
                 "targets": [_t_json(t) for t in targets],
+                "maskRegions": [
+                    {"where": r.where, "nx": round(r.nx, 3), "ny": round(r.ny, 3), "area": r.area}
+                    for r in geo_regions
+                ],
                 "framesUsed": idxs,
                 "annotatedFrames": sorted(ann_by_frame),
                 "imagesSent": len(jpegs),
@@ -207,16 +223,131 @@ class BuildPrompt:
         return out
 
     @staticmethod
-    def _user_message(prompt: str, ann_by_frame: dict[int, Path], idxs: list[int]) -> str:
+    def _user_message(
+        prompt: str,
+        ann_by_frame: dict[int, Path],
+        idxs: list[int],
+        geo_regions: list[MaskRegion] | None = None,
+    ) -> str:
         lines = [
-            f"User request: {prompt.strip()}" if prompt.strip() else "User request: (none — the user only marked areas on frames)"
+            f"User request: {prompt.strip()}"
+            if prompt.strip()
+            else "User request: (none — the user only marked areas on frames)",
+            "Output requirements: JSON only. The prompt field MUST be English "
+            "(normalized for Grounding DINO). targets[].query MUST be English. "
+            "Do not write Chinese/Japanese/Korean in prompt. "
+            "The bright red tint on marked pixels is annotation paint ONLY — "
+            "never call the object red/crimson because of it.",
         ]
+        if geo_regions:
+            bits = [
+                f"{r.where or 'center'} (nx={r.nx:.2f}, ny={r.ny:.2f}, area={r.area})"
+                for r in geo_regions
+            ]
+            lines.append(
+                "Mask geometry is AUTHORITATIVE for targets[].where (do not guess center "
+                f"when the mask is in a corner): {'; '.join(bits)}."
+            )
         for i, idx in enumerate(idxs):
             if idx in ann_by_frame:
-                lines.append(f"Image {i + 1}: frame {idx}. The red overlay marks what the user wants removed.")
+                lines.append(
+                    f"Image {i + 1}: frame {idx}. Red tint = user annotation marker only; "
+                    "describe the underlying logo/text/object, not the paint color."
+                )
             else:
                 lines.append(f"Image {i + 1}: frame {idx}.")
         return "\n".join(lines)
+
+
+def _read_mask(path: Path) -> np.ndarray | None:
+    return cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+
+
+def _geometry_regions(ann_by_frame: dict[int, Path]) -> list[MaskRegion]:
+    out: list[MaskRegion] = []
+    for path in ann_by_frame.values():
+        m = _read_mask(path)
+        if m is None:
+            continue
+        out.extend(mask_regions(m))
+    out.sort(key=lambda r: -r.area)
+    return out
+
+
+def apply_mask_wheres(targets: list[Target], regions: list[MaskRegion]) -> list[Target]:
+    """Painted-mask geometry wins over VLM guesses for `where`."""
+    if not targets or not regions:
+        return targets
+    if len(regions) == 1:
+        w = regions[0].where
+        return [replace(t, where=w) for t in targets]
+    regs = list(regions)
+    if len(targets) == len(regs):
+        regs_sorted = sorted(regs, key=lambda r: (r.ny, r.nx))
+        return [replace(t, where=regs_sorted[i].where) for i, t in enumerate(targets)]
+    # More/fewer targets than blobs: assign largest blobs first, keep extras as-is.
+    out: list[Target] = []
+    for i, t in enumerate(targets):
+        if i < len(regs):
+            out.append(replace(t, where=regs[i].where))
+        else:
+            out.append(t)
+    return out
+
+
+def _has_cjk(text: str) -> bool:
+    return any(
+        "\u3040" <= ch <= "\u30ff"  # Hiragana/Katakana
+        or "\u3400" <= ch <= "\u9fff"  # CJK unified
+        or "\uac00" <= ch <= "\ud7af"  # Hangul
+        for ch in text
+    )
+
+
+def _prompt_language_mismatch(user_prompt: str, out_prompt: str) -> bool:
+    """Model invented CJK (or similar) when the user did not write in CJK."""
+    if not out_prompt:
+        return True
+    return _has_cjk(out_prompt) and not _has_cjk(user_prompt)
+
+
+def _english_prompt_from_targets(targets: list) -> str:
+    if not targets:
+        return "Remove the marked areas"
+    parts: list[str] = []
+    for t in targets:
+        q = (getattr(t, "query", None) or "").strip()
+        if not q:
+            continue
+        where = getattr(t, "where", None)
+        parts.append(f"{q} ({where})" if where else q)
+    return f"Remove: {', '.join(parts)}" if parts else "Remove the marked areas"
+
+
+# Overlay in BuildPrompt._overlay is BGR red tint — models often invent "red logo".
+_ANNOTATION_PAINT_COLORS = ("red", "crimson", "scarlet", "ruby")
+
+
+def strip_annotation_paint_colors_text(text: str, user_prompt: str) -> str:
+    """Drop paint-color adjectives unless the user themselves named that color."""
+    raw = (text or "").strip()
+    if not raw:
+        return raw
+    user = (user_prompt or "").casefold()
+    out = raw
+    for color in _ANNOTATION_PAINT_COLORS:
+        if color in user:
+            continue
+        out = re.sub(rf"\b{color}\b[\s-]*", "", out, flags=re.IGNORECASE)
+    return " ".join(out.split())
+
+
+def strip_annotation_paint_colors(targets: list[Target], user_prompt: str) -> list[Target]:
+    out: list[Target] = []
+    for t in targets:
+        q = strip_annotation_paint_colors_text(t.query, user_prompt)
+        out.append(replace(t, query=q or t.query))
+    return out
 
 
 def _t_json(t: Target) -> dict:

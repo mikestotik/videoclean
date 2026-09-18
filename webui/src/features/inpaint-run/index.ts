@@ -69,5 +69,11 @@ export function useInpaintRun(source: Source | null) {
     [running, source],
   )
 
-  return { run, running, jobId, lastJobId, progress, error }
+  const loadFromJob = useCallback((jobId: string) => {
+    setLastJobId(jobId)
+    setError("")
+    setProgress({ fraction: 1, detail: "", eta: "" })
+  }, [])
+
+  return { run, running, jobId, lastJobId, progress, error, loadFromJob }
 }

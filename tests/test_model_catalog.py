@@ -23,7 +23,13 @@ def test_all_registry_ids():
     expected = (
         "detector:grounding-dino",
         "segmenter:sam2-tiny",
+        "segmenter:sam2-small",
+        "segmenter:sam2-base-plus",
         "segmenter:sam2-large",
+        "segmenter:sam21-tiny",
+        "segmenter:sam21-small",
+        "segmenter:sam21-base-plus",
+        "segmenter:sam21-large",
         "inpainter:lama",
         "inpainter:propainter",
         "llm:ollama-llama3.2",
@@ -31,7 +37,7 @@ def test_all_registry_ids():
     )
     for cid in expected:
         assert cid in COMPONENT_IDS
-    assert len(COMPONENT_IDS) == 7
+    assert len(COMPONENT_IDS) == 13
 
 
 def test_telea_always_ready_helper():
@@ -58,6 +64,18 @@ def test_component_id_mapping():
     assert (
         component_id_for("segmenter", "sam2", segmenter_model="facebook/sam2-hiera-large")
         == "segmenter:sam2-large"
+    )
+    assert (
+        component_id_for("segmenter", "sam2", segmenter_model="facebook/sam2-hiera-small")
+        == "segmenter:sam2-small"
+    )
+    assert (
+        component_id_for("segmenter", "sam2-video", segmenter_model="facebook/sam2.1-hiera-base-plus")
+        == "segmenter:sam21-base-plus"
+    )
+    assert (
+        component_id_for("segmenter", "sam2", segmenter_model="facebook/sam2.1-hiera-tiny")
+        == "segmenter:sam21-tiny"
     )
     assert component_id_for("inpainter", "propainter") == "inpainter:propainter"
     assert component_id_for("inpainter", "lama") == "inpainter:lama"

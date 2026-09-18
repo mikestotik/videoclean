@@ -1,5 +1,16 @@
-import { useCallback, useEffect, useState } from "react"
-import { Download, Film, Loader2, RotateCcw, Trash2, X } from "lucide-react"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import {
+  Check,
+  Download,
+  Eraser,
+  Film,
+  Loader2,
+  RotateCcw,
+  ScanSearch,
+  Sparkles,
+  Trash2,
+  X,
+} from "lucide-react"
 import { cancelJob, deleteJob, listJobs, retryJob, type Job, type JobKind, type JobState } from "@/entities/job"
 import { deleteSource, listSources, type Source } from "@/entities/source"
 import { usePoll } from "@/shared/hooks/usePoll"
@@ -9,67 +20,176 @@ import { ScrollArea } from "@/shared/ui/scroll-area"
 import { cn } from "@/shared/lib/utils"
 import { UploadButton } from "./upload"
 
-const KIND_LABEL: Record<JobKind, string> = { prompt: "Промпт", preview: "Маски", run: "Inpaint" }
+const KIND_META: Record<JobKind, { label: string; Icon: typeof Sparkles }> = {
+  prompt: { label: "Промпт", Icon: Sparkles },
+  preview: { label: "Маски", Icon: ScanSearch },
+  run: { label: "Результат", Icon: Eraser },
+}
 
-function stateClass(state: JobState): string {
+const KIND_ORDER: JobKind[] = ["prompt", "preview", "run"]
+
+const STATE_LABEL: Record<JobState, string> = {
+  QUEUED: "В очереди",
+  RUNNING: "Идёт",
+  COMPLETED: "Готово",
+  FAILED: "Ошибка",
+  CANCELLED: "Отменено",
+}
+
+function stateTone(state: JobState): string {
   if (state === "COMPLETED") return "text-ok"
   if (state === "FAILED" || state === "CANCELLED") return "text-destructive"
-  return state === "RUNNING" ? "text-primary" : "text-primary"
+  return "text-primary"
+}
+
+export type ActivePipelineJobs = {
+  prompt: string | null
+  preview: string | null
+  run: string | null
 }
 
 type ActFn = (fn: (id: string) => Promise<unknown>, id: string) => void
 
-function JobRow({ job, onAct }: { job: Job; onAct: ActFn }) {
+function JobRow({
+  job,
+  active,
+  onAct,
+  onSelect,
+}: {
+  job: Job
+  active: boolean
+  onAct: ActFn
+  onSelect?: (job: Job) => void
+}) {
+  const selectable = job.state === "COMPLETED" && Boolean(onSelect)
+  const time = new Date(job.created_at).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+  const summary = job.prompt.trim() || KIND_META[job.kind].label
+
   return (
-    <div className="rounded-md border border-border/70 bg-background/50 p-2.5 text-xs">
-      <div className="flex items-center justify-between gap-2">
-        <span className={cn("font-medium", stateClass(job.state))}>
-          {KIND_LABEL[job.kind]} · {job.state}
-        </span>
-        <span className="shrink-0 tabular-nums text-muted-foreground">
-          {new Date(job.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-        </span>
-      </div>
-      {job.state === "RUNNING" && job.stage && (
-        <div className="mt-1.5">
-          <div className="mb-1 flex justify-between text-[11px] text-muted-foreground">
-            <span className="truncate">{job.stage}</span>
-            <span>{Math.round(job.fraction * 100)}%</span>
-          </div>
-          <div className="h-1 overflow-hidden rounded-full bg-muted">
-            <div
-              className="h-full rounded-full bg-primary transition-[width]"
-              style={{ width: `${Math.round(job.fraction * 100)}%` }}
-            />
-          </div>
-        </div>
+    <div
+      role={selectable ? "button" : undefined}
+      tabIndex={selectable ? 0 : undefined}
+      aria-pressed={selectable ? active : undefined}
+      className={cn(
+        "grid grid-cols-[14px_minmax(0,1fr)_auto] items-start gap-x-2 rounded-md px-2 py-1.5 text-xs",
+        active && "bg-primary/10",
+        selectable && "cursor-pointer hover:bg-muted/50",
       )}
-      <div className="mt-2 flex flex-wrap gap-1">
+      onClick={selectable ? () => onSelect?.(job) : undefined}
+      onKeyDown={
+        selectable
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault()
+                onSelect?.(job)
+              }
+            }
+          : undefined
+      }
+    >
+      <span className="mt-0.5 flex size-3.5 items-center justify-center" aria-hidden>
+        {selectable ? (
+          <span
+            className={cn(
+              "flex size-3.5 items-center justify-center rounded-full border",
+              active
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-muted-foreground/40 bg-transparent",
+            )}
+          >
+            {active ? <Check className="size-2.5" /> : null}
+          </span>
+        ) : (
+          <span className="size-3.5" />
+        )}
+      </span>
+
+      <div className="min-w-0">
+        <div className="flex h-4 items-center gap-2">
+          <span className={cn("shrink-0 font-medium", stateTone(job.state))}>
+            {STATE_LABEL[job.state]}
+          </span>
+          <span className="shrink-0 tabular-nums text-muted-foreground">{time}</span>
+        </div>
+        <p className="mt-0.5 h-4 truncate text-[11px] leading-4 text-muted-foreground">{summary}</p>
+        {job.state === "RUNNING" && job.stage ? (
+          <div className="mt-1 flex h-3 items-center gap-2 text-[10px] text-muted-foreground">
+            <span className="min-w-0 truncate">{job.stage}</span>
+            <span className="shrink-0 tabular-nums">{Math.round(job.fraction * 100)}%</span>
+          </div>
+        ) : null}
+      </div>
+
+      <div
+        className="flex h-7 items-center gap-0.5"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
+      >
         {(job.state === "QUEUED" || job.state === "RUNNING") && (
-          <Button size="xs" variant="outline" onClick={() => onAct(cancelJob, job.id)}>
+          <Button size="icon-xs" variant="ghost" aria-label="Отмена" onClick={() => onAct(cancelJob, job.id)}>
             <X className="size-3" />
-            Отмена
           </Button>
         )}
         {(job.state === "FAILED" || job.state === "CANCELLED") && (
-          <Button size="xs" variant="outline" onClick={() => onAct(retryJob, job.id)}>
+          <Button size="icon-xs" variant="ghost" aria-label="Повторить" onClick={() => onAct(retryJob, job.id)}>
             <RotateCcw className="size-3" />
-            Повторить
           </Button>
         )}
         {job.has_output && (
-          <a href={job.output_url ?? "#"} download>
-            <Button size="xs" variant="outline">
+          <a href={job.output_url ?? "#"} download aria-label="Скачать">
+            <Button size="icon-xs" variant="ghost">
               <Download className="size-3" />
-              Скачать
             </Button>
           </a>
         )}
-        <Button size="xs" variant="ghost" onClick={() => onAct(deleteJob, job.id)}>
+        <Button
+          size="icon-xs"
+          variant="ghost"
+          aria-label="Удалить"
+          className="text-muted-foreground hover:text-destructive"
+          onClick={() => onAct(deleteJob, job.id)}
+        >
           <Trash2 className="size-3" />
         </Button>
       </div>
-      {job.error && <p className="mt-1.5 text-destructive">{job.error.slice(0, 120)}</p>}
+    </div>
+  )
+}
+
+function StageGroup({
+  kind,
+  jobs,
+  activeId,
+  onAct,
+  onSelectJob,
+}: {
+  kind: JobKind
+  jobs: Job[]
+  activeId: string | null
+  onAct: ActFn
+  onSelectJob?: (job: Job) => void
+}) {
+  const meta = KIND_META[kind]
+  const Icon = meta.Icon
+
+  return (
+    <div className="space-y-0.5">
+      <div className="flex h-5 items-center gap-1.5 px-2 text-[11px] font-medium text-muted-foreground">
+        <Icon className="size-3.5 shrink-0" />
+        <span>{meta.label}</span>
+      </div>
+      {jobs.map((job) => (
+        <JobRow
+          key={job.id}
+          job={job}
+          active={job.id === activeId}
+          onAct={onAct}
+          onSelect={onSelectJob}
+        />
+      ))}
     </div>
   )
 }
@@ -78,11 +198,23 @@ type Props = {
   selectedId: string | null
   onSelect: (s: Source) => void
   onClearSelection?: () => void
+  activeJobs?: ActivePipelineJobs
+  onSelectJob?: (job: Job) => void
   refreshKey: number
   onUploaded?: () => void
 }
 
-export function Library({ selectedId, onSelect, onClearSelection, refreshKey, onUploaded }: Props) {
+const EMPTY_ACTIVE: ActivePipelineJobs = { prompt: null, preview: null, run: null }
+
+export function Library({
+  selectedId,
+  onSelect,
+  onClearSelection,
+  activeJobs = EMPTY_ACTIVE,
+  onSelectJob,
+  refreshKey,
+  onUploaded,
+}: Props) {
   const [sources, setSources] = useState<Source[]>([])
   const [jobs, setJobs] = useState<Job[]>([])
   const [tick, setTick] = useState(0)
@@ -149,14 +281,25 @@ export function Library({ selectedId, onSelect, onClearSelection, refreshKey, on
   }
 
   const freeJobs = jobs.filter((j) => j.source_id === null)
-  const sourceJobs = selectedId ? jobs.filter((j) => j.source_id === selectedId) : []
+  const sourceJobs = useMemo(
+    () => (selectedId ? jobs.filter((j) => j.source_id === selectedId) : []),
+    [jobs, selectedId],
+  )
+  const jobsByKind = useMemo(() => {
+    const map: Record<JobKind, Job[]> = { prompt: [], preview: [], run: [] }
+    for (const job of sourceJobs) map[job.kind].push(job)
+    for (const kind of KIND_ORDER) {
+      map[kind].sort((a, b) => b.created_at.localeCompare(a.created_at))
+    }
+    return map
+  }, [sourceJobs])
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="shrink-0 space-y-3 border-b border-border/70 p-3">
         <div>
           <h2 className="text-sm font-semibold">Библиотека</h2>
-          <p className="text-[11px] text-muted-foreground">Источники и задачи</p>
+          <p className="text-[11px] text-muted-foreground">Видео и прогоны</p>
         </div>
         <UploadButton
           onUploaded={() => {
@@ -168,88 +311,102 @@ export function Library({ selectedId, onSelect, onClearSelection, refreshKey, on
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
-        <div className="flex flex-col gap-4 p-3">
-          <section className="flex flex-col gap-1.5">
-            <p className="px-0.5 text-[11px] font-medium tracking-wide text-muted-foreground">
-              Источники
-            </p>
-            {loading && (
-              <div className="flex items-center gap-2 px-1 py-3 text-xs text-muted-foreground">
-                <Loader2 className="size-3.5 animate-spin" />
-                Загрузка…
-              </div>
-            )}
-            {!loading && sources.length === 0 && (
-              <div className="rounded-lg border border-dashed border-border/80 px-3 py-6 text-center">
-                <Film className="mx-auto mb-2 size-5 text-muted-foreground/70" />
-                <p className="text-xs text-muted-foreground">Пока пусто. Загрузите первое видео.</p>
-              </div>
-            )}
-            {sources.map((s) => {
-              const selected = s.id === selectedId
-              return (
-                <div key={s.id} className="flex flex-col gap-1.5">
-                  <div
-                    className={cn(
-                      "group flex items-stretch gap-0.5 rounded-lg border transition-colors",
-                      selected
-                        ? "border-primary/50 bg-primary/10"
-                        : "border-border/70 bg-background/40 hover:border-border hover:bg-muted/40",
-                    )}
+        <div className="flex flex-col gap-1 p-2">
+          {loading && (
+            <div className="flex items-center gap-2 px-2 py-3 text-xs text-muted-foreground">
+              <Loader2 className="size-3.5 animate-spin" />
+              Загрузка…
+            </div>
+          )}
+          {!loading && sources.length === 0 && (
+            <div className="px-2 py-6 text-center">
+              <Film className="mx-auto mb-2 size-5 text-muted-foreground/70" />
+              <p className="text-xs text-muted-foreground">Пока пусто. Загрузите первое видео.</p>
+            </div>
+          )}
+
+          {sources.map((s) => {
+            const selected = s.id === selectedId
+            return (
+              <div key={s.id}>
+                <div
+                  className={cn(
+                    "group flex items-center gap-1 rounded-md",
+                    selected ? "bg-primary/10" : "hover:bg-muted/40",
+                  )}
+                >
+                  <button
+                    type="button"
+                    className="flex min-w-0 flex-1 items-center gap-2.5 px-2 py-2 text-left"
+                    onClick={() => onSelect(s)}
                   >
-                    <button
-                      type="button"
-                      className="min-w-0 flex-1 px-3 py-2.5 text-left"
-                      onClick={() => onSelect(s)}
-                    >
-                      <span className="block truncate text-sm font-medium">{s.name}</span>
-                      <span className="mt-0.5 block text-[11px] tabular-nums text-muted-foreground">
+                    <Film
+                      className={cn(
+                        "size-4 shrink-0",
+                        selected ? "text-primary" : "text-muted-foreground",
+                      )}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium leading-5">{s.name}</span>
+                      <span className="block h-4 truncate text-[11px] leading-4 tabular-nums text-muted-foreground">
                         {formatTimecode(Math.round(s.probe.duration_s * s.probe.fps), s.probe.fps)}
                         {" · "}
                         {s.probe.width}×{s.probe.height}
                       </span>
-                    </button>
-                    <Button
-                      size="icon-xs"
-                      variant="ghost"
-                      className="m-1.5 shrink-0 self-start text-muted-foreground opacity-70 hover:text-destructive group-hover:opacity-100"
-                      aria-label={`Удалить ${s.name}`}
-                      disabled={deletingId === s.id}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        void removeSource(s)
-                      }}
-                    >
-                      {deletingId === s.id ? (
-                        <Loader2 className="size-3.5 animate-spin" />
-                      ) : (
-                        <Trash2 className="size-3.5" />
-                      )}
-                    </Button>
-                  </div>
-                  {selected && (
-                    <div className="flex flex-col gap-1.5 pl-1">
-                      {sourceJobs.length === 0 ? (
-                        <p className="px-1 py-1 text-[11px] text-muted-foreground">Задач по этому ролику нет</p>
-                      ) : (
-                        sourceJobs.map((j) => <JobRow key={j.id} job={j} onAct={act} />)
-                      )}
-                    </div>
-                  )}
+                    </span>
+                  </button>
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    className="mr-1 shrink-0 text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100"
+                    aria-label={`Удалить ${s.name}`}
+                    disabled={deletingId === s.id}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      void removeSource(s)
+                    }}
+                  >
+                    {deletingId === s.id ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <Trash2 className="size-3.5" />
+                    )}
+                  </Button>
                 </div>
-              )
-            })}
-          </section>
+
+                {selected && sourceJobs.length > 0 && (
+                  <div className="ml-6 mt-0.5 space-y-2">
+                    {KIND_ORDER.map((kind) =>
+                      jobsByKind[kind].length > 0 ? (
+                        <StageGroup
+                          key={kind}
+                          kind={kind}
+                          jobs={jobsByKind[kind]}
+                          activeId={activeJobs[kind]}
+                          onAct={act}
+                          onSelectJob={onSelectJob}
+                        />
+                      ) : null,
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })}
 
           {freeJobs.length > 0 && (
-            <section className="flex flex-col gap-1.5">
-              <p className="px-0.5 text-[11px] font-medium tracking-wide text-muted-foreground">
-                Прочие задачи
-              </p>
+            <div className="mt-3 space-y-0.5">
+              <p className="px-2 text-[11px] font-medium text-muted-foreground">Без видео</p>
               {freeJobs.map((j) => (
-                <JobRow key={j.id} job={j} onAct={act} />
+                <JobRow
+                  key={j.id}
+                  job={j}
+                  active={j.id === activeJobs[j.kind]}
+                  onAct={act}
+                  onSelect={onSelectJob}
+                />
               ))}
-            </section>
+            </div>
           )}
         </div>
       </ScrollArea>

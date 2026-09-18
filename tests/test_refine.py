@@ -45,6 +45,32 @@ def test_refine_keeps_named_caption_query():
     assert out.targets[0].query == "news title"
 
 
+def test_refine_keeps_concrete_overlay_phrases_without_type_words():
+    """Grounding DINO accepts multi-word phrases; do not collapse to bare text/logo."""
+    cases = [
+        ("text_overlay", "breaking news ticker"),
+        ("text_overlay", "scoreboard digits"),
+        ("watermark", "red youtube badge"),
+        ("watermark", "instagram corner icon"),
+    ]
+    for kind, query in cases:
+        out = refine_intent(Intent(targets=[Target(kind=kind, query=query)], raw="убери это"))
+        assert out.targets[0].query == query, (kind, query)
+
+
+def test_refine_still_collapses_ocr_scraps():
+    out = refine_intent(
+        Intent(
+            targets=[
+                Target(kind="text_overlay", query="wrong"),
+                Target(kind="watermark", query="side"),
+            ],
+            raw="удали надпись",
+        )
+    )
+    assert [t.query for t in out.targets] == ["text", "logo"]
+
+
 def test_object_target_is_never_silently_rewritten_to_text():
     """Public service: any named thing must stay searchable. No blacklist games."""
     for query in ("ball", "clock", "cage", "sticker", "drone", "sign", "banner"):

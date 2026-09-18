@@ -28,50 +28,10 @@ BAD_QUERIES = {
     "stuff",
 }
 
-SYSTEM = """You turn a user's removal request into detector queries for Grounding DINO.
-You do NOT see frames. Do NOT invent a fixed menu of overlays.
-
-Return ONLY JSON:
-{"targets":[{"kind":"watermark|text_overlay|object","query":"short English visual name","where":null,"ordinal":null,"from_side":null,"motion":"any"}]}
-
-Rules:
-- query: short English name the detector can search. Never Russian. Never vague ("overlay", "stuff").
-- For letters on screen use "text" / "caption" / "title". Do NOT OCR the overlay into the query (not the words written on screen).
-- Derive queries from what the USER named (translate/paraphrase into English visuals). If they named specific text, describe that kind of overlay, not a generic pack.
-- where follows the USER's location words. Do not point at a different overlay you noticed.
-- If the request is vague and you have no frame notes, ask yourself what concrete English queries could match — but do NOT paste a canned list. Prefer fewer honest targets over a fake full HUD inventory.
-- kind: watermark = logo/© mark; text_overlay = letters/captions; object = physical thing.
-- where: only if the user named a region (top|bottom|left|right|top-left|top-right|bottom-left|bottom-right), else null.
-- ordinal + from_side: only for explicit "third from the left". Else both null. Do NOT invent ordinals.
-- motion: floating if they said moving/floating; static if fixed corner mark; else any.
-- No HUD/reticle unless asked. No boxes. No prose.
-"""
-
-VISION_SYSTEM = """You see sampled video frames AND a user's removal request.
-Build detector queries for Grounding DINO. No boxes, no masks, no prose.
-
-Return ONLY JSON:
-{"targets":[{"kind":"watermark|text_overlay|object","query":"short English visual name","where":null,"ordinal":null,"from_side":null,"motion":"any"}]}
-
-Rules:
-- Look at the frames. Emit a target only for something you can see that matches the user's ask.
-- query: short English visual name of the overlay TYPE ("text", "caption", "logo"), never Russian, never the words written on screen.
-- where follows the USER's location words, not some other overlay in the frame.
-- Do NOT output a canned set like title+caption+side+watermark unless those are actually visible and requested.
-- where from what you see (top|bottom|left|right|corners) or null.
-- ordinal/from_side only if the user said so.
-- motion=floating if it moves/morphs across the sampled frames; static for fixed marks; else any.
-- Split distinct visible overlays into separate targets. Do not invent extras.
-"""
-
-BRIDGE_SYSTEM = """You convert vision-model frame notes + a user removal request into detector JSON.
-Use ONLY overlays mentioned in the notes that match the request. Do NOT invent a standard news-graphic template.
-
-Return ONLY JSON:
-{"targets":[{"kind":"watermark|text_overlay|object","query":"short English visual name","where":null,"ordinal":null,"from_side":null,"motion":"any"}]}
-
-query must be English, concrete, searchable by Grounding DINO. No Russian. Overlay type ("text","caption","logo"), not OCR of the letters.
-"""
+# Runtime prompts load from prompts/*.md (see _read_prompt below).
+SYSTEM = ""
+VISION_SYSTEM = ""
+BRIDGE_SYSTEM = ""
 
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
@@ -242,7 +202,7 @@ class LlmPromptParser:
             repair = (
                 f"User request: {raw}\n"
                 "From the attached frames, list matching overlays as JSON only:\n"
-                '{"targets":[{"kind":"text_overlay|watermark|object","query":"short English name",'
+                '{"targets":[{"kind":"text_overlay|watermark|object","query":"English open-vocab phrase",'
                 '"where":"top|bottom|left|right|top-left|top-right|bottom-left|bottom-right"|null,'
                 '"ordinal":null,"from_side":null,"motion":"any|static|floating"}]}\n'
                 "No other text."
