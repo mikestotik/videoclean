@@ -5,14 +5,26 @@ import {
   Download,
   HardDrive,
   Loader2,
+  Plus,
   RefreshCw,
   Server,
+  Trash2,
   XCircle,
 } from "lucide-react"
 import { api } from "@/shared/api/client"
 import { Badge } from "@/shared/ui/badge"
 import { Button } from "@/shared/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/shared/ui/dialog"
+import { Input } from "@/shared/ui/input"
+import { Label } from "@/shared/ui/label"
 import { ScrollArea } from "@/shared/ui/scroll-area"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select"
 import { Separator } from "@/shared/ui/separator"
 import { cn } from "@/shared/lib/utils"
 
@@ -26,31 +38,41 @@ type ModelInfo = {
   size_hint?: string
   message?: string
   backend?: string
+  model_ref?: string
+  source?: string
+}
+
+type FamilyBackend = {
+  id: string
+  label: string
+  ref_kind: string
+  example?: string
+}
+
+type ProviderInfo = {
+  id: string
+  title: string
+  base_url: string
+  has_api_key?: boolean
+  models: string[]
 }
 
 type PollData = {
   models: Record<string, ModelInfo[]>
   doctor: Record<string, string>
   ollama: { ok: boolean; base_url: string; models: string[] }
+  providers?: ProviderInfo[]
+  options?: {
+    families?: Record<string, FamilyBackend[]>
+    providers?: ProviderInfo[]
+  }
 }
 
-const KIND_META: Record<string, { title: string; hint: string }> = {
-  detector: {
-    title: "Детекторы",
-    hint: "Находят объекты и текст на кадрах по запросу",
-  },
-  segmenter: {
-    title: "Сегментеры",
-    hint: "Строят точные маски вокруг найденных объектов",
-  },
-  inpainter: {
-    title: "Инпейнтеры",
-    hint: "Заполняют удалённые области соседними пикселями",
-  },
-  llm: {
-    title: "Языковые модели",
-    hint: "Разбирают текстовый промпт в список целей",
-  },
+const KIND_META: Record<string, { title: string }> = {
+  detector: { title: "Детекторы" },
+  segmenter: { title: "Сегментеры" },
+  inpainter: { title: "Инпейнтеры" },
+  llm: { title: "Языковые модели" },
 }
 
 const DOCTOR_LABELS: Record<string, string> = {
@@ -110,16 +132,19 @@ function ModelRow({
   busy,
   onDownload,
   onCancel,
+  onRemove,
 }: {
   model: ModelInfo
   busy: string
   onDownload: (id: string) => void
   onCancel: () => void
+  onRemove?: (id: string) => void
 }) {
   const tone = stateTone(model.state)
   const downloading = model.state === "downloading"
   const progress = Math.round((model.progress ?? 0) * 100)
   const canDownload = model.downloadable !== false && !downloading && busy !== model.id
+  const removable = model.source === "extra" && onRemove
 
   return (
     <div className="rounded-lg border border-border/70 bg-background/40 p-3">
@@ -140,7 +165,9 @@ function ModelRow({
               {downloading ? ` ${progress}%` : ""}
             </Badge>
           </div>
-          <p className="mt-1 font-mono text-[11px] text-muted-foreground">{model.id}</p>
+          <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+            {model.model_ref || model.id}
+          </p>
           {(model.size_hint || model.backend) && (
             <p className="mt-1 text-xs text-muted-foreground">
               {[model.backend, model.size_hint].filter(Boolean).join(" · ")}
@@ -173,6 +200,17 @@ function ModelRow({
               )}
             </Button>
           )}
+          {removable && (
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy === model.id}
+              onClick={() => onRemove?.(model.id)}
+              aria-label="Удалить"
+            >
+              <Trash2 className="size-3.5" />
+            </Button>
+          )}
         </div>
       </div>
       {downloading && (
@@ -187,10 +225,237 @@ function ModelRow({
   )
 }
 
+function AddModelDialog({
+  kind,
+  open,
+  onOpenChange,
+  families,
+  ollamaModels,
+  busy,
+  onSubmit,
+}: {
+  kind: string
+  open: boolean
+  onOpenChange: (v: boolean) => void
+  families: FamilyBackend[]
+  ollamaModels: string[]
+  busy: boolean
+  onSubmit: (payload: { backend: string; model_ref: string; title: string; download: boolean }) => Promise<void>
+}) {
+  const [backend, setBackend] = useState(families[0]?.id ?? "")
+  const [modelRef, setModelRef] = useState("")
+  const [title, setTitle] = useState("")
+  const [error, setError] = useState("")
+
+  useEffect(() => {
+    if (!open) return
+    setBackend(families[0]?.id ?? "")
+    setModelRef("")
+    setTitle("")
+    setError("")
+  }, [open, families])
+
+  const selected = families.find((f) => f.id === backend) ?? families[0]
+  const isOllama = selected?.ref_kind === "ollama"
+  const isProvider = selected?.ref_kind === "provider"
+
+  const submit = async () => {
+    setError("")
+    if (isProvider) {
+      setError("OpenAI-compatible подключается в блоке провайдеров ниже")
+      return
+    }
+    if (!backend || !modelRef.trim()) {
+      setError("Укажите семейство и модель")
+      return
+    }
+    try {
+      await onSubmit({
+        backend,
+        model_ref: modelRef.trim(),
+        title: title.trim(),
+        download: true,
+      })
+      onOpenChange(false)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Добавить · {KIND_META[kind]?.title ?? kind}</DialogTitle>
+        </DialogHeader>
+        <div className="flex flex-col gap-3 py-1">
+          <div className="flex flex-col gap-1.5">
+            <Label>Семейство</Label>
+            <Select value={backend} onValueChange={(v) => { if (v) setBackend(v) }}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {families.map((f) => (
+                  <SelectItem key={f.id} value={f.id}>
+                    {f.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>{isOllama ? "Тег Ollama" : "Модель"}</Label>
+            {isOllama && ollamaModels.length > 0 ? (
+              <Select value={modelRef || undefined} onValueChange={(v) => { if (v) setModelRef(v) }}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Выберите тег" />
+                </SelectTrigger>
+                <SelectContent>
+                  {ollamaModels.map((m) => (
+                    <SelectItem key={m} value={m}>
+                      {m}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <Input
+                value={modelRef}
+                onChange={(e) => setModelRef(e.target.value)}
+                placeholder={selected?.example || (isOllama ? "qwen2.5vl:3b" : "org/name")}
+                className="font-mono text-xs"
+              />
+            )}
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Название</Label>
+            <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Необязательно" />
+          </div>
+          {error && <p className="text-sm text-destructive">{error}</p>}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
+            Отмена
+          </Button>
+          <Button onClick={() => void submit()} disabled={busy || isProvider}>
+            {busy ? <Loader2 className="size-3.5 animate-spin" /> : "Добавить"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function AddProviderDialog({
+  open,
+  onOpenChange,
+  busy,
+  onSubmit,
+}: {
+  open: boolean
+  onOpenChange: (v: boolean) => void
+  busy: boolean
+  onSubmit: (payload: {
+    title: string
+    base_url: string
+    api_key: string
+    models: string[]
+  }) => Promise<void>
+}) {
+  const [title, setTitle] = useState("")
+  const [baseUrl, setBaseUrl] = useState("")
+  const [apiKey, setApiKey] = useState("")
+  const [models, setModels] = useState("")
+  const [error, setError] = useState("")
+
+  useEffect(() => {
+    if (!open) return
+    setTitle("")
+    setBaseUrl("")
+    setApiKey("")
+    setModels("")
+    setError("")
+  }, [open])
+
+  const submit = async () => {
+    setError("")
+    const list = models
+      .split(/[\n,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+    try {
+      await onSubmit({
+        title: title.trim(),
+        base_url: baseUrl.trim(),
+        api_key: apiKey.trim(),
+        models: list,
+      })
+      onOpenChange(false)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>OpenAI-compatible провайдер</DialogTitle>
+        </DialogHeader>
+        <div className="flex flex-col gap-3 py-1">
+          <div className="flex flex-col gap-1.5">
+            <Label>Название</Label>
+            <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="vLLM / OpenAI / …" />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Base URL</Label>
+            <Input
+              value={baseUrl}
+              onChange={(e) => setBaseUrl(e.target.value)}
+              placeholder="http://127.0.0.1:8000/v1"
+              className="font-mono text-xs"
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>API key</Label>
+            <Input
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="Необязательно для локальных"
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Модели</Label>
+            <Input
+              value={models}
+              onChange={(e) => setModels(e.target.value)}
+              placeholder="gpt-4o-mini, my-model"
+              className="font-mono text-xs"
+            />
+          </div>
+          {error && <p className="text-sm text-destructive">{error}</p>}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
+            Отмена
+          </Button>
+          <Button onClick={() => void submit()} disabled={busy}>
+            {busy ? <Loader2 className="size-3.5 animate-spin" /> : "Подключить"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 export function ConfigPage() {
   const [data, setData] = useState<PollData | null>(null)
   const [busy, setBusy] = useState("")
   const [error, setError] = useState("")
+  const [addKind, setAddKind] = useState<string | null>(null)
+  const [addProviderOpen, setAddProviderOpen] = useState(false)
 
   const refresh = useCallback(() => {
     api<PollData>("/api/poll")
@@ -233,6 +498,67 @@ export function ConfigPage() {
     }
   }
 
+  const removeModel = async (id: string) => {
+    setBusy(id)
+    setError("")
+    try {
+      await api(`/api/models/${encodeURIComponent(id)}`, { method: "DELETE" })
+      refresh()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy("")
+    }
+  }
+
+  const addModel = async (kind: string, payload: {
+    backend: string
+    model_ref: string
+    title: string
+    download: boolean
+  }) => {
+    setBusy(`add:${kind}`)
+    setError("")
+    try {
+      await api("/api/models/custom", {
+        method: "POST",
+        body: JSON.stringify({ kind, ...payload }),
+      })
+      refresh()
+    } finally {
+      setBusy("")
+    }
+  }
+
+  const addProvider = async (payload: {
+    title: string
+    base_url: string
+    api_key: string
+    models: string[]
+  }) => {
+    setBusy("add:provider")
+    setError("")
+    try {
+      await api("/api/providers", { method: "POST", body: JSON.stringify(payload) })
+      refresh()
+    } finally {
+      setBusy("")
+    }
+  }
+
+  const removeProvider = async (id: string) => {
+    setBusy(`provider:${id}`)
+    setError("")
+    try {
+      await api(`/api/providers/${encodeURIComponent(id)}`, { method: "DELETE" })
+      refresh()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy("")
+    }
+  }
+
   const doctorEntries = useMemo(() => {
     if (!data?.doctor) return []
     const preferred = ["python", "ffmpeg", "ffprobe", "opencv", "torch", "cuda", "mps"]
@@ -252,16 +578,20 @@ export function ConfigPage() {
     ]
     return keys.map((kind) => ({
       kind,
-      meta: KIND_META[kind] ?? { title: kind, hint: "" },
+      meta: KIND_META[kind] ?? { title: kind },
       models: data.models[kind] ?? [],
+      families: data.options?.families?.[kind] ?? [],
     }))
   }, [data])
+
+  const providers = data?.providers ?? data?.options?.providers ?? []
+  const familiesForAdd = addKind ? (data?.options?.families?.[addKind] ?? []) : []
 
   if (!data) {
     return (
       <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
         <Loader2 className="size-4 animate-spin" />
-        {error || "Загрузка системы…"}
+        {error || "Загрузка…"}
       </div>
     )
   }
@@ -271,9 +601,9 @@ export function ConfigPage() {
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-6 py-8">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Система</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">Настройки</h1>
             <p className="mt-1 max-w-xl text-sm text-muted-foreground">
-              Модели, окружение и LLM. Здесь проверяют готовность машины перед прогоном.
+              Подключённые модели и провайдеры. В пайплайне доступны только они.
             </p>
           </div>
           <Button size="sm" variant="outline" onClick={refresh}>
@@ -289,69 +619,28 @@ export function ConfigPage() {
           </div>
         )}
 
-        <section className="panel p-5">
-          <div className="flex items-start gap-3">
-            <span className="flex size-9 items-center justify-center rounded-md bg-primary/10 text-primary">
-              <Server className="size-4" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-base font-semibold">Ollama</h2>
-                <Badge
-                  variant="secondary"
-                  className={cn(
-                    "text-[10px]",
-                    data.ollama.ok ? "bg-ok/15 text-ok" : "bg-destructive/15 text-destructive",
-                  )}
-                >
-                  {data.ollama.ok ? "Доступна" : "Недоступна"}
-                </Badge>
-              </div>
-              <p className="mt-1 font-mono text-xs text-muted-foreground">{data.ollama.base_url}</p>
-              {!data.ollama.ok ? (
-                <p className="mt-3 text-sm text-muted-foreground">
-                  Запустите Ollama локально, чтобы интерпретировать промпты. Без неё можно работать
-                  с ручными таргетами и масками.
-                </p>
-              ) : data.ollama.models.length === 0 ? (
-                <p className="mt-3 text-sm text-muted-foreground">
-                  Сервер отвечает, но моделей нет — скачайте vision-модель в Ollama.
-                </p>
-              ) : (
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  {data.ollama.models.map((m) => (
-                    <Badge key={m} variant="outline" className="font-mono text-[11px]">
-                      {m}
-                    </Badge>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </section>
-
-        <section className="flex flex-col gap-4">
+        <section className="flex flex-col gap-5">
           <div className="flex items-center gap-3">
             <span className="flex size-9 items-center justify-center rounded-md bg-primary/10 text-primary">
               <HardDrive className="size-4" />
             </span>
-            <div>
-              <h2 className="text-base font-semibold">Модели пайплайна</h2>
-              <p className="text-sm text-muted-foreground">
-                Скачиваются один раз и используются локально
-              </p>
-            </div>
+            <h2 className="text-base font-semibold">Модели</h2>
           </div>
 
-          {modelGroups.map(({ kind, meta, models }) => (
-            <div key={kind} className="panel overflow-hidden">
-              <div className="border-b border-border/70 px-5 py-4">
+          {modelGroups.map(({ kind, meta, models, families }) => (
+            <div key={kind} className="flex flex-col gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="text-sm font-semibold">{meta.title}</h3>
-                {meta.hint && <p className="mt-0.5 text-xs text-muted-foreground">{meta.hint}</p>}
+                {families.length > 0 && (
+                  <Button size="sm" variant="outline" onClick={() => setAddKind(kind)}>
+                    <Plus className="size-3.5" />
+                    Добавить
+                  </Button>
+                )}
               </div>
-              <div className="flex flex-col gap-2 p-3">
+              <div className="flex flex-col gap-2">
                 {models.length === 0 ? (
-                  <p className="px-2 py-3 text-sm text-muted-foreground">Моделей в этой группе нет</p>
+                  <p className="px-1 py-2 text-sm text-muted-foreground">Пусто</p>
                 ) : (
                   models.map((m) => (
                     <ModelRow
@@ -360,6 +649,7 @@ export function ConfigPage() {
                       busy={busy}
                       onDownload={(id) => void download(id)}
                       onCancel={() => void cancelDownloads()}
+                      onRemove={(id) => void removeModel(id)}
                     />
                   ))
                 )}
@@ -368,24 +658,118 @@ export function ConfigPage() {
           ))}
         </section>
 
-        <section className="panel p-5">
-          <div className="mb-4">
-            <h2 className="text-base font-semibold">Окружение</h2>
-            <p className="mt-0.5 text-sm text-muted-foreground">
-              Проверка зависимостей на этой машине
-            </p>
+        <section className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <span className="flex size-9 items-center justify-center rounded-md bg-primary/10 text-primary">
+                <Server className="size-4" />
+              </span>
+              <div>
+                <h2 className="text-base font-semibold">LLM-провайдеры</h2>
+                <p className="font-mono text-xs text-muted-foreground">
+                  Ollama · {data.ollama.base_url}
+                  {data.ollama.ok ? " · ok" : " · недоступна"}
+                </p>
+              </div>
+            </div>
+            <Button size="sm" variant="outline" onClick={() => setAddProviderOpen(true)}>
+              <Plus className="size-3.5" />
+              Провайдер
+            </Button>
           </div>
+
+          <div className="rounded-lg border border-border/70 bg-background/40 p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-sm font-medium">Ollama</p>
+              <Badge
+                variant="secondary"
+                className={cn(
+                  "text-[10px]",
+                  data.ollama.ok ? "bg-ok/15 text-ok" : "bg-destructive/15 text-destructive",
+                )}
+              >
+                {data.ollama.ok ? "Доступна" : "Недоступна"}
+              </Badge>
+            </div>
+            {data.ollama.ok && data.ollama.models.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {data.ollama.models.map((m) => (
+                  <Badge key={m} variant="outline" className="font-mono text-[11px]">
+                    {m}
+                  </Badge>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {providers.map((p) => (
+            <div key={p.id} className="rounded-lg border border-border/70 bg-background/40 p-3">
+              <div className="flex flex-wrap items-start gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-sm font-medium">{p.title}</p>
+                    {p.has_api_key && (
+                      <Badge variant="secondary" className="text-[10px]">
+                        key
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="mt-1 font-mono text-[11px] text-muted-foreground">{p.base_url}</p>
+                  {p.models.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {p.models.map((m) => (
+                        <Badge key={m} variant="outline" className="font-mono text-[11px]">
+                          {m}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={busy === `provider:${p.id}`}
+                  onClick={() => void removeProvider(p.id)}
+                  aria-label="Удалить провайдера"
+                >
+                  <Trash2 className="size-3.5" />
+                </Button>
+              </div>
+            </div>
+          ))}
+        </section>
+
+        <section className="flex flex-col gap-3">
+          <h2 className="text-base font-semibold">Окружение</h2>
           <div className="grid gap-2 sm:grid-cols-2">
             {doctorEntries.map((row) => (
               <DoctorRow key={row.key} label={row.label} value={row.value} />
             ))}
           </div>
-          <Separator className="my-4" />
-          <p className="text-xs text-muted-foreground">
-            Данные обновляются автоматически каждые 5 секунд.
-          </p>
+          <Separator className="my-1" />
+          <p className="text-xs text-muted-foreground">Обновление каждые 5 с</p>
         </section>
       </div>
+
+      <AddModelDialog
+        kind={addKind ?? "detector"}
+        open={Boolean(addKind)}
+        onOpenChange={(v) => { if (!v) setAddKind(null) }}
+        families={familiesForAdd}
+        ollamaModels={data.ollama.models}
+        busy={busy.startsWith("add:")}
+        onSubmit={async (payload) => {
+          if (!addKind) return
+          await addModel(addKind, payload)
+        }}
+      />
+
+      <AddProviderDialog
+        open={addProviderOpen}
+        onOpenChange={setAddProviderOpen}
+        busy={busy === "add:provider"}
+        onSubmit={addProvider}
+      />
     </ScrollArea>
   )
 }

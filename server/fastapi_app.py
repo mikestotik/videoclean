@@ -17,7 +17,13 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from videoclean.adapters.models.catalog import add_extra, ollama_model_names
+from videoclean.adapters.models.catalog import (
+    add_extra,
+    add_provider,
+    ollama_model_names,
+    remove_extra,
+    remove_provider,
+)
 from server.app_state import AppState, build_app_state
 from server.service import (
     VIDEO_SUFFIXES,
@@ -36,6 +42,7 @@ from server.service import (
     list_presets,
     mask_path,
     options_payload,
+    providers_payload,
     queue_package_job,
     queue_preview_from_job,
     queue_preview_job,
@@ -324,6 +331,7 @@ def create_app(state: AppState) -> FastAPI:
             "doctor": doctor_payload(),
             "options": options_payload(st),
             "ollama": _ollama_payload(),
+            "providers": providers_payload(st),
             "device": default_device(),
         }
 
@@ -816,6 +824,53 @@ def create_app(state: AppState) -> FastAPI:
             "download": started,
         }
 
+    @app.delete("/api/models/{component_id:path}")
+    def delete_model(component_id: str, st: AppState = Depends(get_state)):
+        try:
+            ok = remove_extra(component_id, data_dir=st.data_dir)
+        except PipelineError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if not ok:
+            raise HTTPException(404, f"unknown extra {component_id}")
+        return {"ok": True, "id": component_id}
+
+    @app.get("/api/providers")
+    def list_providers(st: AppState = Depends(get_state)):
+        return {"providers": providers_payload(st), "ollama": _ollama_payload()}
+
+    @app.post("/api/providers")
+    def create_provider(body: dict[str, Any], st: AppState = Depends(get_state)):
+        data = body or {}
+        models_raw = data.get("models") or []
+        if isinstance(models_raw, str):
+            models = [p.strip() for p in models_raw.replace(",", "\n").splitlines() if p.strip()]
+        elif isinstance(models_raw, list):
+            models = [str(p).strip() for p in models_raw if str(p).strip()]
+        else:
+            models = []
+        try:
+            row = add_provider(
+                title=str(data.get("title") or ""),
+                base_url=str(data.get("base_url") or ""),
+                api_key=str(data.get("api_key") or ""),
+                models=models,
+                provider_id=str(data.get("id") or ""),
+                data_dir=st.data_dir,
+            )
+        except PipelineError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"ok": True, "provider": {**row, "api_key": "", "has_api_key": bool(row.get("api_key"))}}
+
+    @app.delete("/api/providers/{provider_id:path}")
+    def delete_provider(provider_id: str, st: AppState = Depends(get_state)):
+        try:
+            ok = remove_provider(provider_id, data_dir=st.data_dir)
+        except PipelineError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if not ok:
+            raise HTTPException(404, f"unknown provider {provider_id}")
+        return {"ok": True, "id": provider_id}
+
     @app.post("/api/models/cancel")
     def cancel_model(st: AppState = Depends(get_state)):
         return {"cancelled": cancel_downloads(st)}
@@ -861,7 +916,7 @@ def _ollama_payload() -> dict[str, Any]:
         "base_url": os.environ.get("VIDEOCLEAN_OLLAMA_URL") or "http://127.0.0.1:11434",
         "ok": names is not None,
         "models": names or [],
-        "note": "first LLM provider. extra OpenAI-compatible endpoints can be added later.",
+        "note": "builtin OpenAI-compatible provider; add more via POST /api/providers",
     }
 
 

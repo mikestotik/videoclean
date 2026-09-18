@@ -47,6 +47,25 @@ def _looks_gguf(model: str) -> bool:
     return model.lower().endswith(".gguf") or p.suffix.lower() == ".gguf"
 
 
+def _provider_credentials(model: str, base: str) -> tuple[str, str]:
+    """Fill base_url / api_key from Settings → OpenAI-compatible providers when matched."""
+    try:
+        from videoclean.adapters.models.catalog import load_providers
+    except Exception:  # noqa: BLE001
+        return base, ""
+    model = (model or "").strip()
+    base_norm = (base or "").strip().rstrip("/")
+    for row in load_providers():
+        row_base = str(row.get("base_url") or "").rstrip("/")
+        row_key = str(row.get("api_key") or "")
+        models = {str(m).strip() for m in (row.get("models") or []) if str(m).strip()}
+        if base_norm and row_base == base_norm:
+            return row_base, row_key
+        if model and model in models:
+            return row_base or base_norm, row_key
+    return base, ""
+
+
 def resolve_llm(cfg: PipelineConfig):
     place = (cfg.llm_place or "auto").strip().lower()
     model = (cfg.llm_model or os.environ.get("VIDEOCLEAN_LLM_MODEL") or "").strip()
@@ -62,6 +81,11 @@ def resolve_llm(cfg: PipelineConfig):
         or os.environ.get("OPENAI_API_KEY")
         or ""
     ).strip()
+    prov_base, prov_key = _provider_credentials(model, base)
+    if prov_base and not base:
+        base = prov_base
+    if prov_key and not key:
+        key = prov_key
     openai_key = (os.environ.get("OPENAI_API_KEY") or "").strip()
 
     if place == "auto":

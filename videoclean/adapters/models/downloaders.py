@@ -33,13 +33,22 @@ def run_download(
     if info.kind in {"detector", "segmenter"}:
         download_hf(info.model_ref, on_progress=on_progress, is_cancelled=is_cancelled)
         return
-    if info.id == "inpainter:lama":
+    from videoclean.adapters.models.catalog import backend_name
+
+    backend = backend_name(info)
+    if info.id == "inpainter:lama" or (info.kind == "inpainter" and backend == "lama"):
         download_lama(on_progress=on_progress, is_cancelled=is_cancelled)
         return
-    if info.id == "inpainter:propainter":
-        download_propainter(on_progress=on_progress, is_cancelled=is_cancelled)
+    if info.id == "inpainter:propainter" or (info.kind == "inpainter" and backend == "propainter"):
+        download_propainter(
+            model_ref=info.model_ref,
+            on_progress=on_progress,
+            is_cancelled=is_cancelled,
+        )
         return
     if info.kind == "llm":
+        if backend and backend != "ollama":
+            raise PipelineError(f"no local download for llm backend {backend!r}")
         download_ollama(info.model_ref, on_progress=on_progress, is_cancelled=is_cancelled)
         return
     if info.kind == "inpainter":
@@ -106,8 +115,10 @@ def download_lama(
 def download_propainter(
     on_progress: OnProgress | None = None,
     is_cancelled: IsCancelled | None = None,
+    model_ref: str | None = None,
 ) -> None:
     _check(is_cancelled)
+    repo = (model_ref or "").strip() or DEFAULT_HF_REPO
     vendor = find_vendor()
     if vendor is None:
         dest = _propainter_vendor_dest()
@@ -122,7 +133,7 @@ def download_propainter(
         _emit(on_progress, 0.2 + 0.8 * min(max(fraction, 0.0), 1.0), message or "weights", **kwargs)
 
     download_hf(
-        DEFAULT_HF_REPO,
+        repo,
         local_dir=str(weights_dest),
         on_progress=wrapped,
         is_cancelled=is_cancelled,

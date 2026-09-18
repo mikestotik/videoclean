@@ -410,7 +410,7 @@ export function StageRail({
         />
         <LlmChip
           value={params.run.llm_model}
-          onChange={(model) => set({ run: { ...params.run, llm_model: model } })}
+          onChange={(patch) => set({ run: { ...params.run, ...patch } })}
           onOpenConfig={onOpenConfig}
           disabled={noSource}
         />
@@ -499,6 +499,7 @@ export function StageRail({
         </ToggleGroup>
         <BackendSelectors
           detector={params.run.detector}
+          detectorModel={params.run.detector_model}
           segmenter={params.run.segmenter}
           segmenterModel={params.run.segmenter_model}
           onChange={(patch) => set({ run: { ...params.run, ...patch } })}
@@ -646,6 +647,7 @@ export function StageRail({
         {inpaintMode === "prompt" && (
           <BackendSelectors
             detector={params.run.detector}
+            detectorModel={params.run.detector_model}
             segmenter={params.run.segmenter}
             segmenterModel={params.run.segmenter_model}
             onChange={(patch) => set({ run: { ...params.run, ...patch } })}

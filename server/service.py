@@ -13,6 +13,8 @@ from typing import Any
 from videoclean.adapters.models.catalog import (
     backend_name,
     backend_ready,
+    families_payload,
+    load_providers,
     max_quality_ready,
     ollama_model_names,
 )
@@ -848,40 +850,124 @@ def grouped_models(state: AppState) -> dict[str, list[dict[str, Any]]]:
 
 
 def options_payload(state: AppState) -> dict[str, Any]:
+    """Pipeline selects are driven by the Settings catalog (builtins + user extras)."""
     catalog = state.catalog
-    llm_names = ollama_model_names(timeout=2.0) or []
-    from videoclean.adapters.models.catalog import SEGMENTER_COMPONENTS
+    statuses = {s.info.id: s for s in _safe_list_status(catalog)}
+    infos = catalog.list_infos()
 
-    segmenter_models = [
-        {
-            "id": info.id,
-            "title": info.title,
-            "model_ref": info.model_ref,
-            "size_hint": info.size_hint,
-            "ready": catalog.is_ready(info.id),
-        }
-        for info in SEGMENTER_COMPONENTS
+    def _model_rows(kind: str) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for info in infos:
+            if info.kind != kind:
+                continue
+            st = statuses.get(info.id)
+            rows.append(
+                {
+                    "id": info.id,
+                    "title": info.title,
+                    "backend": backend_name(info),
+                    "model_ref": info.model_ref,
+                    "size_hint": info.size_hint,
+                    "source": info.source,
+                    "ready": bool(st and st.state == "ready"),
+                    "state": st.state if st else "missing",
+                }
+            )
+        return rows
+
+    detector_models = _model_rows("detector")
+    segmenter_models = _model_rows("segmenter")
+    # Drivers: unique backends that have at least one connected catalog entry.
+    detector_backends = sorted({r["backend"] for r in detector_models if r["backend"]})
+    inpainter_models = _model_rows("inpainter")
+    inpainter_backends = sorted({r["backend"] for r in inpainter_models if r["backend"]})
+    # Prefer backends that are ready; fall back to connected names so UI isn't empty mid-download.
+    detectors = [b for b in DETECTORS if b in detector_backends and backend_ready("detector", b, catalog=catalog)]
+    if not detectors:
+        detectors = [b for b in DETECTORS if b in detector_backends] or [
+            b for b in DETECTORS if backend_ready("detector", b, catalog=catalog)
+        ]
+    inpainters = [
+        b for b in INPAINTERS if b in inpainter_backends and backend_ready("inpainter", b, catalog=catalog)
     ]
+    if not inpainters:
+        inpainters = [b for b in INPAINTERS if b in inpainter_backends] or [
+            b for b in INPAINTERS if backend_ready("inpainter", b, catalog=catalog)
+        ]
+
+    llm_catalog = _model_rows("llm")
+    providers = providers_payload(state)
+    llm_models: list[dict[str, Any]] = []
+    for row in llm_catalog:
+        llm_models.append(
+            {
+                "id": row["id"],
+                "title": row["title"],
+                "model": row["model_ref"],
+                "provider_id": "ollama",
+                "base_url": "",
+                "ready": row["ready"],
+            }
+        )
+    for prov in providers:
+        for model in prov.get("models") or []:
+            mid = str(model).strip()
+            if not mid:
+                continue
+            llm_models.append(
+                {
+                    "id": f"provider:{prov['id']}:{mid}",
+                    "title": f"{prov['title']}: {mid}",
+                    "model": mid,
+                    "provider_id": prov["id"],
+                    "base_url": prov["base_url"],
+                    "ready": True,
+                }
+            )
+
     from videoclean.domain.formats import known_format_names
 
-    # Drivers are always listed; readiness is per weights (segmenter_models), not per driver name.
     return {
         "device": default_device(),
         "devices": ["cpu", "cuda", "mps"],
         "formats": known_format_names(),
         "llm_places": list(LLM_PLACES),
-        "llm_models": llm_names,
-        "detectors": [name for name in DETECTORS if backend_ready("detector", name, catalog=catalog)],
+        # Flat tags for legacy LlmChip; prefer llm_models when present.
+        "llm_models": [m["model"] for m in llm_models if m.get("ready") or m.get("provider_id") == "ollama"],
+        "llm_model_options": llm_models,
+        "detectors": detectors,
+        "detector_models": detector_models,
+        "default_detector_model": DEFAULT_GROUNDING_DINO_MODEL,
         "segmenters": list(SEGMENTERS),
         "segmenter_models": segmenter_models,
         "default_segmenter_model": DEFAULT_SEGMENTER_MODEL,
-        "inpainters": [
-            name for name in INPAINTERS if backend_ready("inpainter", name, catalog=catalog)
-        ],
+        "inpainters": inpainters,
+        "default_inpainter_model": DEFAULT_INPAINTER_MODEL,
         "max_quality_ready": max_quality_ready(catalog),
         "models": grouped_models(state),
+        "families": families_payload(),
+        "providers": providers,
         "profiles": _profiles_for_options(default_device()),
     }
+
+
+def providers_payload(state: AppState) -> list[dict[str, Any]]:
+    rows = load_providers(state.data_dir)
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        key = str(row.get("api_key") or "")
+        out.append(
+            {
+                "id": row["id"],
+                "title": row["title"],
+                "kind": row.get("kind") or "openai_compat",
+                "base_url": row["base_url"],
+                "has_api_key": bool(key),
+                "api_key_set": bool(key),
+                "models": list(row.get("models") or []),
+            }
+        )
+    return out
 
 
 def doctor_payload(*, force: bool = False) -> dict[str, str]:

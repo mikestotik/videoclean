@@ -45,6 +45,16 @@ type SegmenterModelOpt = {
   model_ref: string
   size_hint?: string
   ready?: boolean
+  backend?: string
+}
+
+type DetectorModelOpt = {
+  id: string
+  title: string
+  model_ref: string
+  size_hint?: string
+  ready?: boolean
+  backend?: string
 }
 
 type InpainterModelOpt = {
@@ -57,17 +67,30 @@ type InpainterModelOpt = {
   message?: string
 }
 
+type LlmModelOpt = {
+  id: string
+  title: string
+  model: string
+  provider_id: string
+  base_url?: string
+  ready?: boolean
+}
+
 type OptionsShape = {
   detectors: string[]
   segmenters: string[]
   inpainters?: string[]
+  detector_models?: DetectorModelOpt[]
   segmenter_models?: SegmenterModelOpt[]
+  default_detector_model?: string
   default_segmenter_model?: string
+  llm_model_options?: LlmModelOpt[]
   models?: { inpainter?: InpainterModelOpt[] }
 }
 
 export function BackendSelectors({
   detector,
+  detectorModel,
   segmenter,
   segmenterModel,
   onChange,
@@ -75,9 +98,15 @@ export function BackendSelectors({
   detectorOnly = false,
 }: {
   detector: string
+  detectorModel?: string
   segmenter: string
   segmenterModel: string
-  onChange: (patch: { detector?: string; segmenter?: string; segmenter_model?: string }) => void
+  onChange: (patch: {
+    detector?: string
+    detector_model?: string
+    segmenter?: string
+    segmenter_model?: string
+  }) => void
   disabled?: boolean
   /** Preview stage: segmenter is forced to sam2 server-side — don't pretend otherwise. */
   detectorOnly?: boolean
@@ -89,12 +118,23 @@ export function BackendSelectors({
         setOpts({
           detectors: r.detectors ?? [],
           segmenters: r.segmenters ?? [],
+          detector_models: r.detector_models ?? [],
           segmenter_models: r.segmenter_models ?? [],
+          default_detector_model: r.default_detector_model,
           default_segmenter_model: r.default_segmenter_model,
         }),
       )
       .catch(() => setOpts({ detectors: [], segmenters: [] }))
   }, [])
+
+  const detectorModelChoices = (opts.detector_models ?? []).filter(
+    (m) => !m.backend || m.backend === detector,
+  )
+  const detectorModelValue =
+    detectorModel ||
+    opts.default_detector_model ||
+    detectorModelChoices[0]?.model_ref ||
+    "IDEA-Research/grounding-dino-tiny"
 
   const modelValue =
     segmenterModel ||
@@ -117,6 +157,29 @@ export function BackendSelectors({
           </SelectContent>
         </Select>
       </div>
+      {detectorModelChoices.length > 0 && (
+        <div className="flex items-center gap-2">
+          <FieldLabel hint="Веса детектора из настроек.">Модель</FieldLabel>
+          <Select
+            value={detectorModelValue}
+            onValueChange={(v) => { if (v) onChange({ detector_model: v }) }}
+            disabled={disabled}
+          >
+            <SelectTrigger size="sm" className="flex-1">
+              <SelectValue placeholder="DINO" />
+            </SelectTrigger>
+            <SelectContent>
+              {detectorModelChoices.map((m) => (
+                <SelectItem key={m.id} value={m.model_ref}>
+                  {m.title}
+                  {m.size_hint ? ` · ${m.size_hint}` : ""}
+                  {m.ready === false ? " · не скачана" : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
       {!detectorOnly && (
         <>
           <div className="flex items-center gap-2">
@@ -269,46 +332,75 @@ export function LlmChip({
   disabled,
 }: {
   value: string
-  onChange: (model: string) => void
+  onChange: (patch: { llm_model: string; llm_base_url?: string }) => void
   onOpenConfig?: () => void
   disabled?: boolean
 }) {
   const [ok, setOk] = useState<boolean | null>(null)
-  const [models, setModels] = useState<string[]>([])
+  const [options, setOptions] = useState<LlmModelOpt[]>([])
   const poll = useCallback(() => {
-    return api<PollShape>("/api/poll")
+    return api<PollShape & { options?: OptionsShape; providers?: unknown[] }>("/api/poll")
       .then((r) => {
+        const fromOptions = r.options?.llm_model_options ?? []
+        if (fromOptions.length) {
+          setOptions(fromOptions)
+          setOk(fromOptions.some((m) => m.ready) || Boolean(r.ollama?.ok) || (r.providers?.length ?? 0) > 0)
+          return
+        }
         setOk(Boolean(r.ollama?.ok))
-        setModels(r.ollama?.models ?? [])
+        setOptions(
+          (r.ollama?.models ?? []).map((m) => ({
+            id: m,
+            title: m,
+            model: m,
+            provider_id: "ollama",
+            ready: true,
+          })),
+        )
       })
       .catch(() => setOk(false))
   }, [])
   usePoll(poll, 5000)
 
   if (ok === null) return <span className="text-xs text-muted-foreground">Проверяю LLM…</span>
-  if (!ok)
+  if (!ok && options.length === 0)
     return (
       <span className="flex flex-wrap items-center gap-2 text-xs text-destructive">
-        Ollama недоступна
+        LLM недоступен
         {onOpenConfig && (
           <Button size="xs" variant="link" className="h-auto p-0" onClick={onOpenConfig}>
-            Открыть систему
+            Открыть настройки
           </Button>
         )}
       </span>
     )
+  const selectValue = value || options.find((m) => m.ready)?.model || options[0]?.model || ""
   return (
     <div className="flex items-center gap-2 text-xs">
-      <Badge variant="secondary" className="bg-ok/15 text-ok">
-        LLM готов
+      <Badge variant="secondary" className={ok ? "bg-ok/15 text-ok" : "bg-destructive/15 text-destructive"}>
+        {ok ? "LLM готов" : "LLM"}
       </Badge>
-      <Select value={value} onValueChange={(v) => { if (v) onChange(v) }} disabled={disabled}>
+      <Select
+        value={selectValue}
+        onValueChange={(v) => {
+          if (!v) return
+          const hit = options.find((m) => m.model === v || m.id === v)
+          onChange({
+            llm_model: hit?.model ?? v,
+            llm_base_url: hit?.base_url || "",
+          })
+        }}
+        disabled={disabled}
+      >
         <SelectTrigger size="sm" className="flex-1">
           <SelectValue placeholder="Модель" />
         </SelectTrigger>
         <SelectContent>
-          {models.map((m) => (
-            <SelectItem key={m} value={m}>{m}</SelectItem>
+          {options.map((m) => (
+            <SelectItem key={m.id} value={m.model}>
+              {m.title}
+              {m.ready === false ? " · не скачана" : ""}
+            </SelectItem>
           ))}
         </SelectContent>
       </Select>
