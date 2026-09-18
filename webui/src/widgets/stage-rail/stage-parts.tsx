@@ -94,6 +94,7 @@ export function BackendSelectors({
   onChange,
   disabled,
   detectorOnly = false,
+  segmenterOnly = false,
 }: {
   detector: string
   detectorModel?: string
@@ -106,8 +107,13 @@ export function BackendSelectors({
     segmenter_model?: string
   }) => void
   disabled?: boolean
-  /** Preview stage: segmenter is forced to sam2 server-side — don't pretend otherwise. */
+  /**
+   * Detect/preview: mode is forced to sam2 server-side — show detector + SAM weights,
+   * hide mode switch.
+   */
   detectorOnly?: boolean
+  /** Inpaint by tracks/masks: only segmenter mode + SAM weights. */
+  segmenterOnly?: boolean
 }) {
   const [opts, setOpts] = useState<OptionsShape>({ detectors: [], segmenters: [] })
   useEffect(() => {
@@ -125,6 +131,10 @@ export function BackendSelectors({
       .catch(() => setOpts({ detectors: [], segmenters: [] }))
   }, [])
 
+  const showDetector = !segmenterOnly
+  const showSegmenterMode = !detectorOnly
+  const showSegmenterModel = true
+
   const detectorModelChoices = (opts.detector_models ?? []).filter(
     (m) => !m.backend || m.backend === detector,
   )
@@ -134,40 +144,94 @@ export function BackendSelectors({
     detectorModelChoices[0]?.model_ref ||
     "IDEA-Research/grounding-dino-tiny"
 
+  const segmenterModels = opts.segmenter_models ?? []
   const modelValue =
     segmenterModel ||
     opts.default_segmenter_model ||
-    opts.segmenter_models?.[0]?.model_ref ||
+    segmenterModels[0]?.model_ref ||
     "facebook/sam2-hiera-tiny"
+  const selectedSeg =
+    segmenterModels.find((m) => m.model_ref === modelValue) ||
+    segmenterModels.find((m) => m.model_ref === segmenterModel)
 
   return (
     <div className="flex flex-col gap-1.5 text-xs">
-      <div className="flex items-center gap-2">
-        <FieldLabel hint="Какая нейросеть ищет объекты по тексту цели.">Детектор</FieldLabel>
-        <Select value={detector} onValueChange={(v) => { if (v) onChange({ detector: v }) }} disabled={disabled}>
-          <SelectTrigger size="sm" className="flex-1">
-            <SelectValue placeholder="grounding-dino" />
-          </SelectTrigger>
-          <SelectContent>
-            {opts.detectors.map((d) => (
-              <SelectItem key={d} value={d}>{d}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      {detectorModelChoices.length > 0 && (
+      {showDetector && (
+        <>
+          <div className="flex items-center gap-2">
+            <FieldLabel hint="Какая нейросеть ищет объекты по тексту цели.">Детектор</FieldLabel>
+            <Select value={detector} onValueChange={(v) => { if (v) onChange({ detector: v }) }} disabled={disabled}>
+              <SelectTrigger size="sm" className="flex-1">
+                <SelectValue placeholder="grounding-dino" />
+              </SelectTrigger>
+              <SelectContent>
+                {opts.detectors.map((d) => (
+                  <SelectItem key={d} value={d}>{d}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {detectorModelChoices.length > 0 && (
+            <div className="flex items-center gap-2">
+              <FieldLabel hint="Веса детектора из настроек.">Модель</FieldLabel>
+              <Select
+                value={detectorModelValue}
+                onValueChange={(v) => { if (v) onChange({ detector_model: v }) }}
+                disabled={disabled}
+              >
+                <SelectTrigger size="sm" className="flex-1">
+                  <SelectValue placeholder="DINO" />
+                </SelectTrigger>
+                <SelectContent>
+                  {detectorModelChoices.map((m) => (
+                    <SelectItem key={m.id} value={m.model_ref}>
+                      {m.title}
+                      {m.size_hint ? ` · ${m.size_hint}` : ""}
+                      {m.ready === false ? " · не скачана" : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+        </>
+      )}
+      {showSegmenterMode && (
         <div className="flex items-center gap-2">
-          <FieldLabel hint="Веса детектора из настроек.">Модель</FieldLabel>
-          <Select
-            value={detectorModelValue}
-            onValueChange={(v) => { if (v) onChange({ detector_model: v }) }}
-            disabled={disabled}
-          >
+          <FieldLabel hint="Как строить маску: покадрово (sam2) или с пропагацией по клипу (sam2-video).">Режим SAM</FieldLabel>
+          <Select value={segmenter} onValueChange={(v) => { if (v) onChange({ segmenter: v }) }} disabled={disabled}>
             <SelectTrigger size="sm" className="flex-1">
-              <SelectValue placeholder="DINO" />
+              <SelectValue placeholder="sam2" />
             </SelectTrigger>
             <SelectContent>
-              {detectorModelChoices.map((m) => (
+              {(opts.segmenters.length ? opts.segmenters : ["sam2", "sam2-video"]).map((s) => (
+                <SelectItem key={s} value={s}>
+                  {s === "sam2-video" ? "sam2-video (пропагация)" : "sam2 (покадрово)"}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+      {showSegmenterModel && (
+        <div className="flex items-center gap-2">
+          <FieldLabel hint="Веса SAM2/SAM2.1. Крупнее — точнее и тяжелее. Скачать можно в Настройках.">
+            Модель SAM
+          </FieldLabel>
+          <Select
+            value={modelValue}
+            onValueChange={(v) => { if (v) onChange({ segmenter_model: v }) }}
+            disabled={disabled || segmenterModels.length === 0}
+          >
+            <SelectTrigger size="sm" className="flex-1">
+              <SelectValue placeholder="SAM2 tiny">
+                {selectedSeg
+                  ? `${selectedSeg.title}${selectedSeg.size_hint ? ` · ${selectedSeg.size_hint}` : ""}`
+                  : null}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {segmenterModels.map((m) => (
                 <SelectItem key={m.id} value={m.model_ref}>
                   {m.title}
                   {m.size_hint ? ` · ${m.size_hint}` : ""}
@@ -177,46 +241,6 @@ export function BackendSelectors({
             </SelectContent>
           </Select>
         </div>
-      )}
-      {!detectorOnly && (
-        <>
-          <div className="flex items-center gap-2">
-            <FieldLabel hint="Как строить маску: покадрово (sam2) или с пропагацией по клипу (sam2-video).">Режим</FieldLabel>
-            <Select value={segmenter} onValueChange={(v) => { if (v) onChange({ segmenter: v }) }} disabled={disabled}>
-              <SelectTrigger size="sm" className="flex-1">
-                <SelectValue placeholder="sam2" />
-              </SelectTrigger>
-              <SelectContent>
-                {(opts.segmenters.length ? opts.segmenters : ["sam2", "sam2-video"]).map((s) => (
-                  <SelectItem key={s} value={s}>
-                    {s === "sam2-video" ? "sam2-video (пропагация)" : "sam2 (покадрово)"}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex items-center gap-2">
-            <FieldLabel hint="Веса сегментатора. Крупнее — точнее и тяжелее.">Модель</FieldLabel>
-            <Select
-              value={modelValue}
-              onValueChange={(v) => { if (v) onChange({ segmenter_model: v }) }}
-              disabled={disabled}
-            >
-              <SelectTrigger size="sm" className="flex-1">
-                <SelectValue placeholder="SAM2 tiny" />
-              </SelectTrigger>
-              <SelectContent>
-                {(opts.segmenter_models ?? []).map((m) => (
-                  <SelectItem key={m.id} value={m.model_ref}>
-                    {m.title}
-                    {m.size_hint ? ` · ${m.size_hint}` : ""}
-                    {m.ready === false ? " · не скачана" : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </>
       )}
     </div>
   )
@@ -876,8 +900,11 @@ export function AdvancedFields({
         />
       </div>
       <div className="flex items-center gap-2 text-xs">
-        <FieldLabel className="w-[7.5rem] shrink-0" hint="Свой HF id сегментатора, если нет в списке выше.">
-          Модель SAM
+        <FieldLabel
+          className="w-[7.5rem] shrink-0"
+          hint="Свой HF id SAM2, если нужен checkpoint вне каталога выше."
+        >
+          SAM HF id
         </FieldLabel>
         <Input
           value={params.run.segmenter_model}

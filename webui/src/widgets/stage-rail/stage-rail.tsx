@@ -713,7 +713,7 @@ export function StageRail({
             <ParamHint text={params.maskPolicy === "static" ? MODE_HINTS.maskStatic : MODE_HINTS.maskPropagate} />
           </div>
         )}
-        {inpaintMode === "prompt" && (
+        {inpaintMode === "prompt" ? (
           <BackendSelectors
             detector={params.run.detector}
             detectorModel={params.run.detector_model}
@@ -721,6 +721,16 @@ export function StageRail({
             segmenterModel={params.run.segmenter_model}
             onChange={(patch) => set({ run: { ...params.run, ...patch } })}
             disabled={noSource}
+          />
+        ) : (
+          <BackendSelectors
+            detector={params.run.detector}
+            detectorModel={params.run.detector_model}
+            segmenter={params.run.segmenter}
+            segmenterModel={params.run.segmenter_model}
+            onChange={(patch) => set({ run: { ...params.run, ...patch } })}
+            disabled={noSource}
+            segmenterOnly
           />
         )}
         <InpaintControls params={params} onParamsChange={onParamsChange} disabled={noSource} />
