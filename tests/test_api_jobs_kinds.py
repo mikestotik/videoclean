@@ -91,7 +91,7 @@ def test_run_stores_webhook_and_formats(client):
     assert payload["webm_crf"] == 28
 
 
-def test_overrides_are_mutually_exclusive(client):
+def test_tracks_cannot_combine_with_targets(client):
     client, state, tmp_path = client
     src = _source(client, tmp_path)
     resp = client.post(
@@ -104,7 +104,36 @@ def test_overrides_are_mutually_exclusive(client):
         },
     )
     assert resp.status_code == 400
-    assert "mutually exclusive" in resp.json()["detail"]
+    assert "tracks cannot be combined" in resp.json()["detail"]
+
+
+def test_targets_plus_masks_allowed(client):
+    """Entry C: targets label + mask anchors in one job."""
+    client, state, tmp_path = client
+    src = _source(client, tmp_path)
+    import cv2
+    import numpy as np
+
+    ok, buf = cv2.imencode(".png", np.zeros((64, 64), np.uint8))
+    assert ok
+    masks_dir = state.data_dir / "sources" / src["id"] / "masks"
+    masks_dir.mkdir(parents=True, exist_ok=True)
+    (masks_dir / "000000.png").write_bytes(buf.tobytes())
+    resp = client.post(
+        "/api/jobs",
+        data={
+            "kind": "run",
+            "source_id": src["id"],
+            "targets": json.dumps([{"kind": "object", "query": "logo"}]),
+            "masks": "0",
+            "prompt": "remove logo",
+            "mask_policy": "propagate",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    payload = _payload(state.jobs.get(resp.json()["id"]))
+    assert payload.get("targets_override")
+    assert payload.get("masks_override")
 
 
 def test_preview_from_source_all_frames(client):

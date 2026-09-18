@@ -42,9 +42,10 @@ export function useInpaintRun(source: Source | null) {
           kind: "run",
           source_id: source.id,
           prompt: payload.prompt,
+          // Entry C: masks + targets together; tracks stay exclusive.
           targets: payload.mode === "tracks" ? undefined : payload.targets,
           tracks: payload.mode === "tracks" ? payload.tracks : undefined,
-          masks: payload.masks,
+          masks: payload.mode === "tracks" ? undefined : payload.masks,
           params,
         })
         if (runId === runIdRef.current) setJobId(job.id)

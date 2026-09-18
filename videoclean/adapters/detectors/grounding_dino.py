@@ -87,7 +87,7 @@ class GroundingDinoDetector:
         phrases = _phrases(queries)
         if not phrases:
             return []
-        key_idx = sample_indices(len(frames), min(self._n_keyframes(), len(frames)))
+        key_idx = sample_indices(len(frames), min(self._n_keyframes(len(frames)), len(frames)))
         n_keys = len(key_idx)
         total_units = n_keys * len(phrases)
         unit = 0
@@ -182,8 +182,15 @@ class GroundingDinoDetector:
             self._processor = None
             return False, self._load_error
 
-    def _n_keyframes(self) -> int:
-        return self.keyframes if self.keyframes and self.keyframes > 0 else self.DEFAULT_KEYFRAMES
+    def _n_keyframes(self, n_frames: int = 0) -> int:
+        if self.keyframes and self.keyframes > 0:
+            return self.keyframes
+        if n_frames > 0:
+            from videoclean.application.frames_sample import default_detector_keyframes
+
+            fps = getattr(self, "fps", None)
+            return default_detector_keyframes(n_frames, fps if isinstance(fps, (int, float)) else None)
+        return self.DEFAULT_KEYFRAMES
 
     def _detect_frame(self, bgr: np.ndarray, phrases: list[str]) -> list[BoxHit]:
         hits: list[BoxHit] = []

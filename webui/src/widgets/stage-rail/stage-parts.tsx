@@ -76,7 +76,7 @@ type LlmModelOpt = {
   ready?: boolean
 }
 
-type OptionsShape = {
+export type OptionsShape = {
   detectors: string[]
   segmenters: string[]
   inpainters?: string[]
@@ -774,6 +774,7 @@ export function AdvancedFields({
       advanced: { ...params.advanced, [key]: value },
     })
 
+  const llava = /llava/i.test(params.run.llm_model || "")
   // Only knobs that apply regardless of inpainter. ProPainter/LaMa-specific live in InpaintControls.
   const sliderKeys = [
     "detector_threshold",
@@ -784,7 +785,6 @@ export function AdvancedFields({
     "prompt_frame_stride",
     "prompt_frame_max",
     "parse_chunk_frames",
-    "vision_batch",
   ] as const
 
   return (
@@ -820,6 +820,26 @@ export function AdvancedFields({
           />
         )
       })}
+      <ParamSlider
+        label={ADVANCED_META.vision_batch.label}
+        hint={ADVANCED_META.vision_batch.hint}
+        value={Math.min(advancedNumber(params, "vision_batch", 2), llava ? 2 : 8)}
+        min={ADVANCED_META.vision_batch.min ?? 1}
+        max={llava ? 2 : (ADVANCED_META.vision_batch.max ?? 8)}
+        step={1}
+        disabled={disabled}
+        onChange={(v) => setAdvanced("vision_batch", String(llava ? Math.min(v, 2) : v))}
+      />
+      <div className="flex items-center gap-2">
+        <FieldLabel className="flex-1" hint={ADVANCED_META.select_relax.hint}>
+          {ADVANCED_META.select_relax.label}
+        </FieldLabel>
+        <Switch
+          checked={(params.advanced.select_relax ?? "1") !== "0"}
+          disabled={disabled}
+          onCheckedChange={(checked) => setAdvanced("select_relax", checked ? "1" : "0")}
+        />
+      </div>
       <ParamSlider
         label={RUN_PARAM_META.min_mask_coverage.label}
         hint={RUN_PARAM_META.min_mask_coverage.hint}

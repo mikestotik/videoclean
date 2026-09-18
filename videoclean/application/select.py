@@ -77,6 +77,13 @@ def _select_once(
                 continue
             used.add(tr.track_id)
             tr = interpolate_gaps(tr)
+            if target.frames is not None:
+                a, b = target.frames
+                boxes = list(tr.boxes)
+                for i in range(len(boxes)):
+                    if not (a <= i < b):
+                        boxes[i] = None
+                tr = replace(tr, boxes=boxes)
             tr.part = target.part if target.part in CROP_PARTS else None
             tr.notes = list(tr.notes) + [f"motion={tr.motion}"]
             if target.where:
@@ -118,6 +125,11 @@ def _matches(
             continue
         if not _where_ok(tr, target.where, width, height):
             continue
+        if target.frames is not None:
+            a, b = target.frames
+            # Require a real observation inside the window (ignore hold-filled gaps).
+            if not any(box is not None for box in tr.boxes[a:b]):
+                continue
         out.append(tr)
     return out
 

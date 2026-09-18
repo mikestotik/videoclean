@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useInterpret } from "@features/interpret"
 import { tracksAreFullLength, useDetectRun } from "@features/detect-run"
 import { useInpaintRun } from "@features/inpaint-run"
@@ -12,6 +12,8 @@ import {
   type Job,
 } from "@/entities/job"
 import type { Source } from "@/entities/source"
+import { api } from "@/shared/api/client"
+import { Badge } from "@/shared/ui/badge"
 import { Button } from "@/shared/ui/button"
 import { Label } from "@/shared/ui/label"
 import { Slider } from "@/shared/ui/slider"
@@ -29,6 +31,7 @@ import {
   ParamSlider,
   PresetsPopover,
   StageSection,
+  type OptionsShape,
 } from "./stage-parts"
 import { ADVANCED_META, FORMAT_META, MODE_HINTS, RUN_PARAM_META } from "./param-meta"
 import {
@@ -273,8 +276,43 @@ export function StageRail({
   const [inpaintMode, setInpaintMode] = useState<InpaintMode>("tracks")
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [openStages, setOpenStages] = useState<Record<number, boolean>>({ 1: true })
+  const [pipelineOpts, setPipelineOpts] = useState<OptionsShape | null>(null)
   const noSource = !source
   const set = (patch: Partial<EditorParams>) => onParamsChange({ ...params, ...patch })
+
+  useEffect(() => {
+    api<OptionsShape>("/api/options")
+      .then(setPipelineOpts)
+      .catch(() => setPipelineOpts(null))
+  }, [])
+
+  const readiness = useMemo(() => {
+    const opts = pipelineOpts
+    if (!opts) return { detector: null as string | null, segmenter: null as string | null, inpainter: null as string | null }
+    const detModels = opts.detector_models ?? []
+    const segModels = opts.segmenter_models ?? []
+    const inpModels = opts.models?.inpainter ?? []
+    const detId = params.run.detector_model || opts.default_detector_model || ""
+    const segId = params.run.segmenter_model || opts.default_segmenter_model || ""
+    const det =
+      detModels.find((m) => m.id === detId || m.model_ref === detId) ||
+      detModels.find((m) => !params.run.detector || m.backend === params.run.detector) ||
+      detModels[0]
+    const seg =
+      segModels.find((m) => m.id === segId || m.model_ref === segId) ||
+      segModels.find((m) => m.backend === (params.run.segmenter || "sam2")) ||
+      segModels[0]
+    const inp =
+      inpModels.find((m) => m.id === params.run.inpainter_model || m.model_ref === params.run.inpainter_model) ||
+      inpModels.find((m) => m.backend === params.run.inpainter) ||
+      inpModels.find((m) => m.state === "ready") ||
+      inpModels[0]
+    return {
+      detector: det && det.ready === false ? det.title || det.id : null,
+      segmenter: seg && seg.ready === false ? seg.title || seg.id : null,
+      inpainter: inp && inp.state && inp.state !== "ready" ? inp.title || inp.id : null,
+    }
+  }, [pipelineOpts, params.run.detector, params.run.detector_model, params.run.segmenter, params.run.segmenter_model, params.run.inpainter, params.run.inpainter_model])
 
   const hasMasks = (masks?.length ?? 0) > 0
   const hasPrompt = params.prompt.trim().length > 0
@@ -282,9 +320,12 @@ export function StageRail({
   const hasDetectResult = Boolean(detect.manifest) || detect.tracks.length > 0
   const hasResult = resultJob?.state === "COMPLETED"
   const tracksReady = tracksAreFullLength(detect.enabledTracks, frameCount)
+  const detectBlocked = Boolean(readiness.detector)
+  const inpaintBlocked = Boolean(readiness.segmenter || readiness.inpainter)
   const canFindMasks =
     !noSource &&
     !detect.running &&
+    !detectBlocked &&
     (params.detect.mode === "targets" ? hasTargets : hasPrompt)
 
   const runAllDisabled =
@@ -293,7 +334,8 @@ export function StageRail({
     interpret.running ||
     detect.running ||
     inpaint.running ||
-    (!hasPrompt && !hasMasks && !hasTargets)
+    (!hasPrompt && !hasMasks && !hasTargets) ||
+    (hasMasks ? inpaintBlocked : detectBlocked || inpaintBlocked)
 
   // Accent numbers for stages that already produced a result; "active" is the next step.
   const stageDone: Record<number, boolean> = {
@@ -357,12 +399,18 @@ export function StageRail({
 
   const runInpaint = () => {
     if (inpaintMode === "tracks" && !tracksReady) return
+    const targets = enabledTargets(params)
     const payload =
       inpaintMode === "tracks"
         ? { mode: "tracks" as const, tracks: detect.enabledTracks }
         : inpaintMode === "masks"
-          ? { mode: "masks" as const, masks: masks ?? [] }
-          : { mode: "prompt" as const, prompt: params.prompt, targets: enabledTargets(params) }
+          ? {
+              mode: "masks" as const,
+              masks: masks ?? [],
+              targets: targets.length > 0 ? targets : undefined,
+              prompt: params.prompt,
+            }
+          : { mode: "prompt" as const, prompt: params.prompt, targets }
     void inpaint.run(payload, toRunParams(params))
   }
 
@@ -435,6 +483,19 @@ export function StageRail({
         onOpenChange={(o) => setStageOpen(2, o)}
       >
         <TargetsEditor targets={params.targets} onChange={(targets) => set({ targets })} disabled={noSource} />
+        {interpret.result && (interpret.result.parseMode || interpret.result.framesUsed || interpret.result.visionFrameIndices) && (
+          <p className="text-[11px] text-muted-foreground">
+            parse: {interpret.result.parseMode ?? "—"}
+            {interpret.result.defaulted ? " · defaulted" : ""}
+            {(() => {
+              const frames = interpret.result.visionFrameIndices ?? interpret.result.framesUsed
+              return frames?.length ? ` · кадры: ${frames.join(",")}` : ""
+            })()}
+          </p>
+        )}
+        {detect.manifest?.selectRelaxed && (
+          <p className="text-[11px] text-amber-600 dark:text-amber-400">relaxed match — where/ordinal ослаблены</p>
+        )}
       </StageSection>
 
       <StageSection
@@ -506,6 +567,12 @@ export function StageRail({
           disabled={noSource}
           detectorOnly
         />
+        <Badge variant="secondary" className="w-fit text-[10px] font-normal">
+          Превью: sam2 покадрово, без inpaint / sam2-video
+        </Badge>
+        {readiness.detector && (
+          <p className="text-xs text-destructive">Детектор не готов: {readiness.detector} — скачайте в Настройках</p>
+        )}
         <ParamSlider
           label={ADVANCED_META.detector_threshold.label}
           hint={ADVANCED_META.detector_threshold.hint}
@@ -556,6 +623,8 @@ export function StageRail({
             {detect.enabledTracks.length}/{detect.tracks.length}
             {detect.tracks[0] ? ` · длина ${detect.tracks[0].boxes.length}/${frameCount}` : ""}
             {tracksReady ? " · готово к удалению" : params.detect.all ? "" : " · только осмотр"}
+            {detect.manifest.selectRelaxed ? " · relaxed match" : ""}
+            {detect.manifest.parseMode ? ` · parse ${detect.manifest.parseMode}` : ""}
           </p>
         )}
         {hasDetectResult && (
@@ -665,11 +734,20 @@ export function StageRail({
             disabled={noSource}
           />
         )}
+        {(readiness.segmenter || readiness.inpainter) && (
+          <p className="text-xs text-destructive">
+            {readiness.segmenter ? `Сегментер не готов: ${readiness.segmenter}` : null}
+            {readiness.segmenter && readiness.inpainter ? " · " : null}
+            {readiness.inpainter ? `Инпейнтер не готов: ${readiness.inpainter}` : null}
+            {" — скачайте в Настройках"}
+          </p>
+        )}
         <Button
           size="sm"
           disabled={
             noSource ||
             inpaint.running ||
+            inpaintBlocked ||
             (inpaintMode === "tracks" && !tracksReady) ||
             (inpaintMode === "masks" && !(masks && masks.length > 0)) ||
             (inpaintMode === "prompt" && !params.prompt.trim())

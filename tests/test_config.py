@@ -77,7 +77,8 @@ def test_tunable_params_have_defaults():
     cfg = PipelineConfig()
     assert cfg.detector_keyframes is None  # adapter default: dino 8
     assert cfg.detector_nms_iou == 0.3
-    assert cfg.detector_max_box_area == 0.25
+    assert cfg.detector_max_box_area == 0.45
+    assert cfg.select_relax is True
     assert cfg.tracker_min_score == 0.55
     assert cfg.tracker_max_template_area == 0.12
     assert cfg.vision_batch == 2

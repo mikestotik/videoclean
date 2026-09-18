@@ -479,6 +479,7 @@ def create_app(state: AppState) -> FastAPI:
         detector_keyframes: str = Form(""),
         detector_nms_iou: str = Form(""),
         detector_max_box_area: str = Form(""),
+        select_relax: str = Form(""),
         tracker_min_score: str = Form(""),
         tracker_max_template_area: str = Form(""),
         propainter_mask_dilation: str = Form(""),
@@ -536,6 +537,7 @@ def create_app(state: AppState) -> FastAPI:
             "detector_keyframes": detector_keyframes,
             "detector_nms_iou": detector_nms_iou,
             "detector_max_box_area": detector_max_box_area,
+            "select_relax": select_relax,
             "tracker_min_score": tracker_min_score,
             "tracker_max_template_area": tracker_max_template_area,
             "propainter_mask_dilation": propainter_mask_dilation,
@@ -582,8 +584,10 @@ def create_app(state: AppState) -> FastAPI:
             payload["indices"] = [int(i) for i in indices.split(",") if i.strip()]
         if all_.strip():
             payload["all"] = True
-        if sum(1 for k in ("targets_override", "tracks_override", "masks") if payload.get(k)) > 1:
-            raise HTTPException(400, "targets, tracks and masks are mutually exclusive")
+        # Entry C: targets (or prompt labels) + masks anchors are allowed together.
+        # Tracks already supply boxes — cannot mix with detect/mask sources.
+        if payload.get("tracks_override") and (payload.get("targets_override") or payload.get("masks")):
+            raise HTTPException(400, "tracks cannot be combined with targets or masks")
 
         source_row = None
         if source_id.strip():

@@ -121,6 +121,26 @@ def test_masks_override_skips_parse_detect_segment(tmp_path: Path):
     assert len(list(masks_dir.iterdir())) == 2, "mask tiled to every frame"
 
 
+def test_masks_plus_targets_entry_c(tmp_path: Path):
+    """Entry C: mask anchors + target labels in one job; parser skipped."""
+    (tmp_path / "in.mp4").write_bytes(b"fake")
+    det, par, seg = CountingDetector(), CountingParser(), CountingSegmenter()
+    mask = _write_mask(tmp_path, "m.png")
+    uc = _uc(tmp_path, detector=det, segmenter=seg, parser=par)
+    report = uc.execute(
+        _req(
+            tmp_path,
+            prompt="remove logo",
+            masks_override=[str(mask)],
+            targets_override=[{"kind": "object", "query": "channel logo", "where": "top-right", "motion": "any"}],
+        ),
+        tmp_path,
+    )
+    assert report["state"] == "COMPLETED"
+    assert par.calls == 0 and det.calls == 0 and seg.calls == 0
+    assert report["promptParseMode"] == "manual-masks+targets"
+
+
 def test_manual_overrides_satisfy_prompt_check(tmp_path: Path):
     src = tmp_path / "in.mp4"
     src.write_bytes(b"fake")

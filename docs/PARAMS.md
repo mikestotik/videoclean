@@ -127,9 +127,9 @@ WebUI: панель «Превью» на рабочей странице. Кн�
 |---|---|---|
 | `kind` | Тип job'а | `run` (полный прогон) / `preview` (разбор и маски без инпейнта) / `prompt` (интерпретация нарисованных масок через LLM) |
 | `source_id` | Видео из библиотеки источников вместо загрузки файла | id из `POST /api/sources`; для `preview` и `prompt` обязателен |
-| `targets` | JSON-массив таргетов вместо LLM-парса (`targets_override`) | `[{"kind": "object", "query": "mug"}]`; взаимоисключимо с `tracks`/`masks` |
-| `tracks` | JSON-массив готовых треков с боксами (`tracks_override`) | `[{"id", "label", "motion", "boxes": [[x1,y1,x2,y2], …]}]`; взаимоисключимо с `targets`/`masks` |
-| `masks` | Номера кадров с нарисованными на источнике масками | `2,5,9`; маски берутся из `sources/{id}/masks/`; взаимоисключимо с `targets`/`tracks` |
+| `targets` | JSON-массив таргетов вместо LLM-парса (`targets_override`) | `[{"kind": "object", "query": "mug"}]`; можно вместе с `masks` (вход C); нельзя с `tracks` |
+| `tracks` | JSON-массив готовых треков с боксами (`tracks_override`) | `[{"id", "label", "motion", "boxes": [[x1,y1,x2,y2], …]}]`; нельзя вместе с `targets`/`masks` |
+| `masks` | Номера кадров с нарисованными на источнике масками | `2,5,9`; маски берутся из `sources/{id}/masks/`; можно вместе с `targets`/`prompt` (якоря + подпись); нельзя с `tracks` |
 | `llm_base_url` | Свой OpenAI-совместимый эндпоинт для парса промпта | URL; пусто = провайдер по `llm_place` |
 | `llm_api_key` | Ключ для удалённого LLM-эндпоинта | строка |
 | `keep_workdir` | Сохранить рабочую папку job'а (кадры, маски, инпейнт) | `1`/`0` |

@@ -91,4 +91,3 @@
 - Зависимость `transformers` в `pyproject.toml` — нужна для grounding-dino и sam2.
 - `_cv.py` — трекинг/NMS используется обоими детекторами.
 - `DEFAULT_GROUNDING_DINO_MODEL` — становится единственным дефолтом детектора.
-- История в `docs/BUG-001-removal-quality.md` — не упоминает owlvit.

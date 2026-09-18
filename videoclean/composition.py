@@ -60,7 +60,8 @@ def config_from_flags(
     vision_batch: int = 2,
     detector_keyframes: int | None = None,
     detector_nms_iou: float = 0.3,
-    detector_max_box_area: float = 0.25,
+    detector_max_box_area: float = 0.45,
+    select_relax: bool = True,
     tracker_min_score: float = 0.55,
     tracker_max_template_area: float = 0.12,
     propainter_mask_dilation: int = 4,
@@ -103,6 +104,7 @@ def config_from_flags(
         "detector_keyframes": detector_keyframes,
         "detector_nms_iou": float(detector_nms_iou),
         "detector_max_box_area": float(detector_max_box_area),
+        "select_relax": bool(select_relax),
         "tracker_min_score": float(tracker_min_score),
         "tracker_max_template_area": float(tracker_max_template_area),
         "propainter_mask_dilation": int(propainter_mask_dilation),
@@ -150,6 +152,7 @@ def config_from_flags(
         ),
         detector_nms_iou=float(merged["detector_nms_iou"]),
         detector_max_box_area=float(merged["detector_max_box_area"]),
+        select_relax=bool(merged.get("select_relax", True)),
         tracker_min_score=float(merged["tracker_min_score"]),
         tracker_max_template_area=float(merged["tracker_max_template_area"]),
         propainter_mask_dilation=int(merged["propainter_mask_dilation"]),
@@ -163,6 +166,9 @@ def config_from_flags(
         inpaint_workers=int(merged.get("inpaint_workers", 0)),
         inpaint_chunk_overlap=int(merged.get("inpaint_chunk_overlap", 8)),
     )
+    # llava* degrades with multi-image batches > 2
+    if "llava" in (cfg.llm_model or "").casefold() and cfg.vision_batch > 2:
+        cfg.vision_batch = 2
     cfg.validate()
     if require_device:
         resolve_device(cfg.device)

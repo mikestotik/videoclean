@@ -13,8 +13,8 @@ def resize_max(image: np.ndarray, max_side: int) -> tuple[np.ndarray, float]:
     return small, scale
 
 
-# Full-frame / near-full-frame hits. A width-spanning caption bar is ~0.05, not 0.25.
-MAX_BOX_AREA = 0.25
+# Near-full-frame hits. Thin caption bars are ~0.05; tall lower-thirds need ~0.45.
+MAX_BOX_AREA = 0.45
 # Template-matching a huge crop locks onto the background.
 MAX_TEMPLATE_AREA = 0.12
 

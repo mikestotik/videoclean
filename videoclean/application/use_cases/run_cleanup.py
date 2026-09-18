@@ -170,14 +170,13 @@ class RunCleanup:
             policy = (req.mask_policy or "static").strip().lower()
             if policy not in {"static", "propagate"}:
                 raise PipelineError(f"mask_policy must be static | propagate, got {policy!r}")
-            self.progress.start("parse", detail=f"manual masks ({policy})")
-            intent = Intent(targets=[], parse_mode="manual-masks", raw=req.prompt or "")
-            self.progress.finish("parse", f"{len(req.masks_override)} masks")
+            intent = self._intent_for_masks(req, images, frames, cfg)
             self.progress.start("detect", total=len(frames), detail=f"manual masks ({policy})")
             if policy == "propagate":
                 tracks = self._tracks_from_mask_anchors(req.masks_override, len(frames), (h, w))
                 if not tracks:
                     raise PipelineError("masks_override: no usable mask anchors for propagate")
+                _label_tracks_from_intent(tracks, intent)
                 for tr in tracks:
                     interpolate_gaps(tr)
                 masks = self.segmenter.masks(images, tracks)
@@ -271,8 +270,22 @@ class RunCleanup:
             self.progress.finish("parse", label)
 
             self.progress.start("detect", total=len(frames), detail="read frames")
+            self._apply_caption_box_area(intent)
             used_detector, attempts, raw_tracks = self._discover(images, intent.queries, stage="detect")
-            tracks = select_tracks(raw_tracks, intent, width=w, height=h, relax=True)
+            strict = select_tracks(raw_tracks, intent, width=w, height=h, relax=False)
+            if strict:
+                tracks = strict
+                select_relaxed = False
+            elif cfg.select_relax:
+                tracks = select_tracks(raw_tracks, intent, width=w, height=h, relax=True)
+                select_relaxed = bool(tracks)
+            else:
+                tracks = []
+                select_relaxed = False
+            if select_relaxed:
+                for tr in tracks:
+                    tr.notes = list(tr.notes) + ["relaxed-match"]
+                report["selectRelaxed"] = True
             if raw_tracks and not tracks:
                 raise PipelineError(
                     explain_unmatched(raw_tracks, intent, w, h) + f" detectors tried: {attempts}"
@@ -288,7 +301,10 @@ class RunCleanup:
                 encoding="utf-8",
             )
             (paths.root / "analysis" / "detector.json").write_text(
-                json.dumps({"used": used_detector, "attempts": attempts}, indent=2),
+                json.dumps(
+                    {"used": used_detector, "attempts": attempts, "selectRelaxed": select_relaxed},
+                    indent=2,
+                ),
                 encoding="utf-8",
             )
             masks = self.segmenter.masks(images, tracks)
@@ -364,7 +380,12 @@ class RunCleanup:
                     for orig, clean, mask in zip(images, cleaned_frames, working_masks)
                 ]
                 _, v_attempts, leftover = self._discover(cleaned_frames, intent.queries, stage="verify")
-                leftover = select_tracks(leftover, intent, width=w, height=h, relax=True)
+                leftover_strict = select_tracks(leftover, intent, width=w, height=h, relax=False)
+                leftover = leftover_strict or (
+                    select_tracks(leftover, intent, width=w, height=h, relax=True)
+                    if cfg.select_relax
+                    else []
+                )
                 detect_masks = self.segmenter.masks(cleaned_frames, leftover) if leftover else [
                     np.zeros_like(working_masks[0]) for _ in working_masks
                 ]
@@ -507,6 +528,57 @@ class RunCleanup:
                 shutil.rmtree(process, ignore_errors=True)
         return report
 
+    def _intent_for_masks(self, req: RunCleanupRequest, images, frames, cfg: PipelineConfig) -> Intent:
+        """Labels for mask anchors: targets_override, else parse prompt, else empty (entry B)."""
+        policy = (req.mask_policy or "static").strip().lower()
+        if req.targets_override:
+            from videoclean.application.use_cases.run_preview import targets_from_json
+
+            targets = targets_from_json(req.targets_override)
+            intent = Intent(
+                targets=targets,
+                parse_mode="manual-masks+targets",
+                raw=req.prompt or "",
+            )
+            self.progress.start("parse", detail=f"masks+targets ({policy})")
+            self.progress.finish("parse", f"{len(req.masks_override)} masks · {len(targets)} targets")
+            return intent
+        if (req.prompt or "").strip():
+            parse_st = self.parser.status() if hasattr(self.parser, "status") else "llm"
+            sample_idxs = sample_frame_indices(len(frames), cfg.prompt_frame_stride, cfg.prompt_frame_max)
+            sample_frames = [images[i] for i in sample_idxs] if sample_idxs else None
+            self.progress.start("parse", detail=f"masks+prompt  {parse_st}")
+            intent = self.parser.parse(
+                req.prompt,
+                frames=sample_frames,
+                frame_indices=sample_idxs,
+                parse_chunk_frames=cfg.parse_chunk_frames,
+            )
+            intent = Intent(
+                targets=intent.targets,
+                parse_mode=f"masks+{intent.parse_mode}",
+                raw=intent.raw or req.prompt,
+                defaulted=intent.defaulted,
+            )
+            self.progress.finish(
+                "parse",
+                f"{len(req.masks_override)} masks · " + (", ".join(_target_label(t) for t in intent.targets) or "no targets"),
+            )
+            return intent
+        self.progress.start("parse", detail=f"manual masks ({policy})")
+        intent = Intent(targets=[], parse_mode="manual-masks", raw=req.prompt or "")
+        self.progress.finish("parse", f"{len(req.masks_override)} masks")
+        return intent
+
+    def _apply_caption_box_area(self, intent: Intent) -> None:
+        """Raise detector max_box_area when hunting text/captions (wide lower-thirds)."""
+        kinds = {t.kind for t in intent.targets}
+        if not kinds.intersection({"text_overlay", "watermark"}):
+            return
+        for detector in self.detectors:
+            cur = float(getattr(detector, "max_box_area", 0.45) or 0.45)
+            detector.max_box_area = max(cur, 0.55)
+
     def _discover(self, images, queries: list[str], *, stage: str) -> tuple[str, list[str], list]:
         attempts: list[str] = []
         last_tracks: list = []
@@ -615,6 +687,22 @@ class RunCleanup:
                 notes=["mask-propagate"],
             )
         ]
+
+
+def _label_tracks_from_intent(tracks: list[Track], intent: Intent) -> None:
+    """Apply entry-C target query/kind onto mask-propagated tracks."""
+    if not tracks or not intent.targets:
+        return
+    t0 = intent.targets[0]
+    label = (t0.query or (intent.queries[0] if intent.queries else "mask")) or "mask"
+    for i, tr in enumerate(tracks):
+        t = intent.targets[i] if i < len(intent.targets) else t0
+        tr.label = (t.query or label).strip() or label
+        notes = list(tr.notes)
+        notes.append(f"kind={t.kind}")
+        if t.where:
+            notes.append(f"where={t.where}")
+        tr.notes = notes
 
 
 def _bbox_from_mask(mask: np.ndarray) -> tuple[int, int, int, int] | None:

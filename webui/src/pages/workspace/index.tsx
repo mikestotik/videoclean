@@ -282,13 +282,35 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
     setRunAllError("")
     setRunAllBusy(true)
     try {
-      if (masks.length > 0 && !prompt && enabledTargets(params).length === 0) {
-        await inpaint.run({ mode: "masks", masks }, toRunParams(params))
+      let targets = enabledTargets(params)
+      let runPrompt = prompt
+
+      // Entry B/C: drawn masks are anchors; optional prompt/targets label them.
+      if (masks.length > 0) {
+        if (targets.length === 0 && prompt) {
+          const interp = await interpret.run(prompt, params.run.llm_model)
+          targets = interp ? toTargetRows(interp.targets) : []
+          runPrompt = interp?.prompt || prompt
+          if (targets.length > 0) {
+            setParams((prev) => ({
+              ...prev,
+              prompt: runPrompt,
+              targets: targets.map((t) => ({ ...t, enabled: true, source: "auto" as const })),
+            }))
+          }
+        }
+        await inpaint.run(
+          {
+            mode: "masks",
+            masks,
+            targets: targets.length > 0 ? targets : undefined,
+            prompt: runPrompt,
+          },
+          toRunParams(params),
+        )
         return
       }
 
-      let targets = enabledTargets(params)
-      let runPrompt = prompt
       if (targets.length === 0 && prompt) {
         const interp = await interpret.run(prompt, params.run.llm_model)
         targets = interp ? toTargetRows(interp.targets) : []

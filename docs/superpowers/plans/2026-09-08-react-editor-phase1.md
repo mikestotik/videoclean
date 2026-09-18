@@ -99,7 +99,6 @@ bunx shadcn@latest add <component>                   # новые shadcn-ком�
 - `docs/PARAMS.md` — все параметры пайплайна (CLI/WebUI/doctor).
 - `docs/MODELS.md` — модели: что брать/не брать и почему.
 - `docs/superpowers/specs|plans/` — спеки и планы фич (в .gitignore, не коммитятся).
-- `docs/BUG-001-removal-quality.md` — разбор бага качества удаления.
 
 ## Конвенции
 

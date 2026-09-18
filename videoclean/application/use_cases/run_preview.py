@@ -226,11 +226,32 @@ class RunPreview:
             report["parseMode"] = intent.parse_mode
             self.progress.finish("parse", ", ".join(queries) or "(none)")
 
+        intent_sel = _targets_as_intent(targets)
+        if any(t.kind in {"text_overlay", "watermark"} for t in targets):
+            for detector in self.detectors:
+                cur = float(getattr(detector, "max_box_area", 0.45) or 0.45)
+                detector.max_box_area = max(cur, 0.55)
         self.progress.start("detect", total=len(images))
         used, attempts, raw_tracks = self._discover(images, queries or [t.query for t in targets])
-        selected = select_tracks(raw_tracks, _targets_as_intent(targets), width=manifest.width, height=manifest.height, relax=True)
+        strict = select_tracks(
+            raw_tracks, intent_sel, width=manifest.width, height=manifest.height, relax=False
+        )
+        if strict:
+            selected = strict
+            select_relaxed = False
+        elif req.config.select_relax:
+            selected = select_tracks(
+                raw_tracks, intent_sel, width=manifest.width, height=manifest.height, relax=True
+            )
+            select_relaxed = bool(selected)
+        else:
+            selected = []
+            select_relaxed = False
+        if select_relaxed:
+            for tr in selected:
+                tr.notes = list(tr.notes) + ["relaxed-match"]
         if raw_tracks and not selected:
-            raise PipelineError(explain_unmatched(raw_tracks, _targets_as_intent(targets), manifest.width, manifest.height))
+            raise PipelineError(explain_unmatched(raw_tracks, intent_sel, manifest.width, manifest.height))
         if not raw_tracks:
             raise PipelineError(f"detector found no boxes for queries {queries or [t.query for t in targets]}")
 
@@ -253,9 +274,10 @@ class RunPreview:
                 "tracks": tracks_to_json(selected),
                 "detectorUsed": used,
                 "detectorAttempts": attempts,
+                "selectRelaxed": select_relaxed,
                 "meanMaskCoverage": float(np.mean([f["maskCoverage"] for f in per_frame])) if per_frame else 0.0,
                 "workdir": str(paths.root),
-                "note": "Masks only. Final quality comes from the full run (inpainter + encode).",
+                "note": "Masks only. Final quality comes from the full run (inpainter + encode). Preview always uses sam2 (not sam2-video).",
             }
         )
         (paths.preview_dir / "preview.json").write_text(

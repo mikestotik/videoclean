@@ -12,6 +12,9 @@ export type PreviewManifest = {
   frames: PreviewFrame[]
   meanMaskCoverage?: number
   targets?: { kind: string; query: string }[]
+  parseMode?: string
+  selectRelaxed?: boolean
+  note?: string
   error?: string
 }
 
@@ -39,6 +42,9 @@ export function parsePreviewManifest(data: unknown): PreviewManifest {
     frames,
     meanMaskCoverage: raw.meanMaskCoverage === undefined ? undefined : Number(raw.meanMaskCoverage),
     targets: Array.isArray(raw.targets) ? (raw.targets as { kind: string; query: string }[]) : [],
+    parseMode: raw.parseMode === undefined ? undefined : String(raw.parseMode),
+    selectRelaxed: typeof raw.selectRelaxed === "boolean" ? raw.selectRelaxed : undefined,
+    note: raw.note === undefined ? undefined : String(raw.note),
     error: raw.error === undefined ? undefined : String(raw.error),
   }
 }

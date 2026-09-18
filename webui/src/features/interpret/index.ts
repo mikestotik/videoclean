@@ -4,9 +4,38 @@ import type { Source } from "@/entities/source"
 
 export type InterpretTarget = { kind: string; query: string; where: string | null; motion?: string }
 
-export type InterpretResult = { prompt: string; targets: InterpretTarget[] }
+export type InterpretResult = {
+  prompt: string
+  targets: InterpretTarget[]
+  parseMode?: string
+  defaulted?: boolean
+  visionFrameIndices?: number[]
+  framesUsed?: number[]
+}
 
-type ReportBody = { prompt?: unknown; targets?: unknown }
+type ReportBody = {
+  prompt?: unknown
+  targets?: unknown
+  parseMode?: unknown
+  defaulted?: unknown
+  visionFrameIndices?: unknown
+  framesUsed?: unknown
+}
+
+function parseFrameIndices(value: unknown): number[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const out = value.map((x) => Number(x)).filter((n) => Number.isFinite(n))
+  return out.length ? out : undefined
+}
+
+function parseInterpretMeta(report: ReportBody): Pick<InterpretResult, "parseMode" | "defaulted" | "visionFrameIndices" | "framesUsed"> {
+  return {
+    parseMode: report.parseMode === undefined ? undefined : String(report.parseMode),
+    defaulted: typeof report.defaulted === "boolean" ? report.defaulted : undefined,
+    visionFrameIndices: parseFrameIndices(report.visionFrameIndices),
+    framesUsed: parseFrameIndices(report.framesUsed),
+  }
+}
 
 function parseReportTargets(value: unknown): InterpretTarget[] {
   if (!Array.isArray(value)) return []
@@ -61,6 +90,7 @@ export function useInterpret(source: Source | null) {
         const parsed: InterpretResult = {
           prompt: String(report.prompt ?? prompt),
           targets: parseReportTargets(report.targets),
+          ...parseInterpretMeta(report),
         }
         setResult(parsed)
         setLastJobId(job.id)
@@ -82,6 +112,7 @@ export function useInterpret(source: Source | null) {
       const parsed: InterpretResult = {
         prompt: String(report.prompt ?? ""),
         targets: parseReportTargets(report.targets),
+        ...parseInterpretMeta(report),
       }
       setResult(parsed)
       setLastJobId(jobId)

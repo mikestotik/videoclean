@@ -180,7 +180,9 @@ class PipelineConfig:
     # Detector tuning. keyframes=None keeps the detector's own default (dino 8).
     detector_keyframes: int | None = None
     detector_nms_iou: float = 0.3
-    detector_max_box_area: float = 0.25
+    detector_max_box_area: float = 0.45
+    # When True (default), select_tracks may drop where/ordinal if nothing matches.
+    select_relax: bool = True
     # Template tracker tuning (boxes between keyframes).
     tracker_min_score: float = 0.55
     tracker_max_template_area: float = 0.12
