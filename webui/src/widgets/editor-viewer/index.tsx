@@ -83,9 +83,18 @@ export function EditorViewer({
 
   useEffect(() => {
     const v = videoRef.current
-    if (!v || playingRef.current) return
-    const target = currentFrame / fps
-    if (Math.abs(v.currentTime - target) > 0.4 / fps) v.currentTime = target
+    if (!v) return
+    // Timeline / arrows own the clock while paused; play drives frames via timeupdate.
+    if (!v.paused && playingRef.current) return
+    if (!v.paused) v.pause()
+    const target = currentFrame / Math.max(fps, 0.001)
+    if (Math.abs(v.currentTime - target) > 0.5 / Math.max(fps, 0.001)) {
+      try {
+        v.currentTime = target
+      } catch {
+        // ignore seek before metadata
+      }
+    }
   }, [currentFrame, fps])
 
   const togglePlay = useCallback(() => {
@@ -142,7 +151,16 @@ export function EditorViewer({
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
       {mode === "result" ? (
         resultJobId ? (
-          <Compare inputUrl={videoUrl(source)} jobId={resultJobId} width={width} height={height} />
+          <Compare
+            inputUrl={videoUrl(source)}
+            jobId={resultJobId}
+            width={width}
+            height={height}
+            fps={fps}
+            frameCount={frameCount}
+            currentFrame={currentFrame}
+            onFrameChange={onFrameChange}
+          />
         ) : (
           <div className="flex min-h-48 flex-1 items-center justify-center rounded-lg border border-dashed border-border/80 text-sm text-muted-foreground">
             Результат ещё не готов
@@ -206,6 +224,14 @@ export function EditorViewer({
               preload="auto"
               playsInline
               className="absolute inset-0 h-full w-full object-contain"
+              onLoadedMetadata={() => {
+                const v = videoRef.current
+                if (!v || playingRef.current) return
+                const target = currentFrame / Math.max(fps, 0.001)
+                if (Math.abs(v.currentTime - target) > 0.5 / Math.max(fps, 0.001)) {
+                  v.currentTime = target
+                }
+              }}
               onPlay={() => {
                 playingRef.current = true
               }}

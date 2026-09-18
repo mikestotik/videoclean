@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { Pause, Play } from "lucide-react"
+import { timeToFrameIndex } from "@/entities/frame"
 import { apiUrl } from "@/shared/api/client"
 import { findCachedJob, useEventsOptional } from "@/shared/events"
 import { Button } from "@/shared/ui/button"
@@ -9,9 +10,22 @@ type Props = {
   jobId: string
   width: number
   height: number
+  fps: number
+  frameCount: number
+  currentFrame: number
+  onFrameChange: (frame: number) => void
 }
 
-export function Compare({ inputUrl, jobId, width, height }: Props) {
+export function Compare({
+  inputUrl,
+  jobId,
+  width,
+  height,
+  fps,
+  frameCount,
+  currentFrame,
+  onFrameChange,
+}: Props) {
   const [loaded, setLoaded] = useState<{ jobId: string; url: string } | null>(null)
   const [pos, setPos] = useState(50)
   const [playing, setPlaying] = useState(false)
@@ -19,6 +33,7 @@ export function Compare({ inputUrl, jobId, width, height }: Props) {
   const inputRef = useRef<HTMLVideoElement>(null)
   const outputRef = useRef<HTMLVideoElement>(null)
   const draggingRef = useRef(false)
+  const playingRef = useRef(false)
   const events = useEventsOptional()
   const live = events?.jobs.find((j) => j.id === jobId) ?? findCachedJob(jobId)
   const outputUrl = loaded?.jobId === jobId && loaded.url ? loaded.url : null
@@ -39,25 +54,56 @@ export function Compare({ inputUrl, jobId, width, height }: Props) {
       }
     }
     const onPlay = () => {
+      playingRef.current = true
       setPlaying(true)
       void output.play().catch(() => {})
     }
     const onPause = () => {
+      playingRef.current = false
       setPlaying(false)
       output.pause()
       syncTime()
     }
+    const onTimeUpdate = () => {
+      syncTime()
+      if (!playingRef.current) return
+      onFrameChange(timeToFrameIndex(input.currentTime, fps, Math.max(0, frameCount - 1)))
+    }
     input.addEventListener("play", onPlay)
     input.addEventListener("pause", onPause)
     input.addEventListener("seeked", syncTime)
-    input.addEventListener("timeupdate", syncTime)
+    input.addEventListener("timeupdate", onTimeUpdate)
     return () => {
       input.removeEventListener("play", onPlay)
       input.removeEventListener("pause", onPause)
       input.removeEventListener("seeked", syncTime)
-      input.removeEventListener("timeupdate", syncTime)
+      input.removeEventListener("timeupdate", onTimeUpdate)
     }
-  }, [outputUrl])
+  }, [outputUrl, fps, frameCount, onFrameChange])
+
+  // Timeline / frame state → both preview videos
+  useEffect(() => {
+    const input = inputRef.current
+    const output = outputRef.current
+    if (!input) return
+    if (playingRef.current && !input.paused) return
+    if (!input.paused) input.pause()
+    const target = currentFrame / Math.max(fps, 0.001)
+    if (Math.abs(input.currentTime - target) > 0.5 / Math.max(fps, 0.001)) {
+      try {
+        input.currentTime = target
+      } catch {
+        // ignore seek before metadata
+      }
+    }
+    if (output && Math.abs(output.currentTime - target) > 0.5 / Math.max(fps, 0.001)) {
+      try {
+        output.currentTime = target
+      } catch {
+        // ignore
+      }
+    }
+  }, [currentFrame, fps])
 
   const updatePos = (clientX: number) => {
     const rect = containerRef.current?.getBoundingClientRect()
@@ -92,7 +138,6 @@ export function Compare({ inputUrl, jobId, width, height }: Props) {
             height: `min(100cqh, calc(100cqw * ${height} / ${width}))`,
           }}
           onPointerDown={(e) => {
-            // Drag compare divider from anywhere on the frame (not only the handle).
             if (e.button !== 0) return
             draggingRef.current = true
             e.currentTarget.setPointerCapture(e.pointerId)
@@ -112,6 +157,7 @@ export function Compare({ inputUrl, jobId, width, height }: Props) {
             ref={inputRef}
             src={inputUrl}
             playsInline
+            preload="auto"
             className="pointer-events-none absolute inset-0 h-full w-full object-contain"
           />
           <video
@@ -119,6 +165,7 @@ export function Compare({ inputUrl, jobId, width, height }: Props) {
             src={outputUrl}
             playsInline
             muted
+            preload="auto"
             className="pointer-events-none absolute inset-0 h-full w-full object-contain"
             style={{ clipPath: `inset(0 ${100 - pos}% 0 0)` }}
           />

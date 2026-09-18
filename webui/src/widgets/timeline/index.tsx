@@ -32,6 +32,20 @@ function frameFromClientX(
   return Math.round(t * (frameCount - 1))
 }
 
+function nearestIndex(indexes: number[], frame: number): number | null {
+  if (indexes.length === 0) return null
+  let best = indexes[0]!
+  let bestDist = Math.abs(best - frame)
+  for (const i of indexes) {
+    const d = Math.abs(i - frame)
+    if (d < bestDist) {
+      best = i
+      bestDist = d
+    }
+  }
+  return best
+}
+
 export function Timeline({
   src,
   fps,
@@ -64,9 +78,23 @@ export function Timeline({
   const masked = useMemo(() => new Set(maskedFrames), [maskedFrames])
   const keySet = useMemo(() => new Set(keyframeFrames), [keyframeFrames])
   const indexes = Object.keys(thumbs).map(Number).sort((a, b) => a - b)
+  const focusThumb = nearestIndex(indexes, currentFrame)
   const atKey = keySet.has(currentFrame)
   const playheadPct =
     frameCount > 1 ? `${(currentFrame / (frameCount - 1)) * 100}%` : "0%"
+
+  // Keep filmstrip scrolled to the playhead / nearest thumb.
+  useEffect(() => {
+    const root = thumbsRef.current
+    if (!root || focusThumb == null) return
+    const el = root.querySelector<HTMLElement>(`[data-frame="${focusThumb}"]`)
+    if (!el) return
+    el.scrollIntoView({
+      inline: "center",
+      block: "nearest",
+      behavior: draggingRef.current ? "auto" : "smooth",
+    })
+  }, [focusThumb, currentFrame])
 
   const scrubFromEvent = (clientX: number, el: HTMLElement | null) => {
     if (!el || frameCount <= 0) return
@@ -184,15 +212,19 @@ export function Timeline({
           <button
             key={idx}
             type="button"
+            data-frame={idx}
             className={cn(
               "relative h-14 w-24 shrink-0 overflow-hidden rounded-md border transition-shadow",
-              currentFrame === idx
+              focusThumb === idx
                 ? "border-primary ring-2 ring-primary/40"
                 : "border-transparent hover:border-border",
             )}
             onPointerDown={(e) => {
               e.stopPropagation()
-              startScrub(e, thumbsRef.current)
+              draggingRef.current = true
+              const root = thumbsRef.current
+              if (root) root.setPointerCapture(e.pointerId)
+              onFrameChange(idx)
             }}
             onClick={() => onFrameChange(idx)}
           >
