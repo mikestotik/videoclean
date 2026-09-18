@@ -83,7 +83,7 @@ export function useInterpret(source: Source | null) {
           prompt,
           params: { llm_model: llmModel },
         })
-        await pollJobToCompletion(job.id, undefined, 1000, 600)
+        await pollJobToCompletion(job.id, undefined, { maxSeconds: 600 })
         if (runId !== runIdRef.current) return null
         const report = (await fetchJobReport(job.id)) as ReportBody
         if (runId !== runIdRef.current) return null

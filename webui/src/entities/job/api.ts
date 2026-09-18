@@ -1,4 +1,5 @@
 import { api, apiUrl, ApiError } from "@/shared/api/client"
+import { findCachedJob, subscribeJobs } from "@/shared/events/jobBus"
 import type { Job, MediaProbe } from "./types"
 
 export const listJobs = () => api<Job[]>("/api/jobs")
@@ -107,32 +108,75 @@ export function outputDownloadName(fmt: string, jobId: string): string {
   return `cleaned-${jobId.slice(0, 8)}.${key}`
 }
 
+/**
+ * Wait until a job reaches a terminal state.
+ * Prefers SSE job-list pushes; rare GET /api/jobs/{id} only as a safety net.
+ */
 export async function pollJobToCompletion(
   id: string,
   onProgress?: (j: Job) => void,
-  intervalMs = 1000,
-  maxSeconds = 1800,
+  opts?: { fallbackIntervalMs?: number; maxSeconds?: number },
 ): Promise<Job> {
+  const fallbackIntervalMs = opts?.fallbackIntervalMs ?? 15_000
+  const maxSeconds = opts?.maxSeconds ?? 1800
   const deadline = Date.now() + maxSeconds * 1000
-  for (;;) {
-    let job: Job
-    try {
-      job = await getJob(id)
-    } catch (e) {
-      if (Date.now() >= deadline) throw e
-      await sleep(intervalMs)
-      continue
-    }
-    onProgress?.(job)
-    if (job.state === "COMPLETED") return job
-    if (job.state === "FAILED" || job.state === "CANCELLED") {
-      throw new Error(job.error || `job ${id} ${job.state.toLowerCase()}`)
-    }
-    if (Date.now() >= deadline) throw new Error(`job ${id} poll timed out`)
-    await sleep(intervalMs)
-  }
-}
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+  const settle = (job: Job): "done" | "fail" | "run" => {
+    onProgress?.(job)
+    if (job.state === "COMPLETED") return "done"
+    if (job.state === "FAILED" || job.state === "CANCELLED") return "fail"
+    return "run"
+  }
+
+  try {
+    const first = await getJob(id)
+    const s = settle(first)
+    if (s === "done") return first
+    if (s === "fail") throw new Error(first.error || `job ${id} ${first.state.toLowerCase()}`)
+  } catch (e) {
+    if (Date.now() >= deadline) throw e
+  }
+
+  return new Promise<Job>((resolve, reject) => {
+    let timer: ReturnType<typeof setInterval> | undefined
+    let unsub = () => {}
+
+    const cleanup = () => {
+      unsub()
+      if (timer) clearInterval(timer)
+    }
+    const finishOk = (job: Job) => {
+      cleanup()
+      resolve(job)
+    }
+    const finishErr = (err: unknown) => {
+      cleanup()
+      reject(err instanceof Error ? err : new Error(String(err)))
+    }
+
+    const consider = (job: Job | undefined) => {
+      if (!job) return
+      const s = settle(job)
+      if (s === "done") finishOk(job)
+      else if (s === "fail") finishErr(new Error(job.error || `job ${id} ${job.state.toLowerCase()}`))
+    }
+
+    unsub = subscribeJobs((jobs) => {
+      consider(jobs.find((j) => j.id === id) ?? findCachedJob(id))
+    })
+
+    timer = setInterval(() => {
+      if (Date.now() >= deadline) {
+        finishErr(new Error(`job ${id} wait timed out`))
+        return
+      }
+      void getJob(id)
+        .then((job) => consider(job))
+        .catch((e) => {
+          if (Date.now() >= deadline) finishErr(e)
+        })
+    }, fallbackIntervalMs)
+
+    consider(findCachedJob(id))
+  })
 }

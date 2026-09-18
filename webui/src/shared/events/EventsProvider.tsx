@@ -9,6 +9,7 @@ import {
 } from "react"
 import type { Job } from "@/entities/job"
 import type { Source } from "@/entities/source"
+import { publishJobs } from "./jobBus"
 import { connectEvents } from "./sse"
 import type { EventsStatus, PollSnapshot } from "./types"
 
@@ -37,10 +38,15 @@ export function EventsProvider({ children }: { children: ReactNode }) {
       onStatus: setStatus,
       onSnapshot: (data) => {
         setSnapshot(data)
-        setJobs(data.jobs ?? [])
+        const nextJobs = data.jobs ?? []
+        setJobs(nextJobs)
+        publishJobs(nextJobs)
         setSources(data.sources ?? [])
       },
-      onJobs: setJobs,
+      onJobs: (next) => {
+        setJobs(next)
+        publishJobs(next)
+      },
       onSources: setSources,
       onDownloads: (data) => {
         setSnapshot((prev) =>
