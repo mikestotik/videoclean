@@ -19,15 +19,31 @@ class JobWorker:
         idle_s: float = 0.05,
         build_preview_runner: Callable[..., Any] | None = None,
         build_prompt_runner: Callable[..., Any] | None = None,
+        on_terminal: Callable[[str, str], None] | None = None,
     ) -> None:
         self.data_dir = Path(data_dir)
         self.jobs = jobs
         self.build_runner = build_runner
         self.build_preview_runner = build_preview_runner or build_runner
         self.build_prompt_runner = build_prompt_runner
+        self.on_terminal = on_terminal
         self._idle_s = idle_s
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+
+    def _emit_terminal(self, job_id: str) -> None:
+        if self.on_terminal is None:
+            return
+        row = self.jobs.get(job_id)
+        if row is None:
+            return
+        state = str(row["state"] or "")
+        if state not in {"COMPLETED", "FAILED", "CANCELLED"}:
+            return
+        try:
+            self.on_terminal(job_id, state)
+        except Exception:  # noqa: BLE001 — terminal hooks must not kill the worker
+            return
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -63,6 +79,7 @@ class JobWorker:
             return None
         if self.jobs.is_cancel_requested(job_id):
             self.jobs.upsert(job_id, "CANCELLED", error="cancelled")
+            self._emit_terminal(job_id)
             return None
         now = utc_now().isoformat()
         self.jobs.upsert(
@@ -81,6 +98,7 @@ class JobWorker:
     def _run_one(self, job_id: str) -> None:
         if self.jobs.is_cancel_requested(job_id):
             self.jobs.upsert(job_id, "CANCELLED", error="cancelled")
+            self._emit_terminal(job_id)
             return
         row = self.jobs.get(job_id)
         if row is None:
@@ -105,6 +123,7 @@ class JobWorker:
             report = runner.execute(req, self.data_dir)
         except JobCancelled:
             self.jobs.upsert(job_id, "CANCELLED", error="cancelled")
+            self._emit_terminal(job_id)
             return
         except Exception as exc:  # noqa: BLE001 — queue must isolate job failures
             current = self.jobs.get(job_id)
@@ -114,22 +133,32 @@ class JobWorker:
             if current["state"] in {"FAILED", "CANCELLED"}:
                 if not current["error"]:
                     self.jobs.upsert(job_id, current["state"], error=str(exc)[:500])
+                self._emit_terminal(job_id)
                 return
             if current["state"] != "RUNNING":
+                self._emit_terminal(job_id)
                 return
             if self.jobs.is_cancel_requested(job_id):
                 self.jobs.upsert(job_id, "CANCELLED", error=str(exc)[:500])
             else:
                 self.jobs.upsert(job_id, "FAILED", error=str(exc)[:500])
+            self._emit_terminal(job_id)
             return
         current = self.jobs.get(job_id)
+        if current is not None and current["state"] == "COMPLETED":
+            # RunCleanup already marked COMPLETED.
+            self._emit_terminal(job_id)
+            return
         if current is None or current["state"] != "RUNNING":
+            self._emit_terminal(job_id)
             return
         if self.jobs.is_cancel_requested(job_id):
             self.jobs.upsert(job_id, "CANCELLED", error="cancelled")
+            self._emit_terminal(job_id)
             return
         payload = report if isinstance(report, dict) else None
         self.jobs.upsert(job_id, "COMPLETED", report=payload)
+        self._emit_terminal(job_id)
 
     def _run_preview(self, job_id: str, row, payload: dict) -> None:
         from videoclean.application.use_cases.run_preview import PreviewRequest
@@ -153,21 +182,28 @@ class JobWorker:
             report = runner.execute(req, self.data_dir)
         except JobCancelled:
             self.jobs.upsert(job_id, "CANCELLED", error="cancelled")
+            self._emit_terminal(job_id)
             return
         except Exception as exc:  # noqa: BLE001 — queue must isolate job failures
             current = self.jobs.get(job_id)
             if current is None:
                 return
             if current["state"] in {"FAILED", "CANCELLED"}:
+                self._emit_terminal(job_id)
                 return
             if self.jobs.is_cancel_requested(job_id):
                 self.jobs.upsert(job_id, "CANCELLED", error=str(exc)[:500])
             else:
                 self.jobs.upsert(job_id, "FAILED", error=str(exc)[:800])
+            self._emit_terminal(job_id)
             return
         current = self.jobs.get(job_id)
+        if current is not None and current["state"] == "COMPLETED":
+            self._emit_terminal(job_id)
+            return
         if current is not None and current["state"] == "RUNNING":
             self.jobs.upsert(job_id, "COMPLETED", report=report)
+            self._emit_terminal(job_id)
 
     def _run_package(self, job_id: str, row, payload: dict) -> None:
         from videoclean.composition import build_packager
@@ -256,17 +292,20 @@ class JobWorker:
             }
         except JobCancelled:
             self.jobs.upsert(job_id, "CANCELLED", error="cancelled")
+            self._emit_terminal(job_id)
             return
         except Exception as exc:  # noqa: BLE001 — queue must isolate job failures
             current = self.jobs.get(job_id)
             if current is None:
                 return
             if current["state"] in {"FAILED", "CANCELLED"}:
+                self._emit_terminal(job_id)
                 return
             if self.jobs.is_cancel_requested(job_id):
                 self.jobs.upsert(job_id, "CANCELLED", error=str(exc)[:500])
             else:
                 self.jobs.upsert(job_id, "FAILED", error=str(exc)[:800])
+            self._emit_terminal(job_id)
             return
         current = self.jobs.get(job_id)
         if current is not None and current["state"] == "RUNNING":
@@ -282,6 +321,7 @@ class JobWorker:
                     "started_at": started,
                 },
             )
+            self._emit_terminal(job_id)
 
     def _run_prompt(self, job_id: str, row, payload: dict) -> None:
         from videoclean.application.use_cases.build_prompt import BuildPromptRequest
@@ -307,21 +347,28 @@ class JobWorker:
             report = runner.execute(req, self.data_dir)
         except JobCancelled:
             self.jobs.upsert(job_id, "CANCELLED", error="cancelled")
+            self._emit_terminal(job_id)
             return
         except Exception as exc:  # noqa: BLE001 — queue must isolate job failures
             current = self.jobs.get(job_id)
             if current is None:
                 return
             if current["state"] in {"FAILED", "CANCELLED"}:
+                self._emit_terminal(job_id)
                 return
             if self.jobs.is_cancel_requested(job_id):
                 self.jobs.upsert(job_id, "CANCELLED", error=str(exc)[:500])
             else:
                 self.jobs.upsert(job_id, "FAILED", error=str(exc)[:800])
+            self._emit_terminal(job_id)
             return
         current = self.jobs.get(job_id)
+        if current is not None and current["state"] == "COMPLETED":
+            self._emit_terminal(job_id)
+            return
         if current is not None and current["state"] == "RUNNING":
             self.jobs.upsert(job_id, "COMPLETED", report=report)
+            self._emit_terminal(job_id)
 
     def _config_from_payload(self, payload: dict):
         from videoclean.application.use_cases.manage_jobs import pipeline_config_from_dict

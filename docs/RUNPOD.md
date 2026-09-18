@@ -123,7 +123,13 @@ https://<POD_ID>-7860.proxy.runpod.net
 
 Log in with the UI user/password (HTTP Basic). There is no model fetch until you click Download on **Конфиг**.
 
-API for other services: `POST /api/jobs` (multipart `video` + `prompt`), then poll `GET /api/jobs/{id}` and download `GET /api/jobs/{id}/output`. Auth: `Authorization: Bearer $VIDEOCLEAN_API_TOKEN` (or the UI password if the token is unset). Endpoint map: `GET /api`.
+API for other services (Swagger: `/api/docs`, ReDoc: `/api/redoc`):
+
+1. `POST /api/jobs` multipart: `video` + `prompt` (optional `formats=mp4,webm`, `webhook_url`, `webhook_secret`, `profile`).
+2. Poll `GET /api/jobs/{id}` and/or wait for the terminal webhook (`COMPLETED` / `FAILED`).
+3. Download `GET /api/jobs/{id}/output` (use `?fmt=` when multiple outputs).
+
+Auth: `Authorization: Bearer $VIDEOCLEAN_API_TOKEN` (or the UI password if the token is unset). Absolute webhook URLs need `VIDEOCLEAN_PUBLIC_BASE_URL` (this proxy URL). Index: `GET /api`.
 
 ## 5. Config — download order
 

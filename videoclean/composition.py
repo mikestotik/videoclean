@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from videoclean.adapters.detectors.grounding_dino import DEFAULT_MODEL as DEFAULT_GROUNDING_DINO_MODEL
@@ -360,7 +360,12 @@ def build_packager() -> PackageMedia:
     return PackageMedia(FFmpegMedia())
 
 
-def build_job_worker(data_dir: Path, jobs: JobIndex) -> JobWorker:
+def build_job_worker(
+    data_dir: Path,
+    jobs: JobIndex,
+    *,
+    on_terminal: Callable[[str, str], None] | None = None,
+) -> JobWorker:
     from videoclean.adapters.progress.job_store import ProgressBridge
 
     def factory(cfg, progress, jobs, job_id):
@@ -393,6 +398,7 @@ def build_job_worker(data_dir: Path, jobs: JobIndex) -> JobWorker:
         build_runner=factory,
         build_preview_runner=preview_factory,
         build_prompt_runner=prompt_factory,
+        on_terminal=on_terminal,
     )
 
 

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { getJob } from "@/entities/job"
+import { apiUrl } from "@/shared/api/client"
 
 type Props = {
   inputUrl: string
@@ -21,7 +22,7 @@ export function Compare({ inputUrl, jobId, width, height }: Props) {
     let alive = true
     getJob(jobId)
       .then((j) => {
-        if (alive) setLoaded({ jobId, url: j.output_url ?? "" })
+        if (alive) setLoaded({ jobId, url: apiUrl(j.output_url ?? "") })
       })
       .catch(() => {})
     return () => {

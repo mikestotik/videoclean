@@ -11,11 +11,16 @@ from typing import Any
 import io
 import zipfile
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Security, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+
+from server.api_schema import APP_DESCRIPTION, ErrorBody, Job, JobCreated, apply_public_internal_tags
 
 from videoclean.adapters.models.catalog import (
     add_extra,
@@ -29,6 +34,7 @@ from server.service import (
     VIDEO_SUFFIXES,
     annotations_payload,
     api_token,
+    auth_enabled,
     auth_from_env,
     cancel_downloads,
     default_device,
@@ -71,6 +77,24 @@ _PLACEHOLDER_HTML = """<!doctype html><html lang="en"><meta charset="utf-8">
 </body></html>"""
 
 
+# Docs UIs fetch /openapi.json via JS without the browser Basic prompt credentials.
+_AUTH_EXEMPT_PATHS = frozenset(
+    {
+        "/health",
+        "/openapi.json",
+        "/api/docs",
+        "/api/redoc",
+    }
+)
+
+
+def _auth_exempt(path: str) -> bool:
+    if path in _AUTH_EXEMPT_PATHS:
+        return True
+    # Swagger UI / ReDoc static assets under the docs URLs.
+    return path.startswith("/api/docs/") or path.startswith("/api/redoc/")
+
+
 class BasicOrBearerAuth(BaseHTTPMiddleware):
     def __init__(self, app, user: str, password: str, token: str) -> None:
         super().__init__(app)
@@ -79,7 +103,7 @@ class BasicOrBearerAuth(BaseHTTPMiddleware):
         self.token = token
 
     async def dispatch(self, request: Request, call_next):
-        if request.method == "OPTIONS" or request.url.path == "/health":
+        if request.method == "OPTIONS" or _auth_exempt(request.url.path):
             return await call_next(request)
         header = request.headers.get("authorization") or ""
         if self._ok(header):
@@ -113,8 +137,45 @@ class BasicOrBearerAuth(BaseHTTPMiddleware):
 
 
 def create_app(state: AppState) -> FastAPI:
-    app = FastAPI(title="videoclean", docs_url="/api/docs", redoc_url=None)
+    try:
+        from importlib.metadata import version as pkg_version
+
+        app_version = pkg_version("videoclean")
+    except Exception:  # noqa: BLE001
+        app_version = "0.1.0"
+
+    app = FastAPI(
+        title="VideoClean",
+        version=app_version,
+        description=APP_DESCRIPTION,
+        docs_url="/api/docs",
+        redoc_url="/api/redoc",
+        swagger_ui_parameters={"persistAuthorization": True},
+    )
     app.state.vc = state
+    bearer_scheme = HTTPBearer(auto_error=False)
+
+    def _openapi() -> dict[str, Any]:
+        if app.openapi_schema:
+            return app.openapi_schema
+        schema = get_openapi(
+            title=app.title,
+            version=app.version,
+            description=app.description,
+            routes=app.routes,
+        )
+        schema.setdefault("components", {}).setdefault("securitySchemes", {})["BearerAuth"] = {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "API token",
+            "description": "VIDEOCLEAN_API_TOKEN (or UI password if the token is unset).",
+        }
+        schema["security"] = [{"BearerAuth": []}]
+        app.openapi_schema = apply_public_internal_tags(schema)
+        return app.openapi_schema
+
+    app.openapi = _openapi  # type: ignore[method-assign]
+
     origins = [
         item.strip()
         for item in str(os.environ.get("VIDEOCLEAN_CORS") or "*").split(",")
@@ -128,8 +189,9 @@ def create_app(state: AppState) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    user, password = auth_from_env()
-    app.add_middleware(BasicOrBearerAuth, user=user, password=password, token=api_token())
+    if auth_enabled():
+        user, password = auth_from_env()
+        app.add_middleware(BasicOrBearerAuth, user=user, password=password, token=api_token())
     if DIST_DIR.is_dir():
         app.mount("/assets", StaticFiles(directory=str(DIST_DIR / "assets")), name="assets")
 
@@ -142,8 +204,12 @@ def create_app(state: AppState) -> FastAPI:
             raise HTTPException(404, f"unknown source {source_id}")
         return row
 
-    @app.get("/health")
+    @app.get("/health", summary="Liveness probe (no auth)")
     def health():
+        return {"ok": True}
+
+    @app.get("/api/auth-check", include_in_schema=False)
+    def auth_check(_creds: HTTPAuthorizationCredentials | None = Security(bearer_scheme)):
         return {"ok": True}
 
     def _spa_index():
@@ -152,60 +218,47 @@ def create_app(state: AppState) -> FastAPI:
             return spa_index.read_text(encoding="utf-8")
         return _PLACEHOLDER_HTML
 
-    @app.get("/", response_class=HTMLResponse)
-    @app.get("/settings", response_class=HTMLResponse)
-    @app.get("/config", response_class=HTMLResponse)
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    @app.get("/settings", response_class=HTMLResponse, include_in_schema=False)
+    @app.get("/config", response_class=HTMLResponse, include_in_schema=False)
     def index():
         return _spa_index()
 
-    @app.get("/v/{source_id}", response_class=HTMLResponse)
+    @app.get("/v/{source_id}", response_class=HTMLResponse, include_in_schema=False)
     def workspace_source(source_id: str):
         return _spa_index()
 
-    @app.get("/api")
+    @app.get("/api", summary="API index")
     def api_index():
         return {
-            "ui": ["/", "/settings", "/v/{source_id}", "/config"],
+            "docs": "/api/docs",
+            "redoc": "/api/redoc",
+            "openapi": "/openapi.json",
             "auth": {
                 "browser": "HTTP Basic (VIDEOCLEAN_UI_USER / VIDEOCLEAN_UI_PASSWORD)",
                 "api": "Authorization: Bearer VIDEOCLEAN_API_TOKEN (falls back to UI password)",
             },
-            "sources": {
-                "POST /api/sources": "multipart video upload",
-                "GET /api/sources": "list",
-                "GET /api/sources/{id}": "detail",
-                "DELETE /api/sources/{id}": "delete (409 if active jobs)",
-                "GET /api/sources/{id}/video": "stream source video",
-                "GET /api/sources/{id}/frames/{n}": "extracted frame jpeg",
-                "PUT/GET/DELETE /api/sources/{id}/masks/{n}": "per-frame annotation mask",
-                "GET /api/sources/{id}/annotations": "list annotated frames",
-            },
-            "jobs": {
-                "POST /api/jobs": "multipart: kind=run|preview|prompt, source_id or video, prompt, pipeline fields, targets/tracks/masks overrides",
+            "public": {
+                "GET /health": "liveness",
+                "GET /api/options": "profiles, devices, formats, catalog defaults",
+                "POST /api/jobs": "one-shot cleanup: video|source_id + prompt; formats; webhook_url",
                 "GET /api/jobs": "list",
-                "GET /api/jobs/{id}": "status",
-                "GET /api/jobs/{id}/output": "download cleaned file when COMPLETED",
-                "GET /api/jobs/{id}/input": "source file",
-                "GET /api/jobs/{id}/probe": "media manifest of the input (fps, frames, size)",
-                "POST /api/jobs/{id}/cancel": "",
-                "POST /api/jobs/{id}/retry": "",
-                "DELETE /api/jobs/{id}": "",
+                "GET /api/jobs/{id}": "poll status",
+                "GET /api/jobs/{id}/output": "download (?fmt=)",
+                "POST /api/jobs/{id}/cancel": "cancel queued/running",
             },
-            "models": {
-                "GET /api/models": "grouped by kind",
-                "POST /api/models/download": '{"id": "detector:grounding-dino"}',
-                "POST /api/models/custom": '{"kind","backend","model_ref"}',
-                "POST /api/models/cancel": "",
+            "webhook": {
+                "fields": ["webhook_url", "webhook_secret"],
+                "events": ["COMPLETED", "FAILED"],
+                "signature": "X-VideoClean-Signature: sha256=<hmac> when webhook_secret set",
+                "absolute_urls": "set VIDEOCLEAN_PUBLIC_BASE_URL",
             },
-            "preview": {
-                "POST /api/preview": "multipart: video + prompt/indices (kind=preview)",
-                "POST /api/preview/from-job": "JSON: reuse input of an existing job",
-                "GET /api/jobs/{id}/preview/{name}": "preview.json or frame artifacts",
-                "PUT /api/jobs/{id}/report/tracks": "save edited tracks + keyframes into job report",
-            },
-            "presets": {
-                "GET/POST /api/presets": "pipeline presets",
-                "DELETE /api/presets/{id}": "",
+            "internal": {
+                "sources": "POST/GET/DELETE /api/sources…",
+                "preview": "POST /api/preview, kind=preview|prompt",
+                "package": "POST /api/jobs/{id}/package",
+                "models": "GET/POST /api/models…",
+                "presets": "GET/POST/DELETE /api/presets",
             },
         }
 
@@ -335,28 +388,52 @@ def create_app(state: AppState) -> FastAPI:
             "device": default_device(),
         }
 
-    @app.get("/api/jobs")
+    @app.get(
+        "/api/jobs",
+        response_model=list[Job],
+        summary="List jobs",
+        responses={401: {"model": ErrorBody}},
+    )
     def list_jobs(state_filter: str | None = None, st: AppState = Depends(get_state)):
         filt = None if not state_filter or state_filter == "all" else state_filter
         return [job_dict(st, row) for row in st.jobs.list_jobs_full(limit=100, state=filt)]
 
-    @app.get("/api/jobs/{job_id}")
+    @app.get(
+        "/api/jobs/{job_id}",
+        response_model=Job,
+        summary="Get job status",
+        responses={401: {"model": ErrorBody}, 404: {"model": ErrorBody}},
+    )
     def get_job(job_id: str, st: AppState = Depends(get_state)):
         row = st.jobs.get(job_id)
         if row is None:
             raise HTTPException(404, f"unknown job {job_id}")
         return job_dict(st, row)
 
-    @app.post("/api/jobs")
+    @app.post(
+        "/api/jobs",
+        response_model=JobCreated,
+        status_code=201,
+        summary="Start cleanup job (one-shot)",
+        responses={400: {"model": ErrorBody}, 401: {"model": ErrorBody}, 404: {"model": ErrorBody}},
+    )
     async def create_job(
         st: AppState = Depends(get_state),
-        video: UploadFile | None = File(None),
-        prompt: str = Form(""),
-        kind: str = Form("run"),
-        source_id: str = Form(""),
-        targets: str = Form(""),
-        tracks: str = Form(""),
-        masks: str = Form(""),
+        video: UploadFile | None = File(
+            None, description="Video file (required unless source_id). Public path: upload here."
+        ),
+        prompt: str = Form(
+            "",
+            description="What to remove (required for kind=run unless tracks/masks override).",
+        ),
+        kind: str = Form(
+            "run",
+            description="run (public) | preview | prompt. Public contract uses run.",
+        ),
+        source_id: str = Form("", description="Library source id instead of uploading video."),
+        targets: str = Form("", description="JSON targets override (advanced)."),
+        tracks: str = Form("", description="JSON tracks override (advanced)."),
+        masks: str = Form("", description="Comma-separated annotated frame indices (advanced)."),
         mode: str = Form(""),
         start: str = Form(""),
         count: str = Form(""),
@@ -368,7 +445,20 @@ def create_app(state: AppState) -> FastAPI:
         keep_workdir: str = Form(""),
         min_mask_coverage: str = Form(""),
         verify_max_coverage: str = Form(""),
-        formats: str = Form(""),
+        formats: str = Form(
+            "",
+            description="Delivery formats, comma-separated (default mp4). Example: mp4,webm",
+        ),
+        webhook_url: str = Form(
+            "",
+            description="Optional callback URL; POST JSON on COMPLETED or FAILED (kind=run).",
+        ),
+        webhook_secret: str = Form(
+            "",
+            description="Optional HMAC secret; sets X-VideoClean-Signature: sha256=<hex>.",
+        ),
+        webm_crf: str = Form("", description="WebM CRF when packaging webm (default 32)."),
+        segment_seconds: str = Form("", description="HLS/DASH segment length in seconds (default 6)."),
         device: str = Form(""),
         detector: str = Form(""),
         segmenter: str = Form(""),
@@ -396,7 +486,7 @@ def create_app(state: AppState) -> FastAPI:
         propainter_neighbor_length: str = Form(""),
         propainter_subvideo_length: str = Form(""),
         propainter_raft_iter: str = Form(""),
-        profile: str = Form(""),
+        profile: str = Form("", description="fast | balanced | quality | custom"),
         verify_max_passes: str = Form(""),
         inpaint_workers: str = Form(""),
         inpaint_chunk_overlap: str = Form(""),
@@ -424,6 +514,8 @@ def create_app(state: AppState) -> FastAPI:
             "min_mask_coverage": min_mask_coverage,
             "verify_max_coverage": verify_max_coverage,
             "formats": formats,
+            "webm_crf": webm_crf,
+            "segment_seconds": segment_seconds,
             "device": device,
             "detector": detector,
             "segmenter": segmenter,
@@ -459,6 +551,10 @@ def create_app(state: AppState) -> FastAPI:
             "overwrite": overwrite,
         }
         payload = serialize_clean_form({k: v for k, v in fields.items() if v != ""})
+        if (webhook_url or "").strip():
+            payload["webhook_url"] = webhook_url.strip()
+        if (webhook_secret or "").strip():
+            payload["webhook_secret"] = webhook_secret.strip()
         if (mask_policy or "").strip():
             policy = mask_policy.strip().lower()
             if policy not in {"static", "propagate"}:
@@ -593,10 +689,14 @@ def create_app(state: AppState) -> FastAPI:
         body["parent_job_id"] = job_id
         return JSONResponse(body, status_code=201)
 
-    @app.get("/api/jobs/{job_id}/output")
+    @app.get(
+        "/api/jobs/{job_id}/output",
+        summary="Download cleaned output",
+        responses={401: {"model": ErrorBody}, 404: {"model": ErrorBody}, 409: {"model": ErrorBody}},
+    )
     def job_output(
         job_id: str,
-        fmt: str | None = Query(None),
+        fmt: str | None = Query(None, description="Delivery format key from job.outputs (e.g. mp4, webm)"),
         st: AppState = Depends(get_state),
     ):
         row = st.jobs.get(job_id)
@@ -758,7 +858,12 @@ def create_app(state: AppState) -> FastAPI:
             "frame_count": m.frame_count,
         }
 
-    @app.post("/api/jobs/{job_id}/cancel")
+    @app.post(
+        "/api/jobs/{job_id}/cancel",
+        response_model=Job,
+        summary="Cancel a queued or running job",
+        responses={401: {"model": ErrorBody}, 404: {"model": ErrorBody}},
+    )
     def cancel_job(job_id: str, st: AppState = Depends(get_state)):
         row = st.jobs.get(job_id)
         if row is None:
@@ -879,7 +984,11 @@ def create_app(state: AppState) -> FastAPI:
     def doctor(force: bool = False):
         return doctor_payload(force=force)
 
-    @app.get("/api/options")
+    @app.get(
+        "/api/options",
+        summary="Profiles, devices, formats, catalog defaults",
+        responses={401: {"model": ErrorBody}},
+    )
     def options(st: AppState = Depends(get_state)):
         return options_payload(st)
 

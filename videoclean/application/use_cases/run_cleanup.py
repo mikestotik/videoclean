@@ -31,7 +31,7 @@ from videoclean.application.verify_quality import (
     or_masks,
     residual_unchanged_mask,
 )
-from videoclean.domain.formats import resolve_dest
+from videoclean.domain.formats import parse_formats, resolve_dest
 from videoclean.domain.intent import Intent, Target
 from videoclean.domain.tracks import Detection, Track, interpolate_gaps, tracks_from_json, tracks_to_json
 
@@ -436,27 +436,36 @@ class RunCleanup:
             shutil.copy2(mezz_work, mezz)
         self.progress.finish("encode", mezz.name)
 
-        # Delivery formats are packaged on demand; always emit baseline mp4 for playback.
-        self.progress.start("package", total=1, detail="mp4")
+        # Always keep baseline mp4; also package any extra formats requested on this run.
+        requested = parse_formats(cfg.formats or ["mp4"])
+        if "mp4" not in requested:
+            # Baseline mp4 stays available for playback / mezzanine consumers.
+            delivery = ["mp4", *requested]
+        else:
+            delivery = list(requested)
+        self.progress.start("package", total=len(delivery), detail=delivery[0])
         outputs: dict[str, str] = {}
-        dest = resolve_dest(req.output_path, "mp4", ["mp4"])
-        if dest.exists():
-            if dest.is_dir():
-                shutil.rmtree(dest)
-            else:
-                dest.unlink()
-        artifact = self.media.package(
-            mezz,
-            dest,
-            "mp4",
-            width=manifest.width,
-            height=manifest.height,
-            fps=manifest.fps,
-            log_file=paths.ffmpeg_log,
-        )
-        outputs["mp4"] = str(artifact)
-        self.progress.tick("package", 1, 1, "mp4")
-        self.progress.finish("package", "mp4")
+        for i, fmt in enumerate(delivery, start=1):
+            dest = resolve_dest(req.output_path, fmt, delivery)
+            if dest.exists():
+                if dest.is_dir():
+                    shutil.rmtree(dest)
+                else:
+                    dest.unlink()
+            artifact = self.media.package(
+                mezz,
+                dest,
+                fmt,
+                width=manifest.width,
+                height=manifest.height,
+                fps=manifest.fps,
+                log_file=paths.ffmpeg_log,
+                segment_seconds=int(getattr(cfg, "segment_seconds", 6) or 6),
+                webm_crf=int(getattr(cfg, "webm_crf", 32) or 32),
+            )
+            outputs[fmt] = str(artifact)
+            self.progress.tick("package", i, len(delivery), fmt)
+        self.progress.finish("package", ",".join(delivery))
 
         self.progress.start("report")
         report.update(
@@ -479,7 +488,7 @@ class RunCleanup:
                     for d in detections
                 ],
                 "mezzanine": str(mezz),
-                "formats": ["mp4"],
+                "formats": delivery,
                 "outputs": outputs,
                 "output": next(iter(outputs.values())),
                 "workdir": str(paths.root),

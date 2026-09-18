@@ -151,6 +151,9 @@ class PipelineConfig:
     llm_base_url: str = ""
     llm_api_key: str = ""
     formats: list[str] = field(default_factory=lambda: ["mp4"])
+    # Delivery packaging knobs (used when formats include webm / HLS / DASH).
+    webm_crf: int = 32
+    segment_seconds: int = 6
     allow_download: bool = False
     verify: bool = True
     mask_dilate_px: int = 3
@@ -251,6 +254,12 @@ class PipelineConfig:
             raise PipelineError(f"--llm must be {' | '.join(LLM_PLACES)}, got {self.llm_place!r}")
         self.llm_place = place
         self.formats = parse_formats(self.formats)
+        if int(self.webm_crf) < 0:
+            raise PipelineError(f"--webm-crf must be >= 0, got {self.webm_crf}")
+        self.webm_crf = int(self.webm_crf)
+        if int(self.segment_seconds) < 1:
+            raise PipelineError(f"--segment-seconds must be >= 1, got {self.segment_seconds}")
+        self.segment_seconds = int(self.segment_seconds)
 
 
 @dataclass

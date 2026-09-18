@@ -1,18 +1,56 @@
 services:
-  videoclean:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    image: videoclean-api:local
+    ports:
+      - "${VIDEOCLEAN_PORT:-7860}:7860"
+    environment:
+      VIDEOCLEAN_AUTH: "${VIDEOCLEAN_AUTH:-off}"
+      VIDEOCLEAN_CORS: "${VIDEOCLEAN_CORS:-*}"
+      VIDEOCLEAN_DATA_DIR: /root/.videoclean
+      HF_HOME: /root/.cache/huggingface
+      VIDEOCLEAN_PORT: "7860"
+      VIDEOCLEAN_UI_USER: "${VIDEOCLEAN_UI_USER:-admin}"
+      VIDEOCLEAN_UI_PASSWORD: "${VIDEOCLEAN_UI_PASSWORD:-}"
+      VIDEOCLEAN_API_TOKEN: "${VIDEOCLEAN_API_TOKEN:-}"
+    volumes:
+      - videoclean-data:/root/.videoclean
+      - hf-cache:/root/.cache/huggingface
+    gpus: all
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        # Browser-reachable API origin (not http://api:7860).
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:7860}
+    image: videoclean-web:local
+    ports:
+      - "${VIDEOCLEAN_WEB_PORT:-8080}:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  # One-box (RunPod-style): api + embedded static UI.
+  monolith:
+    profiles: ["monolith"]
     build:
       context: .
       dockerfile: Dockerfile
     image: videoclean:local
     ports:
       - "${VIDEOCLEAN_PORT:-7860}:7860"
-    # Copy .env.example to .env and set VIDEOCLEAN_UI_PASSWORD.
-    env_file:
-      - .env
     environment:
+      VIDEOCLEAN_AUTH: "${VIDEOCLEAN_AUTH:-off}"
       VIDEOCLEAN_DATA_DIR: /root/.videoclean
       HF_HOME: /root/.cache/huggingface
       VIDEOCLEAN_PORT: "7860"
+      VIDEOCLEAN_UI_USER: "${VIDEOCLEAN_UI_USER:-admin}"
+      VIDEOCLEAN_UI_PASSWORD: "${VIDEOCLEAN_UI_PASSWORD:-}"
     volumes:
       - videoclean-data:/root/.videoclean
       - hf-cache:/root/.cache/huggingface

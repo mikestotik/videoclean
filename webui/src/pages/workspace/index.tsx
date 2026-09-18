@@ -18,7 +18,7 @@ import { useInterpret, type InterpretTarget } from "@features/interpret"
 import { fetchJobReport, getJob, type Job } from "@/entities/job"
 import { previewArtifactUrl } from "@/entities/preview"
 import type { TargetKind, TargetRow } from "@/entities/targets"
-import { getSource, type Source } from "@/entities/source"
+import { getSource, videoUrl, type Source } from "@/entities/source"
 import { formatTimecode } from "@/shared/lib/format"
 import { Timecode } from "@/shared/ui/timecode"
 import { ToggleGroup, ToggleGroupItem } from "@/shared/ui/toggle-group"
@@ -419,7 +419,7 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
           </div>
           <div className="col-start-2 row-start-2 min-h-0 min-w-0 border-t border-border/80 bg-card/30 px-3 py-2">
             <Timeline
-              src={source.video_url}
+              src={videoUrl(source)}
               fps={probe.fps}
               frameCount={probe.frame_count}
               currentFrame={currentFrame}

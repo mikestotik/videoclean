@@ -141,6 +141,47 @@ def test_run_cleanup_with_fakes(tmp_path: Path):
     assert report["inpainter"] == "lama"
     assert report["media"] == "ffmpeg"
     assert out.is_file()
+    assert report["formats"] == ["mp4"]
+    assert "mp4" in report["outputs"]
+
+
+def test_run_cleanup_packages_requested_formats(tmp_path: Path):
+    src = tmp_path / "in.mp4"
+    src.write_bytes(b"fake")
+    out = tmp_path / "cleaned.mp4"
+    frame = np.zeros((8, 8, 3), dtype=np.uint8)
+
+    uc = RunCleanup(
+        media=FakeMedia(),
+        parser=FakeParser(),
+        detectors=[FakeDetector()],
+        segmenter=FakeSegmenter(),
+        inpainter=FakeInpainter(),
+        jobs=FakeJobs(),
+        progress=SilentProgress(),
+        new_job_id=lambda: "job-fmt",
+        make_paths=JobPaths.create,
+        utc_now=lambda: __import__("datetime").datetime(2026, 1, 1),
+        read_image=lambda path: frame,
+        write_image=lambda path, image: path.write_bytes(b"img"),
+    )
+    req = RunCleanupRequest(
+        input_path=src,
+        output_path=out,
+        prompt="remove logo",
+        config=PipelineConfig(
+            detectors=["grounding-dino"],
+            formats=["mp4", "webm"],
+            verify=False,
+        ),
+        overwrite=True,
+        keep_workdir=True,
+    )
+    report = uc.execute(req, tmp_path)
+    assert report["state"] == "COMPLETED"
+    assert report["formats"] == ["mp4", "webm"]
+    assert set(report["outputs"]) == {"mp4", "webm"}
+    assert Path(report["outputs"]["webm"]).is_file()
 
 
 class BoomDetector:

@@ -7,8 +7,8 @@ CLI + WebUI для удаления объектов/текста/логотип
 | Контур | Путь | Что это |
 |---|---|---|
 | library | `videoclean/` | Python-библиотека, Clean Architecture |
-| server  | `server/`    | FastAPI-хост WebUI и job-воркера |
-| webui   | `webui/`     | React-фронт (Vite + FSD), билд отдаёт server |
+| server  | `server/`    | FastAPI API + job-воркер (опционально раздаёт static) |
+| webui   | `webui/`     | React-фронт (Vite + FSD); в split-деплое — отдельный nginx-образ |
 
 ### library: `videoclean/` (Clean Architecture)
 
@@ -48,12 +48,16 @@ UI собирается ТОЛЬКО из shadcn-компонентов (`bunx s
 
 ```bash
 make setup    # разовая установка: uv sync + bun install
-make dev      # дев: FastAPI :7860 + vite hot-reload :5173 (proxy /api)
-make serve    # прод: FastAPI на :7860, отдаёт server/static_dist/
+make dev      # дев: FastAPI :7860 + vite hot-reload :5173 (proxy /api); VIDEOCLEAN_AUTH=off
+make serve    # локальный one-box: FastAPI :7860 + static_dist
 make web      # собрать фронт → server/static_dist/
+make docker   # образы api + web (split)
+make compose-up  # docker compose: api :7860 + web :8080
 make test     # pytest
 make lint     # eslint + tsc для webui
 ```
+
+Split-деплой (разные инстансы): `Dockerfile.api` + `Dockerfile.web`, `VITE_API_BASE_URL` (URL API глазами браузера), на внутреннем контуре `VIDEOCLEAN_AUTH=off`. One-box: `docker compose --profile monolith up` или `make docker-monolith`.
 
 Те же команды напрямую:
 

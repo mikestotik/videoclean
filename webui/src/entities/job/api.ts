@@ -1,4 +1,4 @@
-import { api } from "@/shared/api/client"
+import { api, apiUrl, ApiError } from "@/shared/api/client"
 import type { Job, MediaProbe } from "./types"
 
 export const listJobs = () => api<{ jobs: Job[] }>("/api/poll").then((r) => r.jobs)
@@ -76,7 +76,7 @@ export function packageJob(jobId: string, fields: PackageJobFields): Promise<Job
 }
 
 export async function downloadJobOutput(url: string, filename: string): Promise<void> {
-  const res = await fetch(url)
+  const res = await fetch(apiUrl(url))
   if (!res.ok) {
     let message = `${res.status} ${res.statusText}`
     try {

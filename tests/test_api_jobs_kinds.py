@@ -65,6 +65,32 @@ def test_run_from_source_with_tracks_override(client):
     assert Path(payload["input_path"]).parent.name == src["id"], "input lives under the source dir"
 
 
+def test_run_stores_webhook_and_formats(client):
+    client, state, tmp_path = client
+    src = _source(client, tmp_path)
+    resp = client.post(
+        "/api/jobs",
+        data={
+            "kind": "run",
+            "source_id": src["id"],
+            "prompt": "remove logo",
+            "formats": "mp4,webm",
+            "webhook_url": "https://example.test/hook",
+            "webhook_secret": "s3cret",
+            "webm_crf": "28",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["poll"] == f"/api/jobs/{body['id']}"
+    assert body["download"]
+    payload = _payload(state.jobs.get(body["id"]))
+    assert payload["formats"] == ["mp4", "webm"]
+    assert payload["webhook_url"] == "https://example.test/hook"
+    assert payload["webhook_secret"] == "s3cret"
+    assert payload["webm_crf"] == 28
+
+
 def test_overrides_are_mutually_exclusive(client):
     client, state, tmp_path = client
     src = _source(client, tmp_path)

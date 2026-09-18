@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { timeToFrameIndex } from "@/entities/frame"
-import type { Source } from "@/entities/source"
+import { videoUrl, type Source } from "@/entities/source"
 import type { Tool } from "@/entities/annotation"
 import type { useAnnotate } from "@/features/annotate"
 import { Brush, Eraser, Minus, Plus, Trash, Undo2 } from "lucide-react"
@@ -142,7 +142,7 @@ export function EditorViewer({
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
       {mode === "result" ? (
         resultJobId ? (
-          <Compare inputUrl={source.video_url} jobId={resultJobId} width={width} height={height} />
+          <Compare inputUrl={videoUrl(source)} jobId={resultJobId} width={width} height={height} />
         ) : (
           <div className="flex min-h-48 flex-1 items-center justify-center rounded-lg border border-dashed border-border/80 text-sm text-muted-foreground">
             Результат ещё не готов
@@ -202,7 +202,7 @@ export function EditorViewer({
           >
             <video
               ref={videoRef}
-              src={source.video_url}
+              src={videoUrl(source)}
               preload="auto"
               playsInline
               className="absolute inset-0 h-full w-full object-contain"

@@ -135,6 +135,11 @@ WebUI: панель «Превью» на рабочей странице. Кн�
 | `keep_workdir` | Сохранить рабочую папку job'а (кадры, маски, инпейнт) | `1`/`0` |
 | `min_mask_coverage` | Минимальная средняя доля кадра под маской, иначе job падает | float, дефолт `0.0004` |
 | `verify_max_coverage` | Потолок leftover-покрытия; выше — re-inpaint пропускается | float, дефолт `0.12` |
-| `formats` | Выходные контейнеры через запятую | `mp4,mov,mkv,webm`, дефолт `mp4` |
+| `formats` | Выходные контейнеры через запятую; для `kind=run` пакуются в том же job до `COMPLETED` | `mp4,mov,mkv,webm,hls-fmp4,…`, дефолт `mp4` |
+| `webhook_url` | Callback URL: `POST` JSON при `COMPLETED`/`FAILED` (`kind=run`) | HTTPS/HTTP URL |
+| `webhook_secret` | HMAC-SHA256 тела; заголовок `X-VideoClean-Signature: sha256=<hex>` | строка |
+| `webm_crf` / `segment_seconds` | Параметры упаковки webm / HLS/DASH | int |
+
+Интерактивная схема: `/api/docs` (Swagger), `/api/redoc`. Публичный happy path и auth — в описании OpenAPI и в `GET /api`.
 
 Источники (`POST/GET/DELETE /api/sources/{id}`), покадровые маски-аннотации (`PUT/GET/DELETE /api/sources/{id}/masks/{n}`) и пресеты пайплайна (`GET/POST/DELETE /api/presets`, хранятся в `data_dir/presets.json`) — см. индекс `GET /api`.

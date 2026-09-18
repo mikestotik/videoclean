@@ -44,16 +44,25 @@ def _profiles_for_options(device: str) -> list[dict[str, Any]]:
     return profiles_payload(device)
 
 
+def auth_enabled(env: Mapping[str, str] | None = None) -> bool:
+    """Return False when VIDEOCLEAN_AUTH is off/0/false/no (internal contour)."""
+    env = os.environ if env is None else env
+    raw = str(env.get("VIDEOCLEAN_AUTH") or "on").strip().lower()
+    return raw not in {"off", "0", "false", "no"}
+
+
 def auth_from_env(env: Mapping[str, str] | None = None) -> tuple[str, str]:
     env = os.environ if env is None else env
+    user = str(env.get("VIDEOCLEAN_UI_USER") or "admin").strip() or "admin"
     password = str(env.get("VIDEOCLEAN_UI_PASSWORD") or "").strip()
+    if not auth_enabled(env):
+        return (user, password or "off")
     if not password:
         raise RuntimeError(
-            "VIDEOCLEAN_UI_PASSWORD is required to launch the UI "
+            "VIDEOCLEAN_UI_PASSWORD is required when VIDEOCLEAN_AUTH is on "
             "(safer default for RunPod). Set VIDEOCLEAN_UI_USER and "
-            "VIDEOCLEAN_UI_PASSWORD before starting."
+            "VIDEOCLEAN_UI_PASSWORD, or VIDEOCLEAN_AUTH=off for internal."
         )
-    user = str(env.get("VIDEOCLEAN_UI_USER") or "admin").strip() or "admin"
     return (user, password)
 
 
@@ -62,6 +71,8 @@ def api_token(env: Mapping[str, str] | None = None) -> str:
     token = str(env.get("VIDEOCLEAN_API_TOKEN") or "").strip()
     if token:
         return token
+    if not auth_enabled(env):
+        return ""
     return auth_from_env(env)[1]
 
 
@@ -109,6 +120,10 @@ def serialize_clean_form(payload: Mapping[str, Any] | None = None) -> dict[str, 
             for f in str(data.get("formats") or data.get("fmt") or "mp4").split(",")
             if f.strip()
         ] or ["mp4"],
+        "webm_crf": int(data["webm_crf"]) if str(data.get("webm_crf") or "").strip() else 32,
+        "segment_seconds": (
+            int(data["segment_seconds"]) if str(data.get("segment_seconds") or "").strip() else 6
+        ),
         "llm_base_url": str(data.get("llm_base_url") or "").strip(),
         "llm_api_key": str(data.get("llm_api_key") or "").strip(),
         "keep_workdir": _as_bool(data.get("keep_workdir"), False),

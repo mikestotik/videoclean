@@ -183,29 +183,30 @@ uv run videoclean preview \
 
 Артефакты: `{кадр}_boxes.jpg`, `{кадр}_mask.jpg`, `preview.json`. Подмена LLM-таргетов своими и полный прогон с ними: `--queries "text [bottom], logo"` и `--targets_override` (WebUI-панель «Превью»). Подробнее: docs/PARAMS.md.
 
-## UI (FastAPI) и RunPod
+## UI / API и деплой
 
-Порт `7860` (`VIDEOCLEAN_PORT`). Логин HTTP Basic: `VIDEOCLEAN_UI_USER` + `VIDEOCLEAN_UI_PASSWORD` (пароль обязателен). Экраны: рабочая (плеер + филмстрип кадров, мультивыбор, превью масок на выделении, таргеты, полный прогон, история джобов) и конфиг (doctor, модели по категориям).
-
-Структура репозитория и правила слоёв — [AGENTS.md](AGENTS.md): `videoclean/` — библиотека (Clean Architecture), `server/` — FastAPI-хост, `webui/` — React-фронт (FSD, shadcn).
+**Split (CI/CD, разные инстансы):** `api` (:7860) + `web` nginx (:8080).
 
 ```bash
-make setup                              # разовая установка (uv + bun)
-make serve                              # UI на http://127.0.0.1:7860 (admin/admin)
-make dev                                # дев-режим: FastAPI + vite hot-reload
-make test                               # pytest
+cp .env.example .env          # VIDEOCLEAN_AUTH=off на внутреннем контуре
+make docker                   # videoclean-api + videoclean-web
+docker compose up --build     # web открыть на :8080; VITE_API_BASE_URL — URL API для браузера
 ```
 
-UI собирается из `webui/` и раздаётся из `server/static_dist/` (в git лежит собранная версия). Пересборка фронта:
+**Локально:**
 
 ```bash
-cd webui && bun install && bun run build   # vite build → server/static_dist/
-bun run dev                                 # dev-режим, proxy /api → :7860
+make setup
+make serve                    # one-box :7860 (AUTH=off в make по умолчанию)
+make dev                      # api :7860 + vite :5173 (proxy /api)
+make test
 ```
 
-Внешний API (тот же процесс): `POST /api/jobs` multipart `video` + `prompt`, статус `GET /api/jobs/{id}`, файл `GET /api/jobs/{id}/output`, превью на существующем видео `POST /api/preview/from-job` (JSON: `job_id`, `indices`, `prompt`/`targets`), манифест `GET /api/jobs/{id}/probe`. Заголовок `Authorization: Bearer $VIDEOCLEAN_API_TOKEN` (если токен не задан, сработает пароль UI). Карта: `GET /api`.
+При `VIDEOCLEAN_AUTH=on` нужны Basic (`VIDEOCLEAN_UI_USER` / `VIDEOCLEAN_UI_PASSWORD`) или Bearer `VIDEOCLEAN_API_TOKEN`. Swagger: `/api/docs`.
 
-Docker и деплой на RTX 4090: [docs/RUNPOD.md](docs/RUNPOD.md). Веса Hugging Face в образ не входят — качаются с экрана Конфиг после старта.
+Структура — [AGENTS.md](AGENTS.md). Фронт: `webui/` → `server/static_dist/` (monolith) или `Dockerfile.web`. One-box: `docker compose --profile monolith up` / [docs/RUNPOD.md](docs/RUNPOD.md).
+
+API: `POST /api/jobs` (`video` + `prompt`), poll `GET /api/jobs/{id}`, download `GET /api/jobs/{id}/output`. Карта: `GET /api`.
 
 ## Код
 

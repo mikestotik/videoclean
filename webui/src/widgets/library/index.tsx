@@ -13,6 +13,7 @@ import {
 } from "lucide-react"
 import { cancelJob, deleteJob, listJobs, retryJob, type Job, type JobKind, type JobState } from "@/entities/job"
 import { deleteSource, listSources, type Source } from "@/entities/source"
+import { apiUrl } from "@/shared/api/client"
 import { usePoll } from "@/shared/hooks/usePoll"
 import { formatTimecode } from "@/shared/lib/format"
 import { Button } from "@/shared/ui/button"
@@ -140,7 +141,7 @@ function JobRow({
           </Button>
         )}
         {job.has_output && (
-          <a href={job.output_url ?? "#"} download aria-label="Скачать">
+          <a href={job.output_url ? apiUrl(job.output_url) : "#"} download aria-label="Скачать">
             <Button size="icon-xs" variant="ghost">
               <Download className="size-3" />
             </Button>

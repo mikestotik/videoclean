@@ -1,4 +1,4 @@
-import { api } from "@/shared/api/client"
+import { api, apiUrl } from "@/shared/api/client"
 import { parseStrokes, type AnnotatedFrame, type Stroke } from "./types"
 
 export const fetchAnnotations = (sourceId: string) =>
@@ -20,4 +20,4 @@ export const deleteMask = (sourceId: string, frame: number) =>
   api<{ ok: boolean }>(`/api/sources/${sourceId}/masks/${frame}`, { method: "DELETE" })
 
 export const maskUrl = (sourceId: string, frame: number) =>
-  `/api/sources/${sourceId}/masks/${frame}`
+  apiUrl(`/api/sources/${sourceId}/masks/${frame}`)
