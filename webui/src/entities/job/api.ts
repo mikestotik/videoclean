@@ -55,6 +55,39 @@ export function submitJob(fields: SubmitJobFields): Promise<Job> {
   return api<Job>("/api/jobs", { method: "POST", body: form })
 }
 
+/** Download a completed job artifact via fetch (keeps same-origin cookies/auth). */
+export async function downloadJobOutput(url: string, filename: string): Promise<void> {
+  const res = await fetch(url)
+  if (!res.ok) {
+    let message = `${res.status} ${res.statusText}`
+    try {
+      const data = await res.json()
+      if (data?.detail) message = String(data.detail)
+    } catch {
+      // keep default
+    }
+    throw new ApiError(res.status, message)
+  }
+  const blob = await res.blob()
+  const objectUrl = URL.createObjectURL(blob)
+  const a = document.createElement("a")
+  a.href = objectUrl
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(objectUrl)
+}
+
+export function outputDownloadName(fmt: string, jobId: string): string {
+  const key = (fmt || "mp4").toLowerCase()
+  if (key === "hls-fmp4" || key === "hls-ts" || key === "dash" || key === "default") {
+    const stem = key === "default" ? "cleaned" : key
+    return `${stem}-${jobId.slice(0, 8)}.zip`
+  }
+  return `cleaned-${jobId.slice(0, 8)}.${key}`
+}
+
 export async function pollJobToCompletion(
   id: string,
   onProgress?: (j: Job) => void,

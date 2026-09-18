@@ -560,9 +560,38 @@ export function InpaintControls({
         onChange={(v) => setRun({ mask_dilate_px: v })}
       />
 
+      {params.run.inpainter === "lama" && (
+        <ParamSlider
+          label={ADVANCED_META.inpaint_workers.label}
+          hint={ADVANCED_META.inpaint_workers.hint}
+          value={advancedNumber(params, "inpaint_workers", 0)}
+          min={ADVANCED_META.inpaint_workers.min ?? 0}
+          max={ADVANCED_META.inpaint_workers.max ?? 16}
+          step={1}
+          disabled={disabled}
+          formatValue={(v) => (v <= 0 ? "авто" : String(v))}
+          onChange={(v) =>
+            onParamsChange({
+              ...params,
+              run: { ...params.run, profile: "custom" },
+              advanced: { ...params.advanced, inpaint_workers: String(v) },
+            })
+          }
+        />
+      )}
+
       {params.run.inpainter === "propainter" && (
         <>
-          {(["propainter_mask_dilation", "propainter_ref_stride", "propainter_neighbor_length", "propainter_subvideo_length", "propainter_raft_iter"] as const).map((key) => {
+          {(
+            [
+              "propainter_mask_dilation",
+              "propainter_ref_stride",
+              "propainter_neighbor_length",
+              "propainter_subvideo_length",
+              "propainter_raft_iter",
+              "inpaint_chunk_overlap",
+            ] as const
+          ).map((key) => {
             const meta = ADVANCED_META[key]
             const raw = Number(params.advanced[key] ?? ADVANCED_DEFAULTS[key] ?? 0)
             return (
@@ -578,6 +607,7 @@ export function InpaintControls({
                 onChange={(v) =>
                   onParamsChange({
                     ...params,
+                    run: { ...params.run, profile: "custom" },
                     advanced: { ...params.advanced, [key]: String(v) },
                   })
                 }
@@ -593,10 +623,28 @@ export function InpaintControls({
         </FieldLabel>
         <Switch
           checked={params.run.verify}
-          onCheckedChange={(checked) => setRun({ verify: checked })}
+          onCheckedChange={(checked) => setRun({ verify: checked }, true)}
           disabled={disabled}
         />
       </div>
+      {params.run.verify && (
+        <ParamSlider
+          label={ADVANCED_META.verify_max_passes.label}
+          hint={ADVANCED_META.verify_max_passes.hint}
+          value={advancedNumber(params, "verify_max_passes", 1)}
+          min={ADVANCED_META.verify_max_passes.min ?? 0}
+          max={ADVANCED_META.verify_max_passes.max ?? 3}
+          step={1}
+          disabled={disabled}
+          onChange={(v) =>
+            onParamsChange({
+              ...params,
+              run: { ...params.run, profile: "custom" },
+              advanced: { ...params.advanced, verify_max_passes: String(v) },
+            })
+          }
+        />
+      )}
       <div className="flex items-center gap-2">
         <FieldLabel className="flex-1" hint={RUN_PARAM_META.keep_workdir.hint}>
           {RUN_PARAM_META.keep_workdir.label}
@@ -634,6 +682,7 @@ export function AdvancedFields({
       advanced: { ...params.advanced, [key]: value },
     })
 
+  // Only knobs that apply regardless of inpainter. ProPainter/LaMa-specific live in InpaintControls.
   const sliderKeys = [
     "detector_threshold",
     "detector_nms_iou",
@@ -644,18 +693,13 @@ export function AdvancedFields({
     "prompt_frame_max",
     "parse_chunk_frames",
     "vision_batch",
-    "verify_max_passes",
-    "inpaint_workers",
-    "inpaint_chunk_overlap",
-    "propainter_mask_dilation",
-    "propainter_ref_stride",
-    "propainter_neighbor_length",
-    "propainter_subvideo_length",
-    "propainter_raft_iter",
   ] as const
 
   return (
     <div className="flex flex-col gap-2 rounded-md border border-border/60 p-2">
+      <p className="text-[11px] text-muted-foreground">
+        Детектор, трекинг и LLM. Параметры LaMa/ProPainter — выше, у инпейнтера.
+      </p>
       <ParamSlider
         label={ADVANCED_META.detector_keyframes.label}
         hint={`${ADVANCED_META.detector_keyframes.hint} 0 = авто.`}
@@ -692,18 +736,30 @@ export function AdvancedFields({
         max={RUN_PARAM_META.min_mask_coverage.max}
         step={RUN_PARAM_META.min_mask_coverage.step}
         disabled={disabled}
-        onChange={(v) => onParamsChange({ ...params, run: { ...params.run, min_mask_coverage: v } })}
+        onChange={(v) =>
+          onParamsChange({
+            ...params,
+            run: { ...params.run, profile: "custom", min_mask_coverage: v },
+          })
+        }
       />
-      <ParamSlider
-        label={RUN_PARAM_META.verify_max_coverage.label}
-        hint={RUN_PARAM_META.verify_max_coverage.hint}
-        value={params.run.verify_max_coverage}
-        min={RUN_PARAM_META.verify_max_coverage.min}
-        max={RUN_PARAM_META.verify_max_coverage.max}
-        step={RUN_PARAM_META.verify_max_coverage.step}
-        disabled={disabled}
-        onChange={(v) => onParamsChange({ ...params, run: { ...params.run, verify_max_coverage: v } })}
-      />
+      {params.run.verify && (
+        <ParamSlider
+          label={RUN_PARAM_META.verify_max_coverage.label}
+          hint={RUN_PARAM_META.verify_max_coverage.hint}
+          value={params.run.verify_max_coverage}
+          min={RUN_PARAM_META.verify_max_coverage.min}
+          max={RUN_PARAM_META.verify_max_coverage.max}
+          step={RUN_PARAM_META.verify_max_coverage.step}
+          disabled={disabled}
+          onChange={(v) =>
+            onParamsChange({
+              ...params,
+              run: { ...params.run, profile: "custom", verify_max_coverage: v },
+            })
+          }
+        />
+      )}
       <div className="flex items-center gap-2 text-xs">
         <FieldLabel className="w-[7.5rem] shrink-0" hint="Свой HF id детектора, если нужен не дефолтный.">
           Модель детектора

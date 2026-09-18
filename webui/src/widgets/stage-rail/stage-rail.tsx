@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react"
 import { useInterpret } from "@features/interpret"
 import { tracksAreFullLength, useDetectRun } from "@features/detect-run"
 import { useInpaintRun } from "@features/inpaint-run"
-import { cancelJob, type Job } from "@/entities/job"
+import { cancelJob, downloadJobOutput, outputDownloadName, type Job } from "@/entities/job"
 import type { Source } from "@/entities/source"
 import { Button } from "@/shared/ui/button"
 import { Label } from "@/shared/ui/label"
@@ -49,6 +49,71 @@ type Props = {
   runAllError?: string
   onOpenConfig?: () => void
   onOpenResult?: () => void
+}
+
+function ResultDownloads({
+  job,
+  wantedFormats,
+  onOpenResult,
+}: {
+  job: Job
+  wantedFormats: string[]
+  onOpenResult?: () => void
+}) {
+  const [busyFmt, setBusyFmt] = useState<string | null>(null)
+  const [dlError, setDlError] = useState("")
+  const entries =
+    job.outputs && Object.keys(job.outputs).length > 0
+      ? Object.entries(job.outputs)
+      : job.output_url
+        ? [["default", job.output_url] as const]
+        : []
+  const built = new Set(entries.map(([fmt]) => fmt))
+  const missing = wantedFormats.filter((f) => !built.has(f))
+
+  const onDownload = async (fmt: string, url: string) => {
+    setDlError("")
+    setBusyFmt(fmt)
+    try {
+      await downloadJobOutput(url, outputDownloadName(fmt, job.id))
+    } catch (e) {
+      setDlError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusyFmt(null)
+    }
+  }
+
+  return (
+    <>
+      <p className="text-xs text-ok">Готово.</p>
+      {missing.length > 0 && (
+        <p className="text-[11px] text-muted-foreground">
+          В этом прогоне нет: {missing.map((f) => FORMAT_META[f]?.label ?? f).join(", ")}.
+          Включите формат выше и снова запустите удаление.
+        </p>
+      )}
+      <div className="flex flex-wrap gap-2">
+        {onOpenResult && (
+          <Button size="sm" variant="outline" onClick={onOpenResult}>
+            Сравнить до/после
+          </Button>
+        )}
+        {entries.map(([fmt, url]) => (
+          <Button
+            key={fmt}
+            size="sm"
+            disabled={busyFmt === fmt}
+            onClick={() => void onDownload(fmt, url)}
+          >
+            {busyFmt === fmt
+              ? "…"
+              : `Скачать ${FORMAT_META[fmt]?.label ?? (fmt === "default" ? "файл" : fmt)}`}
+          </Button>
+        ))}
+      </div>
+      {dlError && <p className="text-xs text-destructive">{dlError}</p>}
+    </>
+  )
 }
 
 export function StageRail({
@@ -496,8 +561,8 @@ export function StageRail({
         onOpenChange={(o) => setStageOpen(5, o)}
       >
         <div className="flex flex-col gap-1.5 text-xs">
-          <FieldLabel hint="Что собрать после удаления. HLS/DASH — пакеты со плейлистом (скачиваются zip).">
-            Форматы вывода
+          <FieldLabel hint="Какие контейнеры собрать при следующем удалении. Уже готовый джоб не перепаковывается сам — нужен новый прогон.">
+            Форматы следующего запуска
           </FieldLabel>
           <div className="flex flex-col gap-1.5">
             {OUTPUT_FORMATS.map((f) => {
@@ -528,31 +593,7 @@ export function StageRail({
           </div>
         </div>
         {resultJob?.state === "COMPLETED" ? (
-          <>
-            <p className="text-xs text-ok">Готово.</p>
-            <div className="flex flex-wrap gap-2">
-              {onOpenResult && (
-                <Button size="sm" variant="outline" onClick={onOpenResult}>
-                  Сравнить до/после
-                </Button>
-              )}
-              {(resultJob.outputs && Object.keys(resultJob.outputs).length > 0
-                ? Object.entries(resultJob.outputs)
-                : resultJob.output_url
-                  ? [["default", resultJob.output_url] as const]
-                  : []
-              ).map(([fmt, url]) => (
-                <Button
-                  key={fmt}
-                  size="sm"
-                  nativeButton={false}
-                  render={<a href={url} download />}
-                >
-                  Скачать {FORMAT_META[fmt]?.label ?? (fmt === "default" ? "файл" : fmt)}
-                </Button>
-              ))}
-            </div>
-          </>
+          <ResultDownloads job={resultJob} wantedFormats={params.run.formats} onOpenResult={onOpenResult} />
         ) : (
           <p className="text-xs text-muted-foreground">Результата ещё нет. Запустите удаление выше.</p>
         )}
