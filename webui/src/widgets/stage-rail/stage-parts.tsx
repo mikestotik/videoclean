@@ -129,6 +129,7 @@ export function StageSection({
   title,
   hint,
   active,
+  done,
   open,
   onOpenChange,
   children,
@@ -137,6 +138,8 @@ export function StageSection({
   title: string
   hint?: string
   active: boolean
+  /** Stage already has a result — accent the step number. */
+  done?: boolean
   open: boolean
   onOpenChange: (open: boolean) => void
   children: React.ReactNode
@@ -157,7 +160,11 @@ export function StageSection({
         <span
           className={cn(
             "flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold tabular-nums relative -top-px",
-            active ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground",
+            done
+              ? "bg-primary text-primary-foreground"
+              : active
+                ? "bg-primary/20 text-primary ring-1 ring-primary/40"
+                : "bg-muted text-muted-foreground",
           )}
         >
           {n}

@@ -68,6 +68,8 @@ export function StageRail({
   const hasMasks = (masks?.length ?? 0) > 0
   const hasPrompt = params.prompt.trim().length > 0
   const hasTargets = enabledTargets(params).length > 0
+  const hasDetectResult = Boolean(detect.manifest) || detect.tracks.length > 0
+  const hasResult = resultJob?.state === "COMPLETED"
   const tracksReady = tracksAreFullLength(detect.enabledTracks, frameCount)
   const canFindMasks =
     !noSource &&
@@ -82,15 +84,30 @@ export function StageRail({
     inpaint.running ||
     (!hasPrompt && !hasMasks && !hasTargets)
 
-  const activeStage = resultJob?.state === "COMPLETED"
+  // Accent numbers for stages that already produced a result; "active" is the next step.
+  const stageDone: Record<number, boolean> = {
+    1: hasPrompt || hasMasks,
+    2: hasTargets || Boolean(interpret.result),
+    3: hasDetectResult,
+    4: hasResult,
+    5: hasResult,
+  }
+
+  const activeStage = hasResult
     ? 5
     : inpaint.running
       ? 4
       : detect.running
         ? 3
-        : interpret.result || params.targets.length > 0
-          ? 2
-          : 1
+        : interpret.running
+          ? 1
+          : hasDetectResult
+            ? 4
+            : hasTargets || Boolean(interpret.result)
+              ? 3
+              : hasPrompt || hasMasks
+                ? 2
+                : 1
 
   useEffect(() => {
     setOpenStages((prev) => (prev[activeStage] ? prev : { ...prev, [activeStage]: true }))
@@ -169,6 +186,7 @@ export function StageRail({
         title="Промпт"
         hint="Что нужно убрать из ролика"
         active={activeStage === 1}
+        done={stageDone[1]}
         open={stageOpen(1)}
         onOpenChange={(o) => setStageOpen(1, o)}
       >
@@ -201,6 +219,7 @@ export function StageRail({
         title="Цели"
         hint="Список объектов для поиска"
         active={activeStage === 2}
+        done={stageDone[2]}
         open={stageOpen(2)}
         onOpenChange={(o) => setStageOpen(2, o)}
       >
@@ -212,6 +231,7 @@ export function StageRail({
         title="Маски"
         hint="Где именно вырезать"
         active={activeStage === 3}
+        done={stageDone[3]}
         open={stageOpen(3)}
         onOpenChange={(o) => setStageOpen(3, o)}
       >
@@ -331,6 +351,7 @@ export function StageRail({
         title="Удаление"
         hint="Заполнение вырезанных областей"
         active={activeStage === 4}
+        done={stageDone[4]}
         open={stageOpen(4)}
         onOpenChange={(o) => setStageOpen(4, o)}
       >
@@ -450,6 +471,7 @@ export function StageRail({
         title="Результат"
         hint="Скачать или сравнить до/после"
         active={activeStage === 5}
+        done={stageDone[5]}
         open={stageOpen(5)}
         onOpenChange={(o) => setStageOpen(5, o)}
       >
