@@ -109,17 +109,16 @@ export function outputDownloadName(fmt: string, jobId: string): string {
 }
 
 /**
- * Wait until a job reaches a terminal state.
- * Prefers SSE job-list pushes; rare GET /api/jobs/{id} only as a safety net.
+ * Wait until a job reaches a terminal state via SSE job-list pushes (jobBus).
+ * No HTTP polling. Pass `seed` from submitJob to avoid a cold start.
  */
-export async function pollJobToCompletion(
+export async function waitJobToCompletion(
   id: string,
   onProgress?: (j: Job) => void,
-  opts?: { fallbackIntervalMs?: number; maxSeconds?: number },
+  opts?: { maxSeconds?: number; seed?: Job },
 ): Promise<Job> {
-  const fallbackIntervalMs = opts?.fallbackIntervalMs ?? 15_000
   const maxSeconds = opts?.maxSeconds ?? 1800
-  const deadline = Date.now() + maxSeconds * 1000
+  const deadlineMs = Math.max(0, maxSeconds) * 1000
 
   const settle = (job: Job): "done" | "fail" | "run" => {
     onProgress?.(job)
@@ -128,28 +127,32 @@ export async function pollJobToCompletion(
     return "run"
   }
 
-  try {
-    const first = await getJob(id)
-    const s = settle(first)
-    if (s === "done") return first
-    if (s === "fail") throw new Error(first.error || `job ${id} ${first.state.toLowerCase()}`)
-  } catch (e) {
-    if (Date.now() >= deadline) throw e
+  const seed = opts?.seed?.id === id ? opts.seed : undefined
+  const initial = seed ?? findCachedJob(id)
+  if (initial) {
+    const s = settle(initial)
+    if (s === "done") return initial
+    if (s === "fail") throw new Error(initial.error || `job ${id} ${initial.state.toLowerCase()}`)
   }
 
   return new Promise<Job>((resolve, reject) => {
-    let timer: ReturnType<typeof setInterval> | undefined
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
     let unsub = () => {}
+    let settled = false
 
     const cleanup = () => {
       unsub()
-      if (timer) clearInterval(timer)
+      if (timeoutId !== undefined) clearTimeout(timeoutId)
     }
     const finishOk = (job: Job) => {
+      if (settled) return
+      settled = true
       cleanup()
       resolve(job)
     }
     const finishErr = (err: unknown) => {
+      if (settled) return
+      settled = true
       cleanup()
       reject(err instanceof Error ? err : new Error(String(err)))
     }
@@ -165,18 +168,22 @@ export async function pollJobToCompletion(
       consider(jobs.find((j) => j.id === id) ?? findCachedJob(id))
     })
 
-    timer = setInterval(() => {
-      if (Date.now() >= deadline) {
-        finishErr(new Error(`job ${id} wait timed out`))
-        return
+    timeoutId = setTimeout(() => {
+      const cached = findCachedJob(id)
+      if (cached) {
+        const s = settle(cached)
+        if (s === "done") {
+          finishOk(cached)
+          return
+        }
+        if (s === "fail") {
+          finishErr(new Error(cached.error || `job ${id} ${cached.state.toLowerCase()}`))
+          return
+        }
       }
-      void getJob(id)
-        .then((job) => consider(job))
-        .catch((e) => {
-          if (Date.now() >= deadline) finishErr(e)
-        })
-    }, fallbackIntervalMs)
+      finishErr(new Error(`job ${id} wait timed out (no SSE terminal state)`))
+    }, deadlineMs)
 
-    consider(findCachedJob(id))
+    consider(findCachedJob(id) ?? seed)
   })
 }

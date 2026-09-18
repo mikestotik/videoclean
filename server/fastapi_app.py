@@ -426,6 +426,8 @@ def create_app(state: AppState) -> FastAPI:
                             {
                                 "downloads": downloads_payload(st),
                                 "models": grouped_models(st),
+                                # Keep pipeline selects in sync while weights download.
+                                "options": options_payload(st),
                             },
                         )
                     elif kind == "sources":
@@ -989,6 +991,7 @@ def create_app(state: AppState) -> FastAPI:
                 started = start_download(st, info.id)
             except PipelineError as exc:
                 started = str(exc)
+        st.events.publish("meta")
         return {
             "ok": True,
             "id": info.id,
@@ -1004,6 +1007,7 @@ def create_app(state: AppState) -> FastAPI:
             raise HTTPException(400, str(exc)) from exc
         if not ok:
             raise HTTPException(404, f"unknown extra {component_id}")
+        st.events.publish("meta")
         return {"ok": True, "id": component_id}
 
     @app.get("/api/providers")
@@ -1031,6 +1035,7 @@ def create_app(state: AppState) -> FastAPI:
             )
         except PipelineError as exc:
             raise HTTPException(400, str(exc)) from exc
+        st.events.publish("meta")
         return {"ok": True, "provider": {**row, "api_key": "", "has_api_key": bool(row.get("api_key"))}}
 
     @app.delete("/api/providers/{provider_id:path}")
@@ -1041,6 +1046,7 @@ def create_app(state: AppState) -> FastAPI:
             raise HTTPException(400, str(exc)) from exc
         if not ok:
             raise HTTPException(404, f"unknown provider {provider_id}")
+        st.events.publish("meta")
         return {"ok": True, "id": provider_id}
 
     @app.post("/api/models/cancel")

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import {
   Check,
   Download,
@@ -248,7 +248,6 @@ type Props = {
   onClearSelection?: () => void
   activeJobs?: ActivePipelineJobs
   onSelectJob?: (job: Job) => void
-  refreshKey: number
   onUploaded?: () => void
   maskTracks?: DetectTrack[]
   excludedIds?: number[]
@@ -265,7 +264,6 @@ export function Library({
   onClearSelection,
   activeJobs = EMPTY_ACTIVE,
   onSelectJob,
-  refreshKey,
   onUploaded,
   maskTracks,
   excludedIds,
@@ -273,21 +271,15 @@ export function Library({
   onToggleTrack,
   onSelectTrack,
 }: Props) {
-  const { jobs, sources, poke, status } = useEvents()
+  const { jobs, sources, status } = useEvents()
   const [error, setError] = useState("")
   const [deletingId, setDeletingId] = useState("")
   const loading = status === "connecting" && sources.length === 0
 
-  useEffect(() => {
-    if (refreshKey > 0) poke()
-  }, [refreshKey, poke])
-
-  const refresh = poke
-
   const act: ActFn = async (fn, id) => {
     try {
       await fn(id)
-      refresh()
+      // Job/source lists update via SSE — no client refresh.
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
@@ -302,7 +294,6 @@ export function Library({
     try {
       await deleteSource(source.id)
       if (selectedId === source.id) onClearSelection?.()
-      refresh()
     } catch (e) {
       const raw = e instanceof Error ? e.message : String(e)
       setError(
@@ -343,12 +334,7 @@ export function Library({
           <h2 className="text-sm font-semibold">Библиотека</h2>
           <p className="text-[11px] text-muted-foreground">Видео и прогоны</p>
         </div>
-        <UploadButton
-          onUploaded={() => {
-            refresh()
-            onUploaded?.()
-          }}
-        />
+        <UploadButton onUploaded={() => onUploaded?.()} />
         {error && <p className="text-xs text-destructive">{error}</p>}
       </div>
 

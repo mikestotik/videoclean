@@ -1,6 +1,5 @@
 import {
   createContext,
-  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -18,9 +17,6 @@ type EventsContextValue = {
   snapshot: PollSnapshot | null
   jobs: Job[]
   sources: Source[]
-  refreshHint: number
-  /** Bump after local mutations that may race the stream (cancel, delete). */
-  poke: () => void
 }
 
 const EventsContext = createContext<EventsContextValue | null>(null)
@@ -30,7 +26,6 @@ export function EventsProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<PollSnapshot | null>(null)
   const [jobs, setJobs] = useState<Job[]>([])
   const [sources, setSources] = useState<Source[]>([])
-  const [refreshHint, setRefreshHint] = useState(0)
 
   useEffect(() => {
     const ac = new AbortController()
@@ -55,6 +50,7 @@ export function EventsProvider({ children }: { children: ReactNode }) {
                 ...prev,
                 downloads: data.downloads ?? prev.downloads,
                 models: (data.models as PollSnapshot["models"]) ?? prev.models,
+                options: data.options ?? prev.options,
               }
             : prev,
         )
@@ -86,11 +82,9 @@ export function EventsProvider({ children }: { children: ReactNode }) {
     return () => ac.abort()
   }, [])
 
-  const poke = useCallback(() => setRefreshHint((n) => n + 1), [])
-
   const value = useMemo(
-    () => ({ status, snapshot, jobs, sources, refreshHint, poke }),
-    [status, snapshot, jobs, sources, refreshHint, poke],
+    () => ({ status, snapshot, jobs, sources }),
+    [status, snapshot, jobs, sources],
   )
 
   return <EventsContext.Provider value={value}>{children}</EventsContext.Provider>

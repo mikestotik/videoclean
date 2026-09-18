@@ -5,14 +5,13 @@ import { useInpaintRun } from "@features/inpaint-run"
 import {
   cancelJob,
   downloadJobOutput,
-  getJob,
   outputDownloadName,
   packageJob,
-  pollJobToCompletion,
+  waitJobToCompletion,
   type Job,
 } from "@/entities/job"
 import type { Source } from "@/entities/source"
-import { api } from "@/shared/api/client"
+import { findCachedJob, useEventsOptional } from "@/shared/events"
 import { Badge } from "@/shared/ui/badge"
 import { Button } from "@/shared/ui/button"
 import { Label } from "@/shared/ui/label"
@@ -119,10 +118,15 @@ function ResultPanel({
         overwrite: true,
       })
       setPackJobId(queued.id)
-      await pollJobToCompletion(queued.id, (j) => {
-        setPackProgress({ fraction: j.fraction, detail: j.detail, eta: j.eta })
-      })
-      const refreshed = await getJob(job.id)
+      await waitJobToCompletion(
+        queued.id,
+        (j) => {
+          setPackProgress({ fraction: j.fraction, detail: j.detail, eta: j.eta })
+        },
+        { seed: queued },
+      )
+      // Parent report is merged server-side and pushed on the jobs SSE channel.
+      const refreshed = findCachedJob(job.id) ?? job
       onResultJobChange?.(refreshed)
     } catch (e) {
       setPackError(e instanceof Error ? e.message : String(e))
@@ -276,15 +280,10 @@ export function StageRail({
   const [inpaintMode, setInpaintMode] = useState<InpaintMode>("tracks")
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [openStages, setOpenStages] = useState<Record<number, boolean>>({ 1: true })
-  const [pipelineOpts, setPipelineOpts] = useState<OptionsShape | null>(null)
+  const events = useEventsOptional()
+  const pipelineOpts = (events?.snapshot?.options as OptionsShape | undefined) ?? null
   const noSource = !source
   const set = (patch: Partial<EditorParams>) => onParamsChange({ ...params, ...patch })
-
-  useEffect(() => {
-    api<OptionsShape>("/api/options")
-      .then(setPipelineOpts)
-      .catch(() => setPipelineOpts(null))
-  }, [])
 
   const readiness = useMemo(() => {
     const opts = pipelineOpts

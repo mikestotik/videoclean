@@ -15,10 +15,11 @@ import { useAnnotate } from "@features/annotate"
 import { tracksAreFullLength, useDetectRun } from "@features/detect-run"
 import { useInpaintRun } from "@features/inpaint-run"
 import { useInterpret, type InterpretTarget } from "@features/interpret"
-import { fetchJobReport, getJob, type Job } from "@/entities/job"
+import { fetchJobReport, type Job } from "@/entities/job"
 import { previewArtifactUrl } from "@/entities/preview"
 import type { TargetKind, TargetRow } from "@/entities/targets"
 import { getSource, videoUrl, type Source } from "@/entities/source"
+import { useEvents } from "@/shared/events"
 import { formatTimecode } from "@/shared/lib/format"
 import { Timecode } from "@/shared/ui/timecode"
 import { ToggleGroup, ToggleGroupItem } from "@/shared/ui/toggle-group"
@@ -82,8 +83,8 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
   const [runAllBusy, setRunAllBusy] = useState(false)
   const [runAllError, setRunAllError] = useState("")
   const [resultJob, setResultJob] = useState<Job | null>(null)
-  const [libraryTick, setLibraryTick] = useState(0)
   const [restoreError, setRestoreError] = useState("")
+  const { jobs: liveJobs } = useEvents()
 
   const sourceId = source?.id ?? null
   const probe = source?.probe
@@ -179,8 +180,7 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
             | null
           if (report) setParams((prev) => applyReportToParams(prev, report))
           inpaint.loadFromJob(job.id)
-          const full = await getJob(job.id)
-          setResultJob(full)
+          setResultJob(job)
           setViewerMode("result")
         }
       } catch (e) {
@@ -261,20 +261,12 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
   if (resultJob && resultJob.id !== resultJobId) setResultJob(null)
   useEffect(() => {
     if (!resultJobId) return
-    let alive = true
-    getJob(resultJobId)
-      .then((j) => {
-        if (!alive) return
-        if (j.state === "COMPLETED") {
-          setResultJob(j)
-          setViewerMode("result")
-        }
-      })
-      .catch(() => {})
-    return () => {
-      alive = false
+    const live = liveJobs.find((j) => j.id === resultJobId)
+    if (live?.state === "COMPLETED") {
+      setResultJob(live)
+      setViewerMode("result")
     }
-  }, [resultJobId])
+  }, [resultJobId, liveJobs])
 
   const runAll = async () => {
     if (!source || runAllBusy) return
@@ -364,8 +356,6 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
           onClearSelection={() => setSource(null)}
           activeJobs={activeJobs}
           onSelectJob={(job) => void selectJob(job)}
-          refreshKey={libraryTick}
-          onUploaded={() => setLibraryTick((t) => t + 1)}
           maskTracks={detect.tracks}
           excludedIds={detect.excludedIds}
           selectedTrackId={detect.selectedTrackId}

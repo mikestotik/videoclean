@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react"
 import { CircleHelp } from "lucide-react"
 import { deletePreset, listPresets, savePreset, type Preset } from "@/entities/preset"
-import { api } from "@/shared/api/client"
 import { useEventsOptional } from "@/shared/events"
 import { Badge } from "@/shared/ui/badge"
 import { Button } from "@/shared/ui/button"
@@ -115,21 +114,11 @@ export function BackendSelectors({
   /** Inpaint by tracks/masks: only segmenter mode + SAM weights. */
   segmenterOnly?: boolean
 }) {
-  const [opts, setOpts] = useState<OptionsShape>({ detectors: [], segmenters: [] })
-  useEffect(() => {
-    api<OptionsShape>("/api/options")
-      .then((r) =>
-        setOpts({
-          detectors: r.detectors ?? [],
-          segmenters: r.segmenters ?? [],
-          detector_models: r.detector_models ?? [],
-          segmenter_models: r.segmenter_models ?? [],
-          default_detector_model: r.default_detector_model,
-          default_segmenter_model: r.default_segmenter_model,
-        }),
-      )
-      .catch(() => setOpts({ detectors: [], segmenters: [] }))
-  }, [])
+  const events = useEventsOptional()
+  const opts = (events?.snapshot?.options as OptionsShape | undefined) ?? {
+    detectors: [],
+    segmenters: [],
+  }
 
   const showDetector = !segmenterOnly
   const showSegmenterMode = !detectorOnly
@@ -487,12 +476,11 @@ export function InpaintControls({
   onParamsChange: (p: EditorParams) => void
   disabled?: boolean
 }) {
-  const [opts, setOpts] = useState<OptionsShape>({ detectors: [], segmenters: [] })
-  useEffect(() => {
-    api<OptionsShape>("/api/options")
-      .then(setOpts)
-      .catch(() => setOpts({ detectors: [], segmenters: [] }))
-  }, [])
+  const events = useEventsOptional()
+  const opts = (events?.snapshot?.options as OptionsShape | undefined) ?? {
+    detectors: [],
+    segmenters: [],
+  }
 
   const setRun = (patch: Partial<EditorParams["run"]>, markCustom = false) =>
     onParamsChange({

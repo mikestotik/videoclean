@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react"
-import { fetchJobReport, pollJobToCompletion, submitJob } from "@/entities/job"
+import { fetchJobReport, waitJobToCompletion, submitJob } from "@/entities/job"
 import type { Source } from "@/entities/source"
 
 export type InterpretTarget = { kind: string; query: string; where: string | null; motion?: string }
@@ -83,7 +83,7 @@ export function useInterpret(source: Source | null) {
           prompt,
           params: { llm_model: llmModel },
         })
-        await pollJobToCompletion(job.id, undefined, { maxSeconds: 600 })
+        await waitJobToCompletion(job.id, undefined, { maxSeconds: 600, seed: job })
         if (runId !== runIdRef.current) return null
         const report = (await fetchJobReport(job.id)) as ReportBody
         if (runId !== runIdRef.current) return null

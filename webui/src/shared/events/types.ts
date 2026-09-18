@@ -9,9 +9,18 @@ export type PollSnapshot = {
   doctor: Record<string, string>
   ollama: { ok: boolean; base_url: string; models: string[] }
   providers?: unknown[]
-  options?: {
+  /** Full /api/options payload (also pushed on SSE meta/downloads). */
+  options?: Record<string, unknown> & {
     families?: Record<string, unknown[]>
     providers?: unknown[]
+    detectors?: string[]
+    segmenters?: string[]
+    inpainters?: string[]
+    detector_models?: unknown[]
+    segmenter_models?: unknown[]
+    default_detector_model?: string
+    default_segmenter_model?: string
+    models?: { inpainter?: unknown[] }
     llm_model_options?: {
       id: string
       title: string

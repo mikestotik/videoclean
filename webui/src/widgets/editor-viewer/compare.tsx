@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
-import { getJob } from "@/entities/job"
 import { apiUrl } from "@/shared/api/client"
+import { findCachedJob, useEventsOptional } from "@/shared/events"
 
 type Props = {
   inputUrl: string
@@ -16,19 +16,15 @@ export function Compare({ inputUrl, jobId, width, height }: Props) {
   const inputRef = useRef<HTMLVideoElement>(null)
   const outputRef = useRef<HTMLVideoElement>(null)
   const draggingRef = useRef(false)
+  const events = useEventsOptional()
+  const live = events?.jobs.find((j) => j.id === jobId) ?? findCachedJob(jobId)
   const outputUrl = loaded?.jobId === jobId && loaded.url ? loaded.url : null
 
   useEffect(() => {
-    let alive = true
-    getJob(jobId)
-      .then((j) => {
-        if (alive) setLoaded({ jobId, url: apiUrl(j.output_url ?? "") })
-      })
-      .catch(() => {})
-    return () => {
-      alive = false
-    }
-  }, [jobId])
+    const url = live?.output_url
+    if (!url) return
+    setLoaded({ jobId, url: apiUrl(url) })
+  }, [jobId, live?.output_url])
 
   useEffect(() => {
     const input = inputRef.current

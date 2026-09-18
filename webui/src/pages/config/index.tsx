@@ -266,8 +266,8 @@ function AddModelDialog({
     setModelRef("")
     setTitle("")
     setError("")
-    // Reset only when the dialog opens. `families` is a new array every /api/poll
-    // tick; depending on it would wipe the chosen Ollama tag before submit.
+    // Reset only when the dialog opens. `families` is a new array on every SSE meta
+    // push; depending on it would wipe the chosen Ollama tag before submit.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
   }, [open])
 
@@ -469,21 +469,18 @@ function AddProviderDialog({
 }
 
 export function ConfigPage() {
-  const { snapshot, poke } = useEvents()
+  const { snapshot } = useEvents()
   const data = asPollData(snapshot)
   const [busy, setBusy] = useState("")
   const [error, setError] = useState("")
   const [addKind, setAddKind] = useState<string | null>(null)
   const [addProviderOpen, setAddProviderOpen] = useState(false)
 
-  const refresh = poke
-
   const download = async (id: string) => {
     setBusy(id)
     setError("")
     try {
       await api("/api/models/download", { method: "POST", body: JSON.stringify({ id }) })
-      refresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -496,7 +493,6 @@ export function ConfigPage() {
     setError("")
     try {
       await api("/api/models/cancel", { method: "POST" })
-      refresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -509,7 +505,6 @@ export function ConfigPage() {
     setError("")
     try {
       await api(`/api/models/${encodeURIComponent(id)}`, { method: "DELETE" })
-      refresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -530,7 +525,6 @@ export function ConfigPage() {
         method: "POST",
         body: JSON.stringify({ kind, ...payload }),
       })
-      refresh()
     } finally {
       setBusy("")
     }
@@ -546,7 +540,6 @@ export function ConfigPage() {
     setError("")
     try {
       await api("/api/providers", { method: "POST", body: JSON.stringify(payload) })
-      refresh()
     } finally {
       setBusy("")
     }
@@ -557,7 +550,6 @@ export function ConfigPage() {
     setError("")
     try {
       await api(`/api/providers/${encodeURIComponent(id)}`, { method: "DELETE" })
-      refresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {

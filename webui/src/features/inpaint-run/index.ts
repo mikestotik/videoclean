@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react"
-import { pollJobToCompletion, submitJob } from "@/entities/job"
+import { waitJobToCompletion, submitJob } from "@/entities/job"
 import type { Source } from "@/entities/source"
 
 export type InpaintMode = "tracks" | "masks" | "prompt"
@@ -49,11 +49,15 @@ export function useInpaintRun(source: Source | null) {
           params,
         })
         if (runId === runIdRef.current) setJobId(job.id)
-        const done = await pollJobToCompletion(job.id, (j) => {
-          if (runId === runIdRef.current) {
-            setProgress({ fraction: j.fraction, detail: j.detail, eta: j.eta })
-          }
-        })
+        const done = await waitJobToCompletion(
+          job.id,
+          (j) => {
+            if (runId === runIdRef.current) {
+              setProgress({ fraction: j.fraction, detail: j.detail, eta: j.eta })
+            }
+          },
+          { seed: job },
+        )
         if (runId !== runIdRef.current) return null
         setLastJobId(done.id)
         return done.id

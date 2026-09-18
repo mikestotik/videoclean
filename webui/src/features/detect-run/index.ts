@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react"
-import { fetchJobReport, pollJobToCompletion, saveJobTracks, submitJob } from "@/entities/job"
+import { fetchJobReport, waitJobToCompletion, saveJobTracks, submitJob } from "@/entities/job"
 import { fetchPreviewManifest, type PreviewManifest } from "@/entities/preview"
 import type { Source } from "@/entities/source"
 
@@ -184,11 +184,15 @@ export function useDetectRun(source: Source | null) {
           params: payload.params,
         })
         if (runId === runIdRef.current) setJobId(job.id)
-        const done = await pollJobToCompletion(job.id, (j) => {
-          if (runId === runIdRef.current) {
-            setProgress({ fraction: j.fraction, detail: j.detail, eta: j.eta })
-          }
-        })
+        const done = await waitJobToCompletion(
+          job.id,
+          (j) => {
+            if (runId === runIdRef.current) {
+              setProgress({ fraction: j.fraction, detail: j.detail, eta: j.eta })
+            }
+          },
+          { seed: job },
+        )
         if (runId !== runIdRef.current) return null
         const [m, report] = await Promise.all([
           fetchPreviewManifest(done.id),
