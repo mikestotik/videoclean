@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { Loader2 } from "lucide-react"
-import { cropSource, type Source } from "@/entities/source"
+import { cropSource, frameUrl, type Source } from "@/entities/source"
 import { Button } from "@/shared/ui/button"
 import {
   Dialog,
@@ -26,6 +26,10 @@ function numOrEmpty(raw: string): number | null {
   return Number.isFinite(n) ? n : NaN
 }
 
+function intPx(raw: string): number {
+  return Math.max(0, Math.floor(Number(raw) || 0))
+}
+
 export function CropDialog({ source, open, onOpenChange, onDone }: Props) {
   const [startS, setStartS] = useState("")
   const [endS, setEndS] = useState("")
@@ -48,20 +52,36 @@ export function CropDialog({ source, open, onOpenChange, onDone }: Props) {
     setError("")
   }, [open, source])
 
+  const edges = useMemo(
+    () => ({
+      left: intPx(left),
+      right: intPx(right),
+      top: intPx(top),
+      bottom: intPx(bottom),
+    }),
+    [left, right, top, bottom],
+  )
+
   const preview = useMemo(() => {
     if (!source) return null
     const w = source.probe.width
     const h = source.probe.height
-    const l = Math.max(0, Math.floor(Number(left) || 0))
-    const r = Math.max(0, Math.floor(Number(right) || 0))
-    const t = Math.max(0, Math.floor(Number(top) || 0))
-    const b = Math.max(0, Math.floor(Number(bottom) || 0))
+    const outW = Math.max(0, w - edges.left - edges.right)
+    const outH = Math.max(0, h - edges.top - edges.bottom)
+    const mid = Math.max(0, Math.floor((source.probe.frame_count || 1) / 2))
     return {
-      width: Math.max(0, w - l - r),
-      height: Math.max(0, h - t - b),
+      width: outW,
+      height: outH,
       duration: source.probe.duration_s,
+      frame: mid,
+      inset: {
+        left: w > 0 ? (edges.left / w) * 100 : 0,
+        right: w > 0 ? (edges.right / w) * 100 : 0,
+        top: h > 0 ? (edges.top / h) * 100 : 0,
+        bottom: h > 0 ? (edges.bottom / h) * 100 : 0,
+      },
     }
-  }, [source, left, right, top, bottom])
+  }, [source, edges])
 
   const submit = async () => {
     if (!source || busy) return
@@ -74,12 +94,6 @@ export function CropDialog({ source, open, onOpenChange, onDone }: Props) {
     if (end !== null && Number.isNaN(end)) {
       setError("Конец: укажите число (секунды)")
       return
-    }
-    const edges = {
-      left: Math.max(0, Math.floor(Number(left) || 0)),
-      right: Math.max(0, Math.floor(Number(right) || 0)),
-      top: Math.max(0, Math.floor(Number(top) || 0)),
-      bottom: Math.max(0, Math.floor(Number(bottom) || 0)),
     }
     setBusy(true)
     setError("")
@@ -104,76 +118,111 @@ export function CropDialog({ source, open, onOpenChange, onDone }: Props) {
         <DialogHeader>
           <DialogTitle>Обрезать · {source?.name ?? ""}</DialogTitle>
         </DialogHeader>
-        <div className="grid gap-3">
-          <div className="grid grid-cols-2 gap-2">
-            <div className="space-y-1">
-              <Label htmlFor="crop-start">Начало, с</Label>
-              <Input
-                id="crop-start"
-                inputMode="decimal"
-                placeholder="0"
-                value={startS}
-                onChange={(e) => setStartS(e.target.value)}
-                disabled={busy}
+        <div className="grid gap-4">
+          {source && preview && (
+            <div
+              className="relative mx-auto w-full overflow-hidden rounded-md border border-border/70 bg-black"
+              style={{
+                aspectRatio: `${source.probe.width} / ${source.probe.height}`,
+                maxHeight: 160,
+              }}
+            >
+              <img
+                src={frameUrl(source, preview.frame)}
+                alt=""
+                className="absolute inset-0 h-full w-full object-contain"
+              />
+              <div
+                className="pointer-events-none absolute border-2 border-primary shadow-[0_0_0_9999px_rgba(0,0,0,0.55)]"
+                style={{
+                  left: `${preview.inset.left}%`,
+                  right: `${preview.inset.right}%`,
+                  top: `${preview.inset.top}%`,
+                  bottom: `${preview.inset.bottom}%`,
+                }}
               />
             </div>
-            <div className="space-y-1">
-              <Label htmlFor="crop-end">Конец, с</Label>
-              <Input
-                id="crop-end"
-                inputMode="decimal"
-                placeholder={preview ? String(Math.round(preview.duration * 1000) / 1000) : ""}
-                value={endS}
-                onChange={(e) => setEndS(e.target.value)}
-                disabled={busy}
-              />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="space-y-1">
-              <Label htmlFor="crop-left">Слева, px</Label>
-              <Input
-                id="crop-left"
-                inputMode="numeric"
-                value={left}
-                onChange={(e) => setLeft(e.target.value)}
-                disabled={busy}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="crop-right">Справа, px</Label>
-              <Input
-                id="crop-right"
-                inputMode="numeric"
-                value={right}
-                onChange={(e) => setRight(e.target.value)}
-                disabled={busy}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="crop-top">Сверху, px</Label>
-              <Input
-                id="crop-top"
-                inputMode="numeric"
-                value={top}
-                onChange={(e) => setTop(e.target.value)}
-                disabled={busy}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="crop-bottom">Снизу, px</Label>
-              <Input
-                id="crop-bottom"
-                inputMode="numeric"
-                value={bottom}
-                onChange={(e) => setBottom(e.target.value)}
-                disabled={busy}
-              />
+          )}
+
+          <div className="space-y-2">
+            <p className="text-[11px] font-medium text-muted-foreground">Время</p>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <Label htmlFor="crop-start">С, сек</Label>
+                <Input
+                  id="crop-start"
+                  inputMode="decimal"
+                  placeholder="0"
+                  value={startS}
+                  onChange={(e) => setStartS(e.target.value)}
+                  disabled={busy}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="crop-end">По, сек</Label>
+                <Input
+                  id="crop-end"
+                  inputMode="decimal"
+                  placeholder={
+                    preview ? String(Math.round(preview.duration * 1000) / 1000) : ""
+                  }
+                  value={endS}
+                  onChange={(e) => setEndS(e.target.value)}
+                  disabled={busy}
+                />
+              </div>
             </div>
           </div>
+
+          <div className="space-y-2">
+            <p className="text-[11px] font-medium text-muted-foreground">Края кадра, px</p>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <Label htmlFor="crop-left">Слева</Label>
+                <Input
+                  id="crop-left"
+                  inputMode="numeric"
+                  value={left}
+                  onChange={(e) => setLeft(e.target.value)}
+                  disabled={busy}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="crop-right">Справа</Label>
+                <Input
+                  id="crop-right"
+                  inputMode="numeric"
+                  value={right}
+                  onChange={(e) => setRight(e.target.value)}
+                  disabled={busy}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="crop-top">Сверху</Label>
+                <Input
+                  id="crop-top"
+                  inputMode="numeric"
+                  value={top}
+                  onChange={(e) => setTop(e.target.value)}
+                  disabled={busy}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="crop-bottom">Снизу</Label>
+                <Input
+                  id="crop-bottom"
+                  inputMode="numeric"
+                  value={bottom}
+                  onChange={(e) => setBottom(e.target.value)}
+                  disabled={busy}
+                />
+              </div>
+            </div>
+          </div>
+
           {source && preview && (
             <p className="text-[11px] tabular-nums text-muted-foreground">
-              {source.probe.width}×{source.probe.height} → {preview.width}×{preview.height}
+              Кадр {source.probe.width}×{source.probe.height} → {preview.width}×{preview.height}
               {" · "}
               {Math.round(source.probe.duration_s * 10) / 10}с
             </p>

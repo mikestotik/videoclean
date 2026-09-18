@@ -389,18 +389,6 @@ export function Library({
                   <Button
                     size="icon-xs"
                     variant="ghost"
-                    className="shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-                    aria-label={`Обрезать ${s.name}`}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setCropTarget(s)
-                    }}
-                  >
-                    <Crop className="size-3.5" />
-                  </Button>
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
                     className="mr-1 shrink-0 text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100"
                     aria-label={`Удалить ${s.name}`}
                     disabled={deletingId === s.id}
@@ -417,25 +405,35 @@ export function Library({
                   </Button>
                 </div>
 
-                {selected && sourceJobs.length > 0 && (
-                  <div className="ml-3 mt-0.5 space-y-2">
-                    {KIND_ORDER.map((kind) =>
-                      jobsByKind[kind].length > 0 ? (
-                        <StageGroup
-                          key={kind}
-                          kind={kind}
-                          jobs={jobsByKind[kind]}
-                          activeId={activeJobs[kind]}
-                          onAct={act}
-                          onSelectJob={onSelectJob}
-                          maskTracks={maskTracks}
-                          excludedIds={excludedIds}
-                          selectedTrackId={selectedTrackId}
-                          onToggleTrack={onToggleTrack}
-                          onSelectTrack={onSelectTrack}
-                        />
-                      ) : null,
-                    )}
+                {selected && (
+                  <div className="ml-3 mt-1 space-y-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 w-full justify-start gap-1.5"
+                      onClick={() => setCropTarget(s)}
+                    >
+                      <Crop className="size-3.5" />
+                      Обрезать
+                    </Button>
+                    {sourceJobs.length > 0 &&
+                      KIND_ORDER.map((kind) =>
+                        jobsByKind[kind].length > 0 ? (
+                          <StageGroup
+                            key={kind}
+                            kind={kind}
+                            jobs={jobsByKind[kind]}
+                            activeId={activeJobs[kind]}
+                            onAct={act}
+                            onSelectJob={onSelectJob}
+                            maskTracks={maskTracks}
+                            excludedIds={excludedIds}
+                            selectedTrackId={selectedTrackId}
+                            onToggleTrack={onToggleTrack}
+                            onSelectTrack={onSelectTrack}
+                          />
+                        ) : null,
+                      )}
                   </div>
                 )}
               </div>
