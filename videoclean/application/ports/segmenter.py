@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Protocol
 
 import numpy as np
 
 from videoclean.domain.tracks import Track
+
+# current, total, detail — heartbeat while segmenting frames
+OnProgress = Callable[[int, int, str], None]
 
 
 class Segmenter(Protocol):
@@ -12,5 +16,10 @@ class Segmenter(Protocol):
 
     name: str
 
-    def masks(self, frames: list[np.ndarray], tracks: list[Track]) -> list[np.ndarray]:
+    def masks(
+        self,
+        frames: list[np.ndarray],
+        tracks: list[Track],
+        on_progress: OnProgress | None = None,
+    ) -> list[np.ndarray]:
         ...

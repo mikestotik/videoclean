@@ -1054,6 +1054,39 @@ def downloads_payload(state: AppState) -> list[dict[str, Any]]:
     return out
 
 
+def jobs_payload(state: AppState) -> list[dict[str, Any]]:
+    return [job_dict(state, row) for row in state.jobs.list_jobs_full(limit=100)]
+
+
+def sources_payload(state: AppState) -> list[dict[str, Any]]:
+    if state.sources is None:
+        return []
+    return [source_dict(row) for row in state.sources.list()]
+
+
+def meta_payload(state: AppState, *, ollama_fn) -> dict[str, Any]:
+    """Slow-changing UI bundle: models, doctor, options, providers."""
+    return {
+        "models": grouped_models(state),
+        "doctor": doctor_payload(),
+        "options": options_payload(state),
+        "ollama": ollama_fn(),
+        "providers": providers_payload(state),
+        "device": default_device(),
+    }
+
+
+def poll_payload(state: AppState, *, ollama_fn) -> dict[str, Any]:
+    """Full UI snapshot (same shape as GET /api/poll + sources)."""
+    body = {
+        "jobs": jobs_payload(state),
+        "sources": sources_payload(state),
+        "downloads": downloads_payload(state),
+    }
+    body.update(meta_payload(state, ollama_fn=ollama_fn))
+    return body
+
+
 def _active_downloads(state: AppState) -> list:
     rows: list = []
     for st in ("running", "queued"):

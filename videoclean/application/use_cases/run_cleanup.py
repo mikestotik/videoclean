@@ -179,7 +179,7 @@ class RunCleanup:
                 _label_tracks_from_intent(tracks, intent)
                 for tr in tracks:
                     interpolate_gaps(tr)
-                masks = self.segmenter.masks(images, tracks)
+                masks = self._segment_masks(images, tracks, stage="detect")
                 if cfg.mask_dilate_px > 0:
                     kernel = cv2.getStructuringElement(
                         cv2.MORPH_ELLIPSE, (cfg.mask_dilate_px * 2 + 1, cfg.mask_dilate_px * 2 + 1)
@@ -220,7 +220,7 @@ class RunCleanup:
             )
             self.progress.finish("parse", ", ".join(labels))
             self.progress.start("detect", total=len(frames), detail="manual tracks")
-            masks = self.segmenter.masks(images, tracks)
+            masks = self._segment_masks(images, tracks, stage="detect")
             self.progress.finish("detect", f"manual: {len(tracks)} tracks")
         else:
             parse_st = self.parser.status() if hasattr(self.parser, "status") else "llm"
@@ -307,7 +307,7 @@ class RunCleanup:
                 ),
                 encoding="utf-8",
             )
-            masks = self.segmenter.masks(images, tracks)
+            masks = self._segment_masks(images, tracks, stage="detect")
 
         if tracks:
             (paths.root / "analysis" / "tracks.json").write_text(
@@ -386,9 +386,11 @@ class RunCleanup:
                     if cfg.select_relax
                     else []
                 )
-                detect_masks = self.segmenter.masks(cleaned_frames, leftover) if leftover else [
-                    np.zeros_like(working_masks[0]) for _ in working_masks
-                ]
+                detect_masks = (
+                    self._segment_masks(cleaned_frames, leftover, stage="verify")
+                    if leftover
+                    else [np.zeros_like(working_masks[0]) for _ in working_masks]
+                )
                 grown = [
                     or_masks(or_masks(prev, det), res)
                     for prev, det, res in zip(working_masks, detect_masks, residual)
@@ -578,6 +580,14 @@ class RunCleanup:
         for detector in self.detectors:
             cur = float(getattr(detector, "max_box_area", 0.45) or 0.45)
             detector.max_box_area = max(cur, 0.55)
+
+    def _segment_masks(self, images, tracks, *, stage: str):
+        self.progress.tick(stage, 0, max(len(images), 1), f"{self.segmenter.name} masks")
+        return self.segmenter.masks(
+            images,
+            tracks,
+            on_progress=lambda cur, tot, detail="": self.progress.tick(stage, cur, tot, detail),
+        )
 
     def _discover(self, images, queries: list[str], *, stage: str) -> tuple[str, list[str], list]:
         attempts: list[str] = []

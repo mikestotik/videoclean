@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
   Check,
   Download,
@@ -11,10 +11,10 @@ import {
   Trash2,
   X,
 } from "lucide-react"
-import { cancelJob, deleteJob, listJobs, retryJob, type Job, type JobKind, type JobState } from "@/entities/job"
-import { deleteSource, listSources, type Source } from "@/entities/source"
+import { cancelJob, deleteJob, retryJob, type Job, type JobKind, type JobState } from "@/entities/job"
+import { deleteSource, type Source } from "@/entities/source"
 import { apiUrl } from "@/shared/api/client"
-import { usePoll } from "@/shared/hooks/usePoll"
+import { useEvents } from "@/shared/events"
 import { formatTimecode } from "@/shared/lib/format"
 import { Button } from "@/shared/ui/button"
 import { ScrollArea } from "@/shared/ui/scroll-area"
@@ -273,39 +273,16 @@ export function Library({
   onToggleTrack,
   onSelectTrack,
 }: Props) {
-  const [sources, setSources] = useState<Source[]>([])
-  const [jobs, setJobs] = useState<Job[]>([])
-  const [tick, setTick] = useState(0)
+  const { jobs, sources, poke, status } = useEvents()
   const [error, setError] = useState("")
-  const [loading, setLoading] = useState(true)
   const [deletingId, setDeletingId] = useState("")
-
-  const refresh = useCallback(() => setTick((t) => t + 1), [])
-
-  const loadSources = useCallback(() => {
-    listSources()
-      .then((s) => {
-        setSources(s)
-        setLoading(false)
-      })
-      .catch((e) => {
-        setError(e instanceof Error ? e.message : String(e))
-        setLoading(false)
-      })
-  }, [])
-  const loadJobs = useCallback(() => {
-    listJobs()
-      .then(setJobs)
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
-  }, [])
-
-  usePoll(loadSources, 5000)
-  usePoll(loadJobs, 3000)
+  const loading = status === "connecting" && sources.length === 0
 
   useEffect(() => {
-    loadSources()
-    loadJobs()
-  }, [loadSources, loadJobs, refreshKey, tick])
+    if (refreshKey > 0) poke()
+  }, [refreshKey, poke])
+
+  const refresh = poke
 
   const act: ActFn = async (fn, id) => {
     try {

@@ -56,13 +56,18 @@ class Sam2Segmenter:
             )
         return f"ready (runtime={runtime}, weights={'disk' if cached else 'download-allowed'}, device={self.device})"
 
-    def masks(self, frames: list[np.ndarray], tracks: list[Track]) -> list[np.ndarray]:
+    def masks(self, frames: list[np.ndarray], tracks: list[Track], on_progress=None) -> list[np.ndarray]:
         if not frames:
             return []
+        if on_progress:
+            on_progress(0, 1, f"{self.name} load")
         self._ensure()
         h, w = frames[0].shape[:2]
         out: list[np.ndarray] = []
+        total = len(frames)
         for i, frame in enumerate(frames):
+            if on_progress:
+                on_progress(i, total, f"{self.name} frame {i + 1}/{total}")
             boxes: list[tuple[int, int, int, int]] = []
             for tr in tracks:
                 box = tr.boxes[i] if i < len(tr.boxes) else None
@@ -80,6 +85,8 @@ class Sam2Segmenter:
             if self.dilate_px > 0:
                 mask = _dilate(mask, self.dilate_px)
             out.append(mask)
+        if on_progress:
+            on_progress(total, total, f"{self.name} done")
         return out
 
     def _ensure(self) -> None:

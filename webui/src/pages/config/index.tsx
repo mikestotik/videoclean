@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
   AlertCircle,
   CheckCircle2,
@@ -12,6 +12,8 @@ import {
   XCircle,
 } from "lucide-react"
 import { api } from "@/shared/api/client"
+import { useEvents } from "@/shared/events"
+import type { PollSnapshot } from "@/shared/events"
 import { Badge } from "@/shared/ui/badge"
 import { Button } from "@/shared/ui/button"
 import {
@@ -65,6 +67,17 @@ type PollData = {
   options?: {
     families?: Record<string, FamilyBackend[]>
     providers?: ProviderInfo[]
+  }
+}
+
+function asPollData(snap: PollSnapshot | null): PollData | null {
+  if (!snap) return null
+  return {
+    models: snap.models as Record<string, ModelInfo[]>,
+    doctor: snap.doctor,
+    ollama: snap.ollama,
+    providers: snap.providers as ProviderInfo[] | undefined,
+    options: snap.options as PollData["options"],
   }
 }
 
@@ -456,26 +469,14 @@ function AddProviderDialog({
 }
 
 export function ConfigPage() {
-  const [data, setData] = useState<PollData | null>(null)
+  const { snapshot, poke } = useEvents()
+  const data = asPollData(snapshot)
   const [busy, setBusy] = useState("")
   const [error, setError] = useState("")
   const [addKind, setAddKind] = useState<string | null>(null)
   const [addProviderOpen, setAddProviderOpen] = useState(false)
 
-  const refresh = useCallback(() => {
-    api<PollData>("/api/poll")
-      .then((d) => {
-        setData(d)
-        setError("")
-      })
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
-  }, [])
-
-  useEffect(() => {
-    refresh()
-    const t = setInterval(refresh, 5000)
-    return () => clearInterval(t)
-  }, [refresh])
+  const refresh = poke
 
   const download = async (id: string) => {
     setBusy(id)

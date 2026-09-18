@@ -4,7 +4,7 @@ import json
 import os
 import sqlite3
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -83,6 +83,8 @@ class JobIndex:
     def __init__(self, db_path: Path):
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self.db_path = db_path
+        # Optional UI/SSE hook: called with "jobs" | "downloads" after mutations.
+        self.on_change: Callable[[str], None] | None = None
         with self._connect() as con:
             con.execute(
                 """
@@ -131,6 +133,15 @@ class JobIndex:
         con.row_factory = sqlite3.Row
         con.execute("PRAGMA journal_mode=WAL")
         return con
+
+    def _notify(self, kind: str) -> None:
+        cb = self.on_change
+        if cb is None:
+            return
+        try:
+            cb(kind)
+        except Exception:  # noqa: BLE001 — hooks must not break store writes
+            return
 
     def upsert(
         self,
@@ -215,6 +226,7 @@ class JobIndex:
                         source_id,
                     ),
                 )
+        self._notify("jobs")
 
     def list_jobs(self, limit: int = 100, state: str | None = None) -> list[sqlite3.Row]:
         with self._connect() as con:
@@ -258,7 +270,10 @@ class JobIndex:
     def delete(self, job_id: str) -> bool:
         with self._connect() as con:
             cur = con.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
-            return cur.rowcount > 0
+            ok = cur.rowcount > 0
+        if ok:
+            self._notify("jobs")
+        return ok
 
     def request_cancel(self, job_id: str) -> bool:
         now = utc_now().isoformat()
@@ -267,7 +282,10 @@ class JobIndex:
                 "UPDATE jobs SET cancel_requested = 1, updated_at = ? WHERE id = ?",
                 (now, job_id),
             )
-            return cur.rowcount > 0
+            ok = cur.rowcount > 0
+        if ok:
+            self._notify("jobs")
+        return ok
 
     def is_cancel_requested(self, job_id: str) -> bool:
         with self._connect() as con:
@@ -297,6 +315,7 @@ class JobIndex:
                 "UPDATE jobs SET progress_json = ?, updated_at = ? WHERE id = ?",
                 (payload, now, job_id),
             )
+        self._notify("jobs")
 
     def upsert_download(
         self,
@@ -362,6 +381,7 @@ class JobIndex:
                         cancel_val if cancel_val is not None else 0,
                     ),
                 )
+        self._notify("downloads")
 
     def get_download(self, download_id: str) -> sqlite3.Row | None:
         with self._connect() as con:
@@ -392,7 +412,10 @@ class JobIndex:
                 "UPDATE downloads SET cancel_requested = 1, updated_at = ? WHERE id = ?",
                 (now, download_id),
             )
-            return cur.rowcount > 0
+            ok = cur.rowcount > 0
+        if ok:
+            self._notify("downloads")
+        return ok
 
 
 def new_source_id() -> str:
@@ -406,6 +429,7 @@ class SourceIndex:
     def __init__(self, db_path: Path):
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self.db_path = db_path
+        self.on_change: Callable[[str], None] | None = None
         with self._connect() as con:
             con.execute(
                 """
@@ -425,6 +449,15 @@ class SourceIndex:
         con.execute("PRAGMA journal_mode=WAL")
         return con
 
+    def _notify(self, kind: str) -> None:
+        cb = self.on_change
+        if cb is None:
+            return
+        try:
+            cb(kind)
+        except Exception:  # noqa: BLE001
+            return
+
     def register(self, source_id: str, name: str, path: str, probe: dict[str, Any] | None = None) -> None:
         now = utc_now().isoformat()
         with self._connect() as con:
@@ -432,6 +465,7 @@ class SourceIndex:
                 "INSERT OR REPLACE INTO sources (id, name, path, created_at, probe_json) VALUES (?, ?, ?, ?, ?)",
                 (source_id, name, path, now, json.dumps(probe or {}, ensure_ascii=False)),
             )
+        self._notify("sources")
 
     def list(self, limit: int = 200) -> list[sqlite3.Row]:
         with self._connect() as con:
@@ -444,4 +478,7 @@ class SourceIndex:
     def delete(self, source_id: str) -> bool:
         with self._connect() as con:
             cur = con.execute("DELETE FROM sources WHERE id = ?", (source_id,))
-            return cur.rowcount > 0
+            ok = cur.rowcount > 0
+        if ok:
+            self._notify("sources")
+        return ok

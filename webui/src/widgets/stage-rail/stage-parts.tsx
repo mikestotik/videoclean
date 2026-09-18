@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from "react"
+import { useEffect, useState } from "react"
 import { CircleHelp } from "lucide-react"
 import { deletePreset, listPresets, savePreset, type Preset } from "@/entities/preset"
-import { usePoll } from "@/shared/hooks/usePoll"
 import { api } from "@/shared/api/client"
+import { useEventsOptional } from "@/shared/events"
 import { Badge } from "@/shared/ui/badge"
 import { Button } from "@/shared/ui/button"
 import { Input } from "@/shared/ui/input"
@@ -36,8 +36,6 @@ const PROFILE_OPTIONS: { id: PipelineProfileId; label: string; hint: string }[] 
   { id: "quality", label: "Качество", hint: "Больше keyframes; на CUDA — sam2-video + ProPainter и до 2 verify-pass." },
   { id: "custom", label: "Свой", hint: "Ручные настройки без пресета." },
 ]
-
-type PollShape = { ollama: { ok: boolean; models: string[] } }
 
 type SegmenterModelOpt = {
   id: string
@@ -336,31 +334,24 @@ export function LlmChip({
   onOpenConfig?: () => void
   disabled?: boolean
 }) {
-  const [ok, setOk] = useState<boolean | null>(null)
-  const [options, setOptions] = useState<LlmModelOpt[]>([])
-  const poll = useCallback(() => {
-    return api<PollShape & { options?: OptionsShape; providers?: unknown[] }>("/api/poll")
-      .then((r) => {
-        const fromOptions = r.options?.llm_model_options ?? []
-        if (fromOptions.length) {
-          setOptions(fromOptions)
-          setOk(fromOptions.some((m) => m.ready) || Boolean(r.ollama?.ok) || (r.providers?.length ?? 0) > 0)
-          return
-        }
-        setOk(Boolean(r.ollama?.ok))
-        setOptions(
-          (r.ollama?.models ?? []).map((m) => ({
-            id: m,
-            title: m,
-            model: m,
-            provider_id: "ollama",
-            ready: true,
-          })),
-        )
-      })
-      .catch(() => setOk(false))
-  }, [])
-  usePoll(poll, 5000)
+  const events = useEventsOptional()
+  const snap = events?.snapshot
+  const fromOptions = snap?.options?.llm_model_options ?? []
+  const options: LlmModelOpt[] = fromOptions.length
+    ? fromOptions
+    : (snap?.ollama?.models ?? []).map((m) => ({
+        id: m,
+        title: m,
+        model: m,
+        provider_id: "ollama",
+        ready: true,
+      }))
+  const ok =
+    snap == null
+      ? null
+      : fromOptions.length
+        ? fromOptions.some((m) => m.ready) || Boolean(snap.ollama?.ok) || (snap.providers?.length ?? 0) > 0
+        : Boolean(snap.ollama?.ok)
 
   if (ok === null) return <span className="text-xs text-muted-foreground">Проверяю LLM…</span>
   if (!ok && options.length === 0)

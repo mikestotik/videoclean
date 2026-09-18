@@ -46,15 +46,17 @@ class Sam2VideoSegmenter:
             return f"unavailable: {self.model_id} not in local HF cache. {download_hint(self.model_id)}"
         return f"ready (sam2 video, weights={'disk' if cached else 'download-allowed'}, device={self.device})"
 
-    def masks(self, frames: list[np.ndarray], tracks: list[Track]) -> list[np.ndarray]:
+    def masks(self, frames: list[np.ndarray], tracks: list[Track], on_progress=None) -> list[np.ndarray]:
         if not frames:
             return []
+        if on_progress:
+            on_progress(0, 1, f"{self.name} load")
         self._ensure()
         h, w = frames[0].shape[:2]
         if not tracks:
             return [np.zeros((h, w), dtype=np.uint8) for _ in frames]
         try:
-            return self._propagate(frames, tracks)
+            return self._propagate(frames, tracks, on_progress=on_progress)
         except Exception as exc:  # noqa: BLE001
             raise AdapterUnavailable(f"sam2-video failed: {type(exc).__name__}: {exc}"[:240]) from exc
 
@@ -76,19 +78,26 @@ class Sam2VideoSegmenter:
             self._load_error = f"{type(exc).__name__}: {exc}"[:240]
             raise AdapterUnavailable(self._load_error) from exc
 
-    def _propagate(self, frames: list[np.ndarray], tracks: list[Track]) -> list[np.ndarray]:
+    def _propagate(self, frames: list[np.ndarray], tracks: list[Track], on_progress=None) -> list[np.ndarray]:
         import cv2
         import torch
 
         h, w = frames[0].shape[:2]
+        n = len(frames)
         acc = [np.zeros((h, w), dtype=np.uint8) for _ in frames]
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             for i, frame in enumerate(frames):
+                if on_progress and i % 8 == 0:
+                    on_progress(i, n + len(tracks), f"{self.name} write {i + 1}/{n}")
                 cv2.imwrite(str(root / f"{i:05d}.jpg"), frame)
+            if on_progress:
+                on_progress(n, n + len(tracks), f"{self.name} init")
             state = self._predictor.init_state(video_path=str(root))
             obj_id = 1
-            for tr in tracks:
+            for tr_i, tr in enumerate(tracks):
+                if on_progress:
+                    on_progress(n + tr_i, n + len(tracks), f"{self.name} track {tr_i + 1}/{len(tracks)}")
                 anchors = _anchor_boxes(tr, w, h, max_anchors=8)
                 if not anchors:
                     continue
@@ -103,9 +112,16 @@ class Sam2VideoSegmenter:
             if obj_id == 1:
                 return acc
 
+            prop_total = max(n, 1)
 
             def _consume() -> None:
                 for frame_idx, _obj_ids, mask_logits in self._predictor.propagate_in_video(state):
+                    if on_progress:
+                        on_progress(
+                            frame_idx + 1,
+                            prop_total,
+                            f"{self.name} propagate {frame_idx + 1}/{n}",
+                        )
                     if frame_idx >= len(acc):
                         continue
                     for plane in mask_logits:
@@ -127,6 +143,8 @@ class Sam2VideoSegmenter:
                 cv2.MORPH_ELLIPSE, (self.dilate_px * 2 + 1, self.dilate_px * 2 + 1)
             )
             acc = [cv2.dilate(m, k) if np.any(m) else m for m in acc]
+        if on_progress:
+            on_progress(1, 1, f"{self.name} done")
         return acc
 
 

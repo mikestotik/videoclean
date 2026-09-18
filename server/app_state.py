@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from server.events import EventHub, wire_store_hooks
 from videoclean.application.jobs.worker import JobWorker
 from videoclean.application.use_cases.download_component import DownloadComponent
 from videoclean.application.use_cases.manage_jobs import ManageJobs
@@ -19,6 +20,7 @@ class AppState:
     sources: SourceIndex | None = None
     worker: JobWorker | None = None
     downloader: DownloadComponent | None = None
+    events: EventHub = field(default_factory=EventHub)
     # Last finished download line so the UI does not snap back to 0%/idle.
     last_download_frac: float = 0.0
     last_download_msg: str = "No download in progress."
@@ -37,6 +39,10 @@ def build_app_state(
     jobs = JobIndex(data_dir / "jobs.sqlite")
     sources = SourceIndex(data_dir / "jobs.sqlite")
     manage = ManageJobs(jobs)
+    hub = EventHub()
+    on_change = wire_store_hooks(hub)
+    jobs.on_change = on_change
+    sources.on_change = on_change
     if catalog is None:
         from videoclean.adapters.models.catalog import ModelCatalog
 
@@ -49,6 +55,7 @@ def build_app_state(
         sources=sources,
         worker=None,
         downloader=None,
+        events=hub,
     )
 
     def _default_on_terminal(job_id: str, terminal_state: str) -> None:

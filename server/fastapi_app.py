@@ -30,6 +30,7 @@ from videoclean.adapters.models.catalog import (
     remove_provider,
 )
 from server.app_state import AppState, build_app_state
+from server.events import format_sse
 from server.service import (
     VIDEO_SUFFIXES,
     annotations_payload,
@@ -45,9 +46,12 @@ from server.service import (
     grouped_models,
     job_dict,
     job_output_artifacts,
+    jobs_payload,
     list_presets,
     mask_path,
+    meta_payload,
     options_payload,
+    poll_payload,
     providers_payload,
     queue_package_job,
     queue_preview_from_job,
@@ -62,6 +66,7 @@ from server.service import (
     serialize_clean_form,
     source_dict,
     source_frame_path,
+    sources_payload,
     start_download,
 )
 from videoclean.application.errors import PipelineError
@@ -254,6 +259,8 @@ def create_app(state: AppState) -> FastAPI:
                 "absolute_urls": "set VIDEOCLEAN_PUBLIC_BASE_URL",
             },
             "internal": {
+                "events": "GET /api/events (SSE snapshot+jobs+downloads+sources+meta)",
+                "poll": "GET /api/poll (legacy snapshot; prefer /api/events)",
                 "sources": "POST/GET/DELETE /api/sources…",
                 "preview": "POST /api/preview, kind=preview|prompt",
                 "package": "POST /api/jobs/{id}/package",
@@ -376,17 +383,73 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.get("/api/poll")
     def poll(st: AppState = Depends(get_state)):
-        jobs = [job_dict(st, row) for row in st.jobs.list_jobs_full(limit=100)]
-        return {
-            "jobs": jobs,
-            "models": grouped_models(st),
-            "downloads": downloads_payload(st),
-            "doctor": doctor_payload(),
-            "options": options_payload(st),
-            "ollama": _ollama_payload(),
-            "providers": providers_payload(st),
-            "device": default_device(),
-        }
+        """Legacy full snapshot for WebUI. Prefer GET /api/events (SSE)."""
+        return poll_payload(st, ollama_fn=_ollama_payload)
+
+    @app.get("/api/events", include_in_schema=False)
+    def events(request: Request, st: AppState = Depends(get_state)):
+        """Server-Sent Events for WebUI: snapshot, then incremental updates."""
+        import queue as queue_mod
+        import time as _time
+
+        hub = st.events
+        q = hub.subscribe()
+
+        def gen():
+            last_meta = _time.monotonic()
+            last_keepalive = last_meta
+            try:
+                yield format_sse("snapshot", poll_payload(st, ollama_fn=_ollama_payload))
+                while True:
+                    if request is not None and getattr(request, "is_disconnected", None):
+                        # Starlette Request.is_disconnected is async; skip in sync path.
+                        pass
+                    try:
+                        kind = q.get(timeout=0.25)
+                    except queue_mod.Empty:
+                        now = _time.monotonic()
+                        if now - last_meta >= 5.0:
+                            last_meta = now
+                            last_keepalive = now
+                            yield format_sse(
+                                "meta", meta_payload(st, ollama_fn=_ollama_payload)
+                            )
+                        elif now - last_keepalive >= 12.0:
+                            last_keepalive = now
+                            yield ": keepalive\n\n"
+                        continue
+                    if kind == "jobs":
+                        yield format_sse("jobs", {"jobs": jobs_payload(st)})
+                    elif kind == "downloads":
+                        yield format_sse(
+                            "downloads",
+                            {
+                                "downloads": downloads_payload(st),
+                                "models": grouped_models(st),
+                            },
+                        )
+                    elif kind == "sources":
+                        yield format_sse("sources", {"sources": sources_payload(st)})
+                    elif kind == "meta":
+                        last_meta = _time.monotonic()
+                        yield format_sse("meta", meta_payload(st, ollama_fn=_ollama_payload))
+                    else:
+                        last_meta = _time.monotonic()
+                        yield format_sse(
+                            "snapshot", poll_payload(st, ollama_fn=_ollama_payload)
+                        )
+            finally:
+                hub.unsubscribe(q)
+
+        return StreamingResponse(
+            gen(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @app.get(
         "/api/jobs",

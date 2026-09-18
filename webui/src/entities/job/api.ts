@@ -1,7 +1,7 @@
 import { api, apiUrl, ApiError } from "@/shared/api/client"
 import type { Job, MediaProbe } from "./types"
 
-export const listJobs = () => api<{ jobs: Job[] }>("/api/poll").then((r) => r.jobs)
+export const listJobs = () => api<Job[]>("/api/jobs")
 export const getJob = (id: string) => api<Job>(`/api/jobs/${id}`)
 export const cancelJob = (id: string) => api<Job>(`/api/jobs/${id}/cancel`, { method: "POST" })
 export const retryJob = (id: string) => api<Job>(`/api/jobs/${id}/retry`, { method: "POST" })

@@ -231,7 +231,7 @@ class RunPreview:
             for detector in self.detectors:
                 cur = float(getattr(detector, "max_box_area", 0.45) or 0.45)
                 detector.max_box_area = max(cur, 0.55)
-        self.progress.start("detect", total=len(images))
+        self.progress.start("detect", total=len(images), detail="boxes")
         used, attempts, raw_tracks = self._discover(images, queries or [t.query for t in targets])
         strict = select_tracks(
             raw_tracks, intent_sel, width=manifest.width, height=manifest.height, relax=False
@@ -255,7 +255,12 @@ class RunPreview:
         if not raw_tracks:
             raise PipelineError(f"detector found no boxes for queries {queries or [t.query for t in targets]}")
 
-        masks = self.segmenter.masks(images, selected)
+        self.progress.tick("detect", 0, len(images), f"{self.segmenter.name} masks")
+        masks = self.segmenter.masks(
+            images,
+            selected,
+            on_progress=lambda cur, tot, detail="": self.progress.tick("detect", cur, tot, detail),
+        )
         dilate = req.config.mask_dilate_px
 
         per_frame: list[dict] = []
@@ -264,6 +269,12 @@ class RunPreview:
             boxes = [tr.boxes[pos] for tr in selected]
             per_frame.append({"index": idx, "maskCoverage": cov, "boxes": [list(b) if b else None for b in boxes]})
             self._write_overlays(paths.preview_dir, idx, img, mask, boxes, selected, dilate)
+            self.progress.tick(
+                "detect",
+                pos + 1,
+                len(images),
+                f"overlay {pos + 1}/{len(images)}",
+            )
         self.progress.finish("detect", f"{used}: {len(selected)} tracks")
 
         report.update(
@@ -288,12 +299,26 @@ class RunPreview:
 
     def _discover(self, images, queries: list[str]):
         attempts: list[str] = []
+        q = ", ".join(queries)
+
+        def on_progress(current: int, total: int, detail: str = "") -> None:
+            self.progress.tick("detect", current, total, detail)
+
         for detector in self.detectors:
             status = detector.status()
+            self.progress.tick("detect", 0, 1, f"{detector.name}: {status}")
             if not status.startswith("ready"):
                 attempts.append(f"{detector.name}: skip ({status})")
                 continue
-            tracks = detector.discover(images, queries)
+            self.progress.tick("detect", 0, 1, f"{detector.name}  queries: {q}")
+            try:
+                tracks = detector.discover(images, queries, on_progress=on_progress)
+            except (MemoryError, JobCancelled):
+                raise
+            except Exception as exc:  # noqa: BLE001 — optional backend; next in chain
+                msg = f"{type(exc).__name__}: {exc}".replace("\n", " ")[:400]
+                attempts.append(f"{detector.name}: error ({msg})")
+                continue
             attempts.append(f"{detector.name}: {len(tracks)} tracks")
             if tracks:
                 return detector.name, attempts, tracks

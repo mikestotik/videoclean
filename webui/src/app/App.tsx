@@ -2,6 +2,7 @@ import { useCallback, useEffect } from "react"
 import { Clapperboard, Settings2 } from "lucide-react"
 import { ConfigPage } from "@pages/config"
 import { WorkspacePage } from "@pages/workspace"
+import { EventsProvider } from "@/shared/events"
 import {
   lastWorkspacePath,
   parsePath,
@@ -39,6 +40,7 @@ export function App() {
   const activeNav = route.page === "settings" ? "settings" : "workspace"
 
   return (
+    <EventsProvider>
     <div className="flex h-svh flex-col overflow-hidden bg-background">
       <header className="flex h-11 shrink-0 items-center gap-3 border-b border-border/80 px-3">
         <div className="flex items-center gap-2">
@@ -85,6 +87,7 @@ export function App() {
         )}
       </main>
     </div>
+    </EventsProvider>
   )
 }
 
