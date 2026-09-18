@@ -142,4 +142,4 @@ WebUI: панель «Превью» на рабочей странице. Кн�
 
 Интерактивная схема: `/api/docs` (Swagger), `/api/redoc`. Публичный happy path и auth — в описании OpenAPI и в `GET /api`.
 
-Источники (`POST/GET/DELETE /api/sources/{id}`), покадровые маски-аннотации (`PUT/GET/DELETE /api/sources/{id}/masks/{n}`) и пресеты пайплайна (`GET/POST/DELETE /api/presets`, хранятся в `data_dir/presets.json`) — см. индекс `GET /api`.
+Источники (`POST/GET/DELETE /api/sources/{id}`), обрезка-преп (`POST /api/sources/{id}/crop` → новый source: `start_s`/`end_s`, `left`/`right`/`top`/`bottom` px), покадровые маски-аннотации (`PUT/GET/DELETE /api/sources/{id}/masks/{n}`) и пресеты пайплайна (`GET/POST/DELETE /api/presets`, хранятся в `data_dir/presets.json`) — см. индекс `GET /api`.

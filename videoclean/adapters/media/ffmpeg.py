@@ -162,6 +162,84 @@ class FFmpegMedia:
         ]
         _run(cmd, log_file)
 
+    def crop_clip(
+        self,
+        src: Path,
+        dest: Path,
+        *,
+        start_s: float | None = None,
+        end_s: float | None = None,
+        left: int = 0,
+        right: int = 0,
+        top: int = 0,
+        bottom: int = 0,
+        log_file: Path | None = None,
+    ) -> MediaManifest:
+        """Trim time and/or crop frame edges into a new mp4. Re-encodes when needed."""
+        manifest = self.probe(src)
+        left_i = max(0, int(left))
+        right_i = max(0, int(right))
+        top_i = max(0, int(top))
+        bottom_i = max(0, int(bottom))
+        out_w = manifest.width - left_i - right_i
+        out_h = manifest.height - top_i - bottom_i
+        if out_w < 2 or out_h < 2:
+            raise PipelineError(
+                f"crop leaves {out_w}x{out_h}; need at least 2x2 "
+                f"(source {manifest.width}x{manifest.height})"
+            )
+        # yuv420p needs even dimensions
+        out_w -= out_w % 2
+        out_h -= out_h % 2
+        if out_w < 2 or out_h < 2:
+            raise PipelineError("crop dimensions must stay even and >= 2")
+
+        duration = float(manifest.duration_s or 0.0)
+        ss = 0.0 if start_s is None else float(start_s)
+        ee = duration if end_s is None else float(end_s)
+        if ss < 0:
+            raise PipelineError("start_s must be >= 0")
+        if duration > 0 and ss >= duration:
+            raise PipelineError(f"start_s {ss} is past duration {duration:.3f}s")
+        if ee <= ss:
+            raise PipelineError("end_s must be greater than start_s")
+        if duration > 0:
+            ee = min(ee, duration)
+        trim_dur = ee - ss
+        spatial = left_i or right_i or top_i or bottom_i
+        temporal = ss > 0 or (duration > 0 and ee < duration - 0.001)
+        if not spatial and not temporal:
+            raise PipelineError("nothing to crop: set time range and/or edge pixels")
+
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        log = log_file or (dest.parent / "ffmpeg_crop.log")
+        # Always re-encode: stream-copy trims are keyframe-snapped and inaccurate.
+        cmd = [_ffmpeg(), "-y", "-hide_banner", "-i", str(src)]
+        if ss > 0:
+            cmd += ["-ss", f"{ss:.6f}"]
+        cmd += ["-t", f"{trim_dur:.6f}"]
+        if spatial:
+            cmd += ["-vf", f"crop={out_w}:{out_h}:{left_i}:{top_i}"]
+        cmd += [
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "18",
+        ]
+        if manifest.has_audio:
+            cmd += ["-c:a", "aac", "-b:a", "128k"]
+        else:
+            cmd += ["-an"]
+        cmd += ["-movflags", "+faststart", str(dest)]
+        _run(cmd, log)
+        if not dest.is_file():
+            raise PipelineError("crop produced no output")
+        return self.probe(dest)
+
     def package(
         self,
         src: Path,

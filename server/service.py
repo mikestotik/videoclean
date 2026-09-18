@@ -438,6 +438,59 @@ def register_source(state: AppState, tmp: Path, original_name: str) -> str:
     return source_id
 
 
+def crop_source(
+    state: AppState,
+    source_row,
+    *,
+    start_s: float | None = None,
+    end_s: float | None = None,
+    left: int = 0,
+    right: int = 0,
+    top: int = 0,
+    bottom: int = 0,
+    name: str | None = None,
+) -> str:
+    """Trim/crop a library source into a new source (prep before cleanup)."""
+    from videoclean.adapters.media.ffmpeg import FFmpegMedia
+
+    src = Path(source_row["path"])
+    if not src.is_file():
+        raise PipelineError("source file missing")
+    source_id = new_source_id()
+    dest_dir = Path(state.data_dir) / "sources" / source_id
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / "input.mp4"
+    log_file = dest_dir / "ffmpeg_crop.log"
+    media = FFmpegMedia()
+    try:
+        m = media.crop_clip(
+            src,
+            dest,
+            start_s=start_s,
+            end_s=end_s,
+            left=left,
+            right=right,
+            top=top,
+            bottom=bottom,
+            log_file=log_file,
+        )
+    except Exception:  # noqa: BLE001
+        shutil.rmtree(dest_dir, ignore_errors=True)
+        raise
+    probe = {
+        "fps": m.fps,
+        "duration_s": m.duration_s,
+        "width": m.width,
+        "height": m.height,
+        "frame_count": m.frame_count,
+        "has_audio": m.has_audio,
+    }
+    base = Path(str(source_row["name"] or "video")).stem
+    label = (name or "").strip() or f"{base} · crop"
+    state.sources.register(source_id, label, str(dest), probe=probe)
+    return source_id
+
+
 def source_frame_path(state: AppState, source_row, n: int) -> Path | None:
     """Extract one frame as JPEG; cached on disk. None if out of range or ffmpeg fails."""
     probe = _as_dict(source_row["probe_json"])

@@ -38,6 +38,7 @@ from server.service import (
     auth_enabled,
     auth_from_env,
     cancel_downloads,
+    crop_source,
     default_device,
     delete_mask,
     delete_preset,
@@ -261,7 +262,7 @@ def create_app(state: AppState) -> FastAPI:
             "internal": {
                 "events": "GET /api/events (SSE snapshot+jobs+downloads+sources+meta)",
                 "poll": "GET /api/poll (legacy snapshot; prefer /api/events)",
-                "sources": "POST/GET/DELETE /api/sources…",
+                "sources": "POST/GET/DELETE /api/sources…, POST /api/sources/{id}/crop",
                 "preview": "POST /api/preview, kind=preview|prompt",
                 "package": "POST /api/jobs/{id}/package",
                 "models": "GET/POST /api/models…",
@@ -303,6 +304,47 @@ def create_app(state: AppState) -> FastAPI:
         st.sources.delete(source_id)
         shutil.rmtree(Path(st.data_dir) / "sources" / source_id, ignore_errors=True)
         return {"ok": True, "id": source_id}
+
+    @app.post("/api/sources/{source_id}/crop")
+    def crop_source_endpoint(source_id: str, body: dict[str, Any], st: AppState = Depends(get_state)):
+        """Prep: trim time and/or crop frame edges into a new library source."""
+        row = _source_or_404(st, source_id)
+
+        def _opt_float(key: str) -> float | None:
+            raw = body.get(key, None)
+            if raw is None or raw == "":
+                return None
+            try:
+                return float(raw)
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(400, f"{key} must be a number") from exc
+
+        def _int(key: str, default: int = 0) -> int:
+            raw = body.get(key, default)
+            if raw is None or raw == "":
+                return default
+            try:
+                return int(raw)
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(400, f"{key} must be an integer") from exc
+
+        name_raw = body.get("name")
+        name = str(name_raw).strip() if name_raw is not None and str(name_raw).strip() else None
+        try:
+            sid = crop_source(
+                st,
+                row,
+                start_s=_opt_float("start_s"),
+                end_s=_opt_float("end_s"),
+                left=_int("left"),
+                right=_int("right"),
+                top=_int("top"),
+                bottom=_int("bottom"),
+                name=name,
+            )
+        except PipelineError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return JSONResponse(source_dict(st.sources.get(sid)), status_code=201)
 
     @app.get("/api/sources/{source_id}/video")
     def source_video(source_id: str, st: AppState = Depends(get_state)):

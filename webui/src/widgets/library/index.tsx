@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react"
 import {
   Check,
+  Crop,
   Download,
   Eraser,
   Film,
@@ -19,6 +20,7 @@ import { formatTimecode } from "@/shared/lib/format"
 import { Button } from "@/shared/ui/button"
 import { ScrollArea } from "@/shared/ui/scroll-area"
 import { cn } from "@/shared/lib/utils"
+import { CropDialog } from "./crop-dialog"
 import { UploadButton } from "./upload"
 import type { DetectTrack } from "@features/detect-run"
 
@@ -274,6 +276,7 @@ export function Library({
   const { jobs, sources, status } = useEvents()
   const [error, setError] = useState("")
   const [deletingId, setDeletingId] = useState("")
+  const [cropTarget, setCropTarget] = useState<Source | null>(null)
   const loading = status === "connecting" && sources.length === 0
 
   const act: ActFn = async (fn, id) => {
@@ -386,6 +389,18 @@ export function Library({
                   <Button
                     size="icon-xs"
                     variant="ghost"
+                    className="shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                    aria-label={`Обрезать ${s.name}`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setCropTarget(s)
+                    }}
+                  >
+                    <Crop className="size-3.5" />
+                  </Button>
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
                     className="mr-1 shrink-0 text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100"
                     aria-label={`Удалить ${s.name}`}
                     disabled={deletingId === s.id}
@@ -443,6 +458,18 @@ export function Library({
           )}
         </div>
       </ScrollArea>
+
+      <CropDialog
+        source={cropTarget}
+        open={Boolean(cropTarget)}
+        onOpenChange={(open) => {
+          if (!open) setCropTarget(null)
+        }}
+        onDone={(created) => {
+          setCropTarget(null)
+          onSelect(created)
+        }}
+      />
     </div>
   )
 }
