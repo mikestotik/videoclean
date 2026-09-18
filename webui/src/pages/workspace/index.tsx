@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
+import { Film, Upload } from "lucide-react"
 import { EditorViewer, type EditorMode } from "@widgets/editor-viewer"
 import { Library } from "@widgets/library"
 import {
@@ -20,6 +21,7 @@ import type { Source } from "@/entities/source"
 import { formatTimecode } from "@/shared/lib/format"
 import { Timecode } from "@/shared/ui/timecode"
 import { ToggleGroup, ToggleGroupItem } from "@/shared/ui/toggle-group"
+import { cn } from "@/shared/lib/utils"
 
 const MODE_LABEL = { annotate: "Разметка", detect: "Маски", result: "Результат" } as const
 
@@ -42,6 +44,7 @@ export function WorkspacePage() {
   const [runAllBusy, setRunAllBusy] = useState(false)
   const [runAllError, setRunAllError] = useState("")
   const [resultJob, setResultJob] = useState<Job | null>(null)
+  const [libraryTick, setLibraryTick] = useState(0)
 
   const sourceId = source?.id ?? null
   const probe = source?.probe
@@ -153,20 +156,29 @@ export function WorkspacePage() {
   }
 
   return (
-    <div className="grid h-full grid-cols-[280px_minmax(0,1fr)_360px] grid-rows-[minmax(0,1fr)_auto] gap-3 p-3">
-      <div className="row-span-2 min-h-0 min-w-0">
-        <Library selectedId={sourceId} onSelect={setSource} refreshKey={0} />
-      </div>
+    <div className="grid h-full min-h-0 grid-cols-[260px_minmax(0,1fr)_340px] grid-rows-[minmax(0,1fr)_auto] gap-0">
+      <aside className="row-span-2 min-h-0 min-w-0 border-r border-border/80 bg-card/40">
+        <Library
+          selectedId={sourceId}
+          onSelect={setSource}
+          onClearSelection={() => setSource(null)}
+          refreshKey={libraryTick}
+          onUploaded={() => setLibraryTick((t) => t + 1)}
+        />
+      </aside>
 
       {source && probe ? (
         <>
-          <div className="col-start-2 row-start-1 flex min-h-0 min-w-0 flex-col gap-2 overflow-hidden">
-            <div className="flex items-center gap-3">
+          <div className="col-start-2 row-start-1 flex min-h-0 min-w-0 flex-col gap-0 overflow-hidden">
+            <div className="flex h-11 shrink-0 items-center gap-3 border-b border-border/60 px-4">
               <Timecode>{formatTimecode(currentFrame, probe.fps)}</Timecode>
-              <span className="truncate text-sm text-muted-foreground">{source.name}</span>
-              <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-                Кадр {currentFrame}
-              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium">{source.name}</p>
+                <p className="text-[11px] text-muted-foreground">
+                  {probe.width}×{probe.height} · {probe.fps.toFixed(2)} fps · кадр {currentFrame + 1} /{" "}
+                  {probe.frame_count}
+                </p>
+              </div>
               <ToggleGroup
                 variant="outline"
                 size="sm"
@@ -177,26 +189,28 @@ export function WorkspacePage() {
                 }}
               >
                 {(["annotate", "detect", "result"] as const).map((m) => (
-                  <ToggleGroupItem key={m} value={m}>
+                  <ToggleGroupItem key={m} value={m} className={cn(viewerMode === m && "bg-muted")}>
                     {MODE_LABEL[m]}
                   </ToggleGroupItem>
                 ))}
               </ToggleGroup>
             </div>
-            <EditorViewer
-              source={source}
-              currentFrame={currentFrame}
-              onFrameChange={setCurrentFrame}
-              annotate={annotate}
-              mode={viewerMode}
-              detectMaskUrl={detectMaskUrl}
-              maskOpacity={maskOpacity}
-              onMaskOpacityChange={setMaskOpacity}
-              detectBoxes={detectFrame?.boxes ?? []}
-              resultJobId={resultJobId}
-            />
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3">
+              <EditorViewer
+                source={source}
+                currentFrame={currentFrame}
+                onFrameChange={setCurrentFrame}
+                annotate={annotate}
+                mode={viewerMode}
+                detectMaskUrl={detectMaskUrl}
+                maskOpacity={maskOpacity}
+                onMaskOpacityChange={setMaskOpacity}
+                detectBoxes={detectFrame?.boxes ?? []}
+                resultJobId={resultJobId}
+              />
+            </div>
           </div>
-          <div className="col-start-2 row-start-2 min-h-0 min-w-0">
+          <div className="col-start-2 row-start-2 min-h-0 min-w-0 border-t border-border/80 bg-card/30 px-3 py-2">
             <Timeline
               src={source.video_url}
               fps={probe.fps}
@@ -209,14 +223,25 @@ export function WorkspacePage() {
           </div>
         </>
       ) : (
-        <div className="col-start-2 row-start-1 flex min-h-0 items-center justify-center rounded-md border border-dashed bg-muted/40 p-8 text-center">
-          <p className="text-sm text-muted-foreground">
-            Выберите видео слева или загрузите новое
-          </p>
+        <div className="col-start-2 row-span-2 flex min-h-0 items-center justify-center p-8">
+          <div className="flex max-w-sm flex-col items-center text-center">
+            <span className="mb-4 flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+              <Film className="size-6" />
+            </span>
+            <h2 className="text-lg font-semibold tracking-tight">Выберите видео</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Загрузите ролик слева или выберите уже загруженный источник. Дальше опишите, что
+              удалить, и запустите конвейер.
+            </p>
+            <p className="mt-4 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Upload className="size-3.5" />
+              Поддерживаются обычные видеофайлы
+            </p>
+          </div>
         </div>
       )}
 
-      <div className="col-start-3 row-span-2 min-h-0 min-w-0">
+      <aside className="col-start-3 row-span-2 min-h-0 min-w-0 border-l border-border/80 bg-card/40">
         <StageRail
           source={source}
           frameCount={probe?.frame_count ?? 0}
@@ -233,7 +258,7 @@ export function WorkspacePage() {
           onOpenConfig={openConfig}
           onOpenResult={() => setViewerMode("result")}
         />
-      </div>
+      </aside>
     </div>
   )
 }

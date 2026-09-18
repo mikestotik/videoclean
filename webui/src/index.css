@@ -39,41 +39,54 @@
     --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/*
+  Cutting room: cool slate surfaces, lime-green accent.
+  Video canvas stays pure black.
+*/
 :root {
-    --background: oklch(0.20 0.005 260);
-    --foreground: oklch(0.93 0.003 260);
-    --card: oklch(0.235 0.006 260);
-    --card-foreground: oklch(0.93 0.003 260);
-    --popover: oklch(0.27 0.007 260);
-    --popover-foreground: oklch(0.93 0.003 260);
-    --primary: oklch(0.75 0.13 75);
-    --primary-foreground: oklch(0.17 0.02 75);
-    --secondary: oklch(0.27 0.007 260);
-    --secondary-foreground: oklch(0.93 0.003 260);
-    --muted: oklch(0.27 0.007 260);
-    --muted-foreground: oklch(0.68 0.008 260);
-    --accent: oklch(0.30 0.008 260);
-    --accent-foreground: oklch(0.93 0.003 260);
-    --destructive: oklch(0.62 0.19 25);
-    --border: oklch(0.30 0.008 260);
-    --input: oklch(0.30 0.008 260);
-    --ring: oklch(0.75 0.13 75);
-    --ok: oklch(0.68 0.12 155);
-    --mask: oklch(0.62 0.19 25);
-    --radius: 0.625rem;
+    --background: oklch(0.155 0.012 255);
+    --foreground: oklch(0.94 0.008 255);
+    --card: oklch(0.195 0.014 255);
+    --card-foreground: oklch(0.94 0.008 255);
+    --popover: oklch(0.22 0.016 255);
+    --popover-foreground: oklch(0.94 0.008 255);
+    --primary: oklch(0.82 0.16 130);
+    --primary-foreground: oklch(0.20 0.04 130);
+    --secondary: oklch(0.245 0.016 255);
+    --secondary-foreground: oklch(0.92 0.008 255);
+    --muted: oklch(0.235 0.014 255);
+    --muted-foreground: oklch(0.68 0.018 255);
+    --accent: oklch(0.27 0.02 255);
+    --accent-foreground: oklch(0.94 0.008 255);
+    --destructive: oklch(0.62 0.18 25);
+    --border: oklch(0.30 0.018 255);
+    --input: oklch(0.28 0.016 255);
+    --ring: oklch(0.82 0.16 130);
+    --ok: oklch(0.74 0.13 145);
+    --mask: oklch(0.68 0.18 25);
+    --radius: 0.5rem;
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
-    }
+  }
   body {
-    @apply bg-background text-foreground;
-    }
+    @apply bg-background text-foreground antialiased;
+  }
   button:not(:disabled), [role="button"]:not(:disabled) {
     cursor: pointer;
-    }
+  }
   html {
     @apply font-sans;
-    }
+  }
+}
+
+@layer utilities {
+  .panel {
+    @apply rounded-lg border border-border/80 bg-card;
+  }
+  .panel-muted {
+    @apply rounded-lg border border-border/60 bg-muted/40;
+  }
 }

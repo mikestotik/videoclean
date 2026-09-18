@@ -33,29 +33,47 @@ export function Timeline({ src, fps, frameCount, currentFrame, onFrameChange, an
   const indexes = Object.keys(thumbs).map(Number).sort((a, b) => a - b)
 
   return (
-    <div className="flex overflow-x-auto rounded-md border p-1">
-      {indexes.map((idx) => (
-        <button
-          key={idx}
-          className={cn(
-            "relative h-16 w-28 shrink-0 overflow-hidden rounded-md border-2 border-transparent",
-            currentFrame === idx && "ring-2 ring-primary",
-          )}
-          onClick={() => onFrameChange(idx)}
-        >
-          <img src={thumbs[idx]} alt={`frame ${idx}`} className="h-full w-full object-cover" />
-          <span className="absolute right-0 bottom-0 bg-background/80 px-0.5 text-[9px]">{idx}</span>
-          {(annotated.has(idx) || masked.has(idx)) && (
-            <span className="absolute bottom-0.5 left-1/2 flex -translate-x-1/2 gap-0.5">
-              {annotated.has(idx) && <span className="size-1.5 rounded-full bg-primary" />}
-              {masked.has(idx) && <span className="size-1.5 rounded-full bg-destructive" />}
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center justify-between px-0.5">
+        <p className="text-[11px] font-medium text-muted-foreground">Таймлайн</p>
+        <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+          <span className="inline-flex items-center gap-1">
+            <span className="size-1.5 rounded-full bg-primary" /> разметка
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="size-1.5 rounded-full bg-destructive" /> маска
+          </span>
+        </div>
+      </div>
+      <div className="flex gap-1 overflow-x-auto rounded-lg border border-border/70 bg-background/40 p-1.5">
+        {indexes.map((idx) => (
+          <button
+            key={idx}
+            type="button"
+            className={cn(
+              "relative h-14 w-24 shrink-0 overflow-hidden rounded-md border transition-shadow",
+              currentFrame === idx
+                ? "border-primary ring-2 ring-primary/40"
+                : "border-transparent hover:border-border",
+            )}
+            onClick={() => onFrameChange(idx)}
+          >
+            <img src={thumbs[idx]} alt={`кадр ${idx}`} className="h-full w-full object-cover" />
+            <span className="absolute right-0.5 bottom-0.5 rounded bg-background/85 px-1 font-mono text-[9px] tabular-nums">
+              {idx}
             </span>
-          )}
-        </button>
-      ))}
-      {indexes.length === 0 && (
-        <div className="flex h-16 items-center px-3 text-xs text-muted-foreground">Миниатюры…</div>
-      )}
+            {(annotated.has(idx) || masked.has(idx)) && (
+              <span className="absolute bottom-1 left-1/2 flex -translate-x-1/2 gap-0.5">
+                {annotated.has(idx) && <span className="size-1.5 rounded-full bg-primary" />}
+                {masked.has(idx) && <span className="size-1.5 rounded-full bg-destructive" />}
+              </span>
+            )}
+          </button>
+        ))}
+        {indexes.length === 0 && (
+          <div className="flex h-14 items-center px-3 text-xs text-muted-foreground">Строю миниатюры…</div>
+        )}
+      </div>
     </div>
   )
 }

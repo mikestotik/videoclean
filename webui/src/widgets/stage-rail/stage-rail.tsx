@@ -60,6 +60,7 @@ export function StageRail({
 }: Props) {
   const [inpaintMode, setInpaintMode] = useState<InpaintMode>("tracks")
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [openStages, setOpenStages] = useState<Record<number, boolean>>({ 1: true })
   const noSource = !source
   const set = (patch: Partial<EditorParams>) => onParamsChange({ ...params, ...patch })
 
@@ -83,6 +84,14 @@ export function StageRail({
         : interpret.result || params.targets.length > 0
           ? 2
           : 1
+
+  useEffect(() => {
+    setOpenStages((prev) => (prev[activeStage] ? prev : { ...prev, [activeStage]: true }))
+  }, [activeStage])
+
+  const stageOpen = (n: number) => openStages[n] ?? false
+  const setStageOpen = (n: number, open: boolean) =>
+    setOpenStages((prev) => ({ ...prev, [n]: open }))
 
   const appliedResultRef = useRef<unknown>(null)
   useEffect(() => {
@@ -121,21 +130,40 @@ export function StageRail({
   }
 
   return (
-    <aside className="flex h-full min-h-0 flex-col overflow-y-auto rounded-md border bg-card">
-      <div className="flex items-center gap-2 border-b px-3 py-2">
-        <span className="text-sm font-medium">Конвейер</span>
-        {onRunAll && (
-          <Button size="sm" className="ml-auto" disabled={runAllDisabled} onClick={onRunAll}>
-            {runAllBusy ? "Идёт…" : "Запустить всё"}
-          </Button>
+    <aside className="flex h-full min-h-0 flex-col">
+      <div className="shrink-0 space-y-2 border-b border-border/70 px-3 py-3">
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-semibold">Конвейер</h2>
+            <p className="text-[11px] text-muted-foreground">От промпта до готового ролика</p>
+          </div>
+          {onRunAll && (
+            <Button size="sm" disabled={runAllDisabled} onClick={onRunAll}>
+              {runAllBusy ? "Идёт…" : "Запустить всё"}
+            </Button>
+          )}
+        </div>
+        {runAllError && <p className="text-xs text-destructive">{runAllError}</p>}
+        {noSource && (
+          <p className="rounded-md bg-muted/50 px-2.5 py-2 text-[11px] text-muted-foreground">
+            Выберите видео слева, чтобы настроить и запустить обработку.
+          </p>
         )}
       </div>
-      {runAllError && <p className="px-3 pb-2 text-xs text-destructive">{runAllError}</p>}
-      <StageSection n={1} title="Вход" active={activeStage === 1}>
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+      <StageSection
+        n={1}
+        title="Промпт"
+        hint="Что нужно убрать из ролика"
+        active={activeStage === 1}
+        open={stageOpen(1)}
+        onOpenChange={(o) => setStageOpen(1, o)}
+      >
         <Textarea
           value={params.prompt}
           onChange={(e) => set({ prompt: e.target.value })}
-          placeholder="Опишите, что удалить (любой язык)"
+          placeholder="Например: логотип в правом верхнем углу"
           className="min-h-20 text-xs"
           disabled={noSource}
         />
@@ -156,11 +184,25 @@ export function StageRail({
         {interpret.error && <p className="text-xs text-destructive">{interpret.error}</p>}
       </StageSection>
 
-      <StageSection n={2} title="Таргеты" active={activeStage === 2}>
+      <StageSection
+        n={2}
+        title="Цели"
+        hint="Список объектов для поиска"
+        active={activeStage === 2}
+        open={stageOpen(2)}
+        onOpenChange={(o) => setStageOpen(2, o)}
+      >
         <TargetsEditor targets={params.targets} onChange={(targets) => set({ targets })} disabled={noSource} />
       </StageSection>
 
-      <StageSection n={3} title="Маски" active={activeStage === 3}>
+      <StageSection
+        n={3}
+        title="Маски"
+        hint="Где именно вырезать"
+        active={activeStage === 3}
+        open={stageOpen(3)}
+        onOpenChange={(o) => setStageOpen(3, o)}
+      >
         <ToggleGroup
           variant="outline"
           size="sm"
@@ -234,7 +276,14 @@ export function StageRail({
         )}
       </StageSection>
 
-      <StageSection n={4} title="Inpaint" active={activeStage === 4}>
+      <StageSection
+        n={4}
+        title="Удаление"
+        hint="Заполнение вырезанных областей"
+        active={activeStage === 4}
+        open={stageOpen(4)}
+        onOpenChange={(o) => setStageOpen(4, o)}
+      >
         <ToggleGroup
           variant="outline"
           size="sm"
@@ -338,10 +387,17 @@ export function StageRail({
         {inpaint.error && <p className="text-xs text-destructive">{inpaint.error}</p>}
       </StageSection>
 
-      <StageSection n={5} title="Результат" active={activeStage === 5}>
+      <StageSection
+        n={5}
+        title="Результат"
+        hint="Скачать или сравнить до/после"
+        active={activeStage === 5}
+        open={stageOpen(5)}
+        onOpenChange={(o) => setStageOpen(5, o)}
+      >
         {resultJob?.state === "COMPLETED" ? (
           <>
-            <p className="text-xs text-muted-foreground">Готово — сравнение открывается в просмотрщике.</p>
+            <p className="text-xs text-ok">Готово. Можно открыть сравнение в просмотрщике.</p>
             <div className="flex gap-2">
               {onOpenResult && (
                 <Button size="sm" variant="outline" onClick={onOpenResult}>
@@ -358,7 +414,7 @@ export function StageRail({
             </div>
           </>
         ) : (
-          <p className="text-xs text-muted-foreground">Результата ещё нет — запустите inpaint.</p>
+          <p className="text-xs text-muted-foreground">Результата ещё нет. Запустите удаление выше.</p>
         )}
         <div className="flex flex-col gap-1 text-xs">
           <Label>Форматы вывода</Label>
@@ -385,11 +441,21 @@ export function StageRail({
             ))}
           </div>
         </div>
-        <PresetsPopover params={params} onParamsChange={onParamsChange} disabled={noSource} />
-        <Button size="sm" variant="outline" disabled={noSource} onClick={() => onParamsChange(resetParams())}>
-          Сбросить к дефолтам
-        </Button>
       </StageSection>
+      </div>
+
+      <div className="flex shrink-0 items-center gap-2 border-t border-border/70 px-3 py-2.5">
+        <PresetsPopover params={params} onParamsChange={onParamsChange} disabled={noSource} />
+        <Button
+          size="sm"
+          variant="ghost"
+          className="ml-auto"
+          disabled={noSource}
+          onClick={() => onParamsChange(resetParams())}
+        >
+          Сбросить
+        </Button>
+      </div>
     </aside>
   )
 }

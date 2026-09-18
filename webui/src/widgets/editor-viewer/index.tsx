@@ -83,19 +83,19 @@ export function EditorViewer({
   const scrubbing = mode !== "annotate"
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col gap-2">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
       {mode === "result" ? (
         resultJobId ? (
           <Compare inputUrl={source.video_url} jobId={resultJobId} width={width} height={height} />
         ) : (
-          <div className="flex h-64 items-center justify-center rounded-md border text-sm text-muted-foreground">
-            Результат недоступен
+          <div className="flex min-h-48 flex-1 items-center justify-center rounded-lg border border-dashed border-border/80 text-sm text-muted-foreground">
+            Результат ещё не готов
           </div>
         )
       ) : (
         <div
           tabIndex={0}
-          className="relative shrink-0 overflow-hidden rounded-md border bg-black outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+          className="relative mx-auto max-h-full w-full max-w-full shrink overflow-hidden rounded-lg border border-border/80 bg-black outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
           style={{ aspectRatio: `${width} / ${height}` }}
           onKeyDown={onKeyDown}
           onPointerDown={(e) => {
@@ -159,7 +159,7 @@ export function EditorViewer({
       )}
 
       {mode === "annotate" && (
-        <div className="flex flex-wrap items-center gap-2 text-xs">
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-card/60 px-2.5 py-2 text-xs">
           <ToggleGroup
             variant="outline"
             size="sm"
@@ -176,16 +176,19 @@ export function EditorViewer({
               <Eraser />
             </ToggleGroupItem>
           </ToggleGroup>
-          <Slider
-            className="w-32"
-            min={4}
-            max={120}
-            value={annotate.size}
-            onValueChange={(v) => {
-              if (typeof v === "number") setSize(v)
-            }}
-          />
-          <span className="text-muted-foreground">{annotate.size}px</span>
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">Размер</span>
+            <Slider
+              className="w-28"
+              min={4}
+              max={120}
+              value={annotate.size}
+              onValueChange={(v) => {
+                if (typeof v === "number") setSize(v)
+              }}
+            />
+            <span className="w-8 tabular-nums text-muted-foreground">{annotate.size}</span>
+          </div>
           <Button variant="outline" size="icon-sm" aria-label="Отменить" onClick={undo}>
             <Undo2 />
           </Button>
@@ -193,18 +196,18 @@ export function EditorViewer({
             <Trash />
           </Button>
           <span className="ml-auto text-muted-foreground">
-            Кадр {currentFrame} · {isDirty ? "сохранение…" : "маска сохранена"}
+            {isDirty ? "Сохранение…" : "Маска сохранена"}
           </span>
         </div>
       )}
 
       {mode === "detect" && (
-        <div className="flex flex-wrap items-center gap-2 text-xs">
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-card/60 px-2.5 py-2 text-xs">
           {onMaskOpacityChange && (
             <>
-              <span className="text-muted-foreground">Маска</span>
+              <span className="text-muted-foreground">Прозрачность маски</span>
               <Slider
-                className="w-32"
+                className="w-28"
                 min={0}
                 max={1}
                 step={0.05}

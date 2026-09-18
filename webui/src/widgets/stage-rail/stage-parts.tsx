@@ -72,27 +72,53 @@ export function BackendSelectors({
 export function StageSection({
   n,
   title,
+  hint,
   active,
+  open,
+  onOpenChange,
   children,
 }: {
   n: number
   title: string
+  hint?: string
   active: boolean
+  open: boolean
+  onOpenChange: (open: boolean) => void
   children: React.ReactNode
 }) {
   return (
     <section
       className={cn(
-        "flex flex-col gap-2 border-l-2 py-3 pl-3 pr-3",
-        active ? "border-l-primary" : "border-l-transparent",
+        "border-b border-border/60 last:border-b-0",
+        active && "bg-primary/[0.04]",
       )}
     >
-      <div className="flex items-center gap-2">
-        <span className={cn("size-2 rounded-full", active ? "bg-primary" : "bg-muted-foreground/40")} />
-        <h3 className="text-sm font-medium">{title}</h3>
-        <span className="text-[10px] text-muted-foreground">{n}</span>
-      </div>
-      {children}
+      <button
+        type="button"
+        className="flex w-full items-start gap-2.5 px-3 py-3 text-left hover:bg-muted/30"
+        onClick={() => onOpenChange(!open)}
+        aria-expanded={open}
+      >
+        <span
+          className={cn(
+            "mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold tabular-nums",
+            active ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground",
+          )}
+        >
+          {n}
+        </span>
+        <div className="min-w-0 flex-1">
+          <h3 className="text-sm font-medium leading-none">{title}</h3>
+          {hint && !open && <p className="mt-1 text-[11px] text-muted-foreground">{hint}</p>}
+        </div>
+        <span className="mt-0.5 text-[10px] text-muted-foreground">{open ? "▾" : "▸"}</span>
+      </button>
+      {open && (
+        <div className="flex flex-col gap-2.5 px-3 pb-3.5 pl-10">
+          {hint && <p className="-mt-1 text-[11px] text-muted-foreground">{hint}</p>}
+          {children}
+        </div>
+      )}
     </section>
   )
 }
@@ -120,21 +146,23 @@ export function LlmChip({
   }, [])
   usePoll(poll, 5000)
 
-  if (ok === null) return <span className="text-xs text-muted-foreground">LLM: проверяю…</span>
+  if (ok === null) return <span className="text-xs text-muted-foreground">Проверяю LLM…</span>
   if (!ok)
     return (
-      <span className="flex items-center gap-2 text-xs text-destructive">
+      <span className="flex flex-wrap items-center gap-2 text-xs text-destructive">
         Ollama недоступна
         {onOpenConfig && (
-          <Button size="xs" variant="link" onClick={onOpenConfig}>
-            Конфиг
+          <Button size="xs" variant="link" className="h-auto p-0" onClick={onOpenConfig}>
+            Открыть систему
           </Button>
         )}
       </span>
     )
   return (
     <div className="flex items-center gap-2 text-xs">
-      <Badge variant="secondary" className="text-ok">LLM готов</Badge>
+      <Badge variant="secondary" className="bg-ok/15 text-ok">
+        LLM готов
+      </Badge>
       <Select value={value} onValueChange={(v) => { if (v) onChange(v) }} disabled={disabled}>
         <SelectTrigger size="sm" className="flex-1">
           <SelectValue placeholder="Модель" />
