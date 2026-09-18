@@ -253,7 +253,10 @@ function AddModelDialog({
     setModelRef("")
     setTitle("")
     setError("")
-  }, [open, families])
+    // Reset only when the dialog opens. `families` is a new array every /api/poll
+    // tick; depending on it would wipe the chosen Ollama tag before submit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
+  }, [open])
 
   const selected = families.find((f) => f.id === backend) ?? families[0]
   const isOllama = selected?.ref_kind === "ollama"
@@ -266,7 +269,7 @@ function AddModelDialog({
       return
     }
     if (!backend || !modelRef.trim()) {
-      setError("Укажите семейство и модель")
+      setError(isOllama ? "Укажите тег Ollama" : "Укажите семейство и модель")
       return
     }
     try {
@@ -306,10 +309,13 @@ function AddModelDialog({
           </div>
           <div className="flex flex-col gap-1.5">
             <Label>{isOllama ? "Тег Ollama" : "Модель"}</Label>
-            {isOllama && ollamaModels.length > 0 ? (
-              <Select value={modelRef || undefined} onValueChange={(v) => { if (v) setModelRef(v) }}>
+            {isOllama && ollamaModels.length > 0 && (
+              <Select
+                value={ollamaModels.includes(modelRef) ? modelRef : undefined}
+                onValueChange={(v) => { if (v) setModelRef(v) }}
+              >
                 <SelectTrigger>
-                  <SelectValue placeholder="Выберите тег" />
+                  <SelectValue placeholder="Из установленных" />
                 </SelectTrigger>
                 <SelectContent>
                   {ollamaModels.map((m) => (
@@ -319,14 +325,13 @@ function AddModelDialog({
                   ))}
                 </SelectContent>
               </Select>
-            ) : (
-              <Input
-                value={modelRef}
-                onChange={(e) => setModelRef(e.target.value)}
-                placeholder={selected?.example || (isOllama ? "qwen2.5vl:3b" : "org/name")}
-                className="font-mono text-xs"
-              />
             )}
+            <Input
+              value={modelRef}
+              onChange={(e) => setModelRef(e.target.value)}
+              placeholder={selected?.example || (isOllama ? "qwen2.5vl:3b" : "org/name")}
+              className="font-mono text-xs"
+            />
           </div>
           <div className="flex flex-col gap-1.5">
             <Label>Название</Label>
