@@ -483,6 +483,7 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
           runAllError={runAllError}
           onOpenConfig={openConfig}
           onOpenResult={() => setViewerMode("result")}
+          onResultJobChange={setResultJob}
         />
       </aside>
     </div>

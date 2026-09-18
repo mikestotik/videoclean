@@ -78,10 +78,10 @@ class RunCleanup:
             raise PipelineError("--prompt is required (or pass manual targets/tracks/masks)")
         if not req.input_path.is_file():
             raise FileNotFoundError(req.input_path)
-        for fmt in cfg.formats:
-            dest = resolve_dest(req.output_path, fmt, cfg.formats)
-            if dest.exists() and not req.overwrite:
-                raise FileExistsError(f"{dest} exists (pass --overwrite)")
+        # Cleanup always emits baseline mp4; extra delivery formats are packaged on demand.
+        dest = resolve_dest(req.output_path, "mp4", ["mp4"])
+        if dest.exists() and not req.overwrite:
+            raise FileExistsError(f"{dest} exists (pass --overwrite)")
 
         job_id = req.job_id or self._new_job_id()
         paths = self._make_paths(data_dir / "jobs" / job_id)
@@ -420,39 +420,43 @@ class RunCleanup:
             self.progress.finish("verify", verify_note)
 
         self.progress.start("encode", detail="ffmpeg mezzanine")
-        mezz = paths.inpainted_dir.parent / "mezzanine.mp4"
+        mezz_work = paths.inpainted_dir.parent / "mezzanine.mp4"
         self.media.encode_mezzanine(
             paths.inpainted_dir,
             req.input_path,
-            mezz,
+            mezz_work,
             manifest.fps_ratio,
             manifest.has_audio,
             len(frames),
             paths.ffmpeg_log,
         )
+        # Keep master outside process/ so keep_workdir=false does not wipe it.
+        mezz = paths.output_dir / "mezzanine.mp4"
+        if mezz_work.resolve() != mezz.resolve():
+            shutil.copy2(mezz_work, mezz)
         self.progress.finish("encode", mezz.name)
 
-        self.progress.start("package", total=len(cfg.formats))
+        # Delivery formats are packaged on demand; always emit baseline mp4 for playback.
+        self.progress.start("package", total=1, detail="mp4")
         outputs: dict[str, str] = {}
-        for i, fmt in enumerate(cfg.formats, start=1):
-            dest = resolve_dest(req.output_path, fmt, cfg.formats)
-            if dest.exists():
-                if dest.is_dir():
-                    shutil.rmtree(dest)
-                else:
-                    dest.unlink()
-            artifact = self.media.package(
-                mezz,
-                dest,
-                fmt,
-                width=manifest.width,
-                height=manifest.height,
-                fps=manifest.fps,
-                log_file=paths.ffmpeg_log,
-            )
-            outputs[fmt] = str(artifact)
-            self.progress.tick("package", i, len(cfg.formats), fmt)
-        self.progress.finish("package", ", ".join(cfg.formats))
+        dest = resolve_dest(req.output_path, "mp4", ["mp4"])
+        if dest.exists():
+            if dest.is_dir():
+                shutil.rmtree(dest)
+            else:
+                dest.unlink()
+        artifact = self.media.package(
+            mezz,
+            dest,
+            "mp4",
+            width=manifest.width,
+            height=manifest.height,
+            fps=manifest.fps,
+            log_file=paths.ffmpeg_log,
+        )
+        outputs["mp4"] = str(artifact)
+        self.progress.tick("package", 1, 1, "mp4")
+        self.progress.finish("package", "mp4")
 
         self.progress.start("report")
         report.update(
@@ -474,7 +478,8 @@ class RunCleanup:
                     {"label": d.label, "coverage": d.coverage, "kind": d.mask_kind, "notes": d.notes}
                     for d in detections
                 ],
-                "formats": cfg.formats,
+                "mezzanine": str(mezz),
+                "formats": ["mp4"],
                 "outputs": outputs,
                 "output": next(iter(outputs.values())),
                 "workdir": str(paths.root),

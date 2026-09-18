@@ -36,6 +36,7 @@ from server.service import (
     list_presets,
     mask_path,
     options_payload,
+    queue_package_job,
     queue_preview_from_job,
     queue_preview_job,
     queue_source_preview,
@@ -545,6 +546,44 @@ def create_app(state: AppState) -> FastAPI:
             raise HTTPException(409, str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
+
+    @app.post("/api/jobs/{job_id}/package")
+    async def job_package(
+        job_id: str,
+        st: AppState = Depends(get_state),
+        formats: str = Form(""),
+        webm_crf: str = Form(""),
+        segment_seconds: str = Form(""),
+        overwrite: str = Form("1"),
+    ):
+        """Queue on-demand conversion from the job mezzanine into delivery formats."""
+        fmts = [f.strip().lower() for f in formats.split(",") if f.strip()]
+        if not fmts:
+            raise HTTPException(400, "formats is required (e.g. webm,mov)")
+        try:
+            crf = int(webm_crf) if str(webm_crf).strip() else 32
+        except ValueError as exc:
+            raise HTTPException(400, "webm_crf must be an integer") from exc
+        try:
+            seg = int(segment_seconds) if str(segment_seconds).strip() else 6
+        except ValueError as exc:
+            raise HTTPException(400, "segment_seconds must be an integer") from exc
+        try:
+            new_id = queue_package_job(
+                st,
+                job_id,
+                fmts,
+                webm_crf=crf,
+                segment_seconds=seg,
+                overwrite=str(overwrite).strip().lower() not in {"0", "false", "no"},
+            )
+        except PipelineError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        row = st.jobs.get(new_id)
+        body = job_dict(st, row) if row is not None else {"id": new_id, "state": "QUEUED"}
+        body["poll"] = f"/api/jobs/{new_id}"
+        body["parent_job_id"] = job_id
+        return JSONResponse(body, status_code=201)
 
     @app.get("/api/jobs/{job_id}/output")
     def job_output(

@@ -343,8 +343,15 @@ export function Library({
     [jobs, selectedId],
   )
   const jobsByKind = useMemo(() => {
-    const map: Record<JobKind, Job[]> = { prompt: [], preview: [], run: [] }
-    for (const job of sourceJobs) map[job.kind].push(job)
+    const map: Record<"prompt" | "preview" | "run", Job[]> = {
+      prompt: [],
+      preview: [],
+      run: [],
+    }
+    for (const job of sourceJobs) {
+      if (job.kind === "package") continue
+      if (job.kind in map) map[job.kind as "prompt" | "preview" | "run"].push(job)
+    }
     for (const kind of KIND_ORDER) {
       map[kind].sort((a, b) => b.created_at.localeCompare(a.created_at))
     }

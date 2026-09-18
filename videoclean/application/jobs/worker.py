@@ -96,6 +96,9 @@ class JobWorker:
         if payload.get("kind") == "prompt":
             self._run_prompt(job_id, row, payload)
             return
+        if payload.get("kind") == "package":
+            self._run_package(job_id, row, payload)
+            return
         try:
             req = cleanup_request_from_row(row)
             runner = self.build_runner(req.config, None, self.jobs, job_id)
@@ -165,6 +168,120 @@ class JobWorker:
         current = self.jobs.get(job_id)
         if current is not None and current["state"] == "RUNNING":
             self.jobs.upsert(job_id, "COMPLETED", report=report)
+
+    def _run_package(self, job_id: str, row, payload: dict) -> None:
+        from videoclean.composition import build_packager
+        from videoclean.domain.formats import parse_formats
+
+        started = utc_now().isoformat()
+
+        def set_progress(fraction: float, detail: str = "", stage: str = "package") -> None:
+            self.jobs.upsert(
+                job_id,
+                "RUNNING",
+                progress={
+                    "stage": stage,
+                    "fraction": max(0.0, min(0.99, float(fraction))),
+                    "detail": detail,
+                    "heartbeat_at": utc_now().isoformat(),
+                    "started_at": started,
+                },
+            )
+
+        try:
+            if self.jobs.is_cancel_requested(job_id):
+                raise JobCancelled("cancelled")
+            parent_id = str(payload.get("parent_job_id") or "").strip()
+            if not parent_id:
+                raise RuntimeError("parent_job_id is required for package jobs")
+            parent = self.jobs.get(parent_id)
+            if parent is None:
+                raise RuntimeError(f"unknown parent job {parent_id}")
+            src = Path(row["input_path"] or payload.get("input_path") or "")
+            if not src.is_file():
+                raise RuntimeError(f"mezzanine missing: {src}")
+            out_base = Path(row["output_path"] or payload.get("output_path") or "")
+            fmts = parse_formats(payload.get("formats") or ["mp4"])
+            webm_crf = int(payload.get("webm_crf") or 32)
+            segment_seconds = int(payload.get("segment_seconds") or 6)
+            overwrite = bool(payload.get("overwrite", True))
+            log_file = out_base.parent / "ffmpeg-package.log"
+            log_file.parent.mkdir(parents=True, exist_ok=True)
+            set_progress(0.05, f"0/{len(fmts)}")
+
+            def on_format(fmt: str, i: int, total: int, _path: Path) -> None:
+                if self.jobs.is_cancel_requested(job_id):
+                    raise JobCancelled("cancelled")
+                set_progress(i / max(total, 1), f"{fmt} ({i}/{total})")
+
+            artifacts = build_packager().execute(
+                src,
+                out_base,
+                fmts,
+                overwrite,
+                log_file,
+                segment_seconds=segment_seconds,
+                webm_crf=webm_crf,
+                on_format=on_format,
+            )
+            # Merge into parent report so downloads stay on the cleanup job.
+            try:
+                parent_report = json.loads(parent["report_json"] or "{}")
+            except (TypeError, ValueError):
+                parent_report = {}
+            if not isinstance(parent_report, dict):
+                parent_report = {}
+            outputs = dict(parent_report.get("outputs") or {})
+            for fmt, path in artifacts.items():
+                outputs[fmt] = str(path)
+            parent_report["outputs"] = outputs
+            parent_report["formats"] = sorted({*list(parent_report.get("formats") or []), *fmts})
+            parent_report["packagedAt"] = utc_now().isoformat()
+            self.jobs.upsert(parent_id, "COMPLETED", report=parent_report)
+            workdir = parent_report.get("workdir")
+            if isinstance(workdir, str) and workdir:
+                report_path = Path(workdir) / "output" / "report.json"
+                if report_path.parent.is_dir():
+                    report_path.write_text(
+                        json.dumps(parent_report, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+            report = {
+                "kind": "package",
+                "parent_job_id": parent_id,
+                "formats": fmts,
+                "outputs": {fmt: str(path) for fmt, path in artifacts.items()},
+                "state": "COMPLETED",
+                "finishedAt": utc_now().isoformat(),
+            }
+        except JobCancelled:
+            self.jobs.upsert(job_id, "CANCELLED", error="cancelled")
+            return
+        except Exception as exc:  # noqa: BLE001 — queue must isolate job failures
+            current = self.jobs.get(job_id)
+            if current is None:
+                return
+            if current["state"] in {"FAILED", "CANCELLED"}:
+                return
+            if self.jobs.is_cancel_requested(job_id):
+                self.jobs.upsert(job_id, "CANCELLED", error=str(exc)[:500])
+            else:
+                self.jobs.upsert(job_id, "FAILED", error=str(exc)[:800])
+            return
+        current = self.jobs.get(job_id)
+        if current is not None and current["state"] == "RUNNING":
+            self.jobs.upsert(
+                job_id,
+                "COMPLETED",
+                report=report,
+                progress={
+                    "stage": "package",
+                    "fraction": 1.0,
+                    "detail": "done",
+                    "heartbeat_at": utc_now().isoformat(),
+                    "started_at": started,
+                },
+            )
 
     def _run_prompt(self, job_id: str, row, payload: dict) -> None:
         from videoclean.application.use_cases.build_prompt import BuildPromptRequest

@@ -40,4 +40,6 @@ class MediaGateway(Protocol):
         height: int,
         fps: float,
         log_file: Path,
+        segment_seconds: int = 6,
+        webm_crf: int = 32,
     ) -> Path: ...

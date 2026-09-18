@@ -608,6 +608,8 @@ def job_output_artifacts(row) -> dict[str, Path]:
         for fmt, path_str in raw.items():
             if not fmt or path_str is None:
                 continue
+            if str(fmt).lower() == "mezzanine":
+                continue
             path = Path(str(path_str))
             if path.exists():
                 out[str(fmt)] = path
@@ -618,6 +620,90 @@ def job_output_artifacts(row) -> dict[str, Path]:
         suffix = output_path.suffix.lstrip(".").lower() or "mp4"
         out[suffix] = output_path
     return out
+
+
+def resolve_job_mezzanine(row) -> Path | None:
+    """Master file for on-demand packaging (mezzanine, else a single-file delivery)."""
+    report = _as_dict(row["report_json"] if "report_json" in row.keys() else None)
+    candidates: list[Path] = []
+    mezz = report.get("mezzanine")
+    if isinstance(mezz, str) and mezz.strip():
+        candidates.append(Path(mezz))
+    workdir = report.get("workdir")
+    if isinstance(workdir, str) and workdir.strip():
+        root = Path(workdir)
+        candidates.append(root / "output" / "mezzanine.mp4")
+        candidates.append(root / "process" / "mezzanine.mp4")
+    raw = report.get("outputs")
+    if isinstance(raw, dict):
+        for key in ("mp4", "mov", "mkv", "webm"):
+            path_str = raw.get(key)
+            if path_str:
+                candidates.append(Path(str(path_str)))
+    output_path = Path(row["output_path"] or "") if row["output_path"] else None
+    if output_path and output_path.is_file():
+        candidates.append(output_path)
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None
+
+
+def queue_package_job(
+    state: AppState,
+    parent_job_id: str,
+    formats: list[str],
+    *,
+    webm_crf: int = 32,
+    segment_seconds: int = 6,
+    overwrite: bool = True,
+) -> str:
+    """Queue on-demand packaging from a completed cleanup job's mezzanine."""
+    from videoclean.domain.formats import parse_formats
+
+    row = state.jobs.get(parent_job_id)
+    if row is None:
+        raise PipelineError(f"unknown job {parent_job_id}")
+    if row["state"] != "COMPLETED":
+        raise PipelineError(f"job is {row['state']}")
+    request = _as_dict(row["request_json"] if "request_json" in row.keys() else None)
+    kind = str(request.get("kind") or "run")
+    if kind != "run":
+        raise PipelineError("only completed cleanup jobs can be packaged")
+    mezz = resolve_job_mezzanine(row)
+    if mezz is None:
+        raise PipelineError("mezzanine missing; re-run removal to create a master file")
+    try:
+        fmts = parse_formats(formats)
+    except ValueError as exc:
+        raise PipelineError(str(exc)) from exc
+    job_id = new_job_id()
+    report = _as_dict(row["report_json"] if "report_json" in row.keys() else None)
+    workdir = report.get("workdir")
+    if isinstance(workdir, str) and workdir.strip():
+        out_base = Path(workdir) / "output" / "cleaned"
+    else:
+        out_base = Path(state.data_dir) / "jobs" / parent_job_id / "output" / "cleaned"
+    out_base.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "kind": "package",
+        "parent_job_id": parent_job_id,
+        "formats": fmts,
+        "webm_crf": int(webm_crf),
+        "segment_seconds": int(segment_seconds),
+        "overwrite": bool(overwrite),
+        "input_path": str(mezz),
+        "output_path": str(out_base),
+        "source_id": (row["source_id"] if "source_id" in row.keys() else None) or request.get("source_id"),
+    }
+    return state.manage.submit(
+        payload,
+        mezz,
+        out_base,
+        row["prompt"] or "",
+        job_id=job_id,
+        source_id=payload.get("source_id"),
+    )
 
 
 def job_dict(state: AppState, row) -> dict[str, Any]:
@@ -670,6 +756,12 @@ def job_dict(state: AppState, row) -> dict[str, Any]:
         },
         "has_output": has_output,
         "has_input": has_input,
+        "can_package": bool(
+            state_name == "COMPLETED"
+            and (request.get("kind") or "run") == "run"
+            and resolve_job_mezzanine(row) is not None
+        ),
+        "parent_job_id": request.get("parent_job_id"),
         "output_url": primary_url,
         "outputs": outputs,
         "input_url": f"/api/jobs/{job_id}/input" if has_input else None,

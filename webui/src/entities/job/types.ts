@@ -1,6 +1,6 @@
 export type JobState = "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED"
 
-export type JobKind = "run" | "preview" | "prompt"
+export type JobKind = "run" | "preview" | "prompt" | "package"
 
 export type Job = {
   id: string
@@ -18,6 +18,9 @@ export type Job = {
   source_name: string | null
   has_output: boolean
   has_input: boolean
+  /** True when a completed cleanup job still has a mezzanine for on-demand convert. */
+  can_package?: boolean
+  parent_job_id?: string | null
   output_url: string | null
   /** fmt → download URL (mp4/… or zip for HLS/DASH packages). */
   outputs?: Record<string, string>

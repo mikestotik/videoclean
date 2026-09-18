@@ -56,6 +56,25 @@ export function submitJob(fields: SubmitJobFields): Promise<Job> {
 }
 
 /** Download a completed job artifact via fetch (keeps same-origin cookies/auth). */
+export type PackageJobFields = {
+  formats: string[]
+  webm_crf?: number
+  segment_seconds?: number
+  overwrite?: boolean
+}
+
+/** Queue on-demand packaging from a completed cleanup job's mezzanine. */
+export function packageJob(jobId: string, fields: PackageJobFields): Promise<Job> {
+  const form = new FormData()
+  form.append("formats", fields.formats.join(","))
+  if (fields.webm_crf !== undefined) form.append("webm_crf", String(fields.webm_crf))
+  if (fields.segment_seconds !== undefined) {
+    form.append("segment_seconds", String(fields.segment_seconds))
+  }
+  if (fields.overwrite !== undefined) form.append("overwrite", fields.overwrite ? "1" : "0")
+  return api<Job>(`/api/jobs/${jobId}/package`, { method: "POST", body: form })
+}
+
 export async function downloadJobOutput(url: string, filename: string): Promise<void> {
   const res = await fetch(url)
   if (!res.ok) {

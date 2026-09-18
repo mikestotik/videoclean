@@ -173,6 +173,7 @@ class FFmpegMedia:
         fps: float,
         log_file: Path,
         segment_seconds: int = 6,
+        webm_crf: int = 32,
     ) -> Path:
         if fmt == "mp4":
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -194,6 +195,7 @@ class FFmpegMedia:
             _run([_ffmpeg(), "-y", "-hide_banner", "-i", str(src), "-c", "copy", str(dest)], log_file)
             return dest
         if fmt == "webm":
+            crf = max(10, min(63, int(webm_crf)))
             dest.parent.mkdir(parents=True, exist_ok=True)
             _run(
                 [
@@ -207,7 +209,7 @@ class FFmpegMedia:
                     "-b:v",
                     "0",
                     "-crf",
-                    "32",
+                    str(crf),
                     "-c:a",
                     "libopus",
                     "-b:a",
@@ -225,11 +227,17 @@ class FFmpegMedia:
                 height=height,
                 fps=fps,
                 log_file=log_file,
-                segment_seconds=segment_seconds,
+                segment_seconds=max(1, int(segment_seconds)),
                 segment_type="fmp4" if fmt == "hls-fmp4" else "mpegts",
             )
         if fmt == "dash":
-            return _package_dash(src, dest, fps=fps, log_file=log_file, segment_seconds=segment_seconds)
+            return _package_dash(
+                src,
+                dest,
+                fps=fps,
+                log_file=log_file,
+                segment_seconds=max(1, int(segment_seconds)),
+            )
         raise PipelineError(f"no packager for {fmt}")
 
 

@@ -207,7 +207,6 @@ export function toRunParams(params: EditorParams): Record<string, string | numbe
     segmenter: params.run.segmenter,
     segmenter_model: params.run.segmenter_model,
     device: params.run.device,
-    formats: params.run.formats.join(","),
     mask_policy: params.maskPolicy,
     ...params.advanced,
   }

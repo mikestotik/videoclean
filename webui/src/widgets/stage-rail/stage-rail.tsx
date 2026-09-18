@@ -2,7 +2,15 @@ import { useEffect, useRef, useState } from "react"
 import { useInterpret } from "@features/interpret"
 import { tracksAreFullLength, useDetectRun } from "@features/detect-run"
 import { useInpaintRun } from "@features/inpaint-run"
-import { cancelJob, downloadJobOutput, outputDownloadName, type Job } from "@/entities/job"
+import {
+  cancelJob,
+  downloadJobOutput,
+  getJob,
+  outputDownloadName,
+  packageJob,
+  pollJobToCompletion,
+  type Job,
+} from "@/entities/job"
 import type { Source } from "@/entities/source"
 import { Button } from "@/shared/ui/button"
 import { Label } from "@/shared/ui/label"
@@ -49,19 +57,28 @@ type Props = {
   runAllError?: string
   onOpenConfig?: () => void
   onOpenResult?: () => void
+  onResultJobChange?: (job: Job) => void
 }
 
-function ResultDownloads({
+function ResultPanel({
   job,
-  wantedFormats,
   onOpenResult,
+  onResultJobChange,
 }: {
   job: Job
-  wantedFormats: string[]
   onOpenResult?: () => void
+  onResultJobChange?: (job: Job) => void
 }) {
+  const [convertFormats, setConvertFormats] = useState<string[]>(["webm"])
+  const [webmCrf, setWebmCrf] = useState(32)
+  const [segmentSeconds, setSegmentSeconds] = useState(6)
+  const [packBusy, setPackBusy] = useState(false)
+  const [packJobId, setPackJobId] = useState<string | null>(null)
+  const [packProgress, setPackProgress] = useState({ fraction: 0, detail: "", eta: "" })
+  const [packError, setPackError] = useState("")
   const [busyFmt, setBusyFmt] = useState<string | null>(null)
   const [dlError, setDlError] = useState("")
+
   const entries =
     job.outputs && Object.keys(job.outputs).length > 0
       ? Object.entries(job.outputs)
@@ -69,7 +86,10 @@ function ResultDownloads({
         ? [["default", job.output_url] as const]
         : []
   const built = new Set(entries.map(([fmt]) => fmt))
-  const missing = wantedFormats.filter((f) => !built.has(f))
+  const needsWebm = convertFormats.includes("webm")
+  const needsSegment = convertFormats.some((f) => f === "hls-fmp4" || f === "hls-ts" || f === "dash")
+  const canPackage = job.can_package !== false
+  const allReady = convertFormats.length > 0 && convertFormats.every((f) => built.has(f))
 
   const onDownload = async (fmt: string, url: string) => {
     setDlError("")
@@ -83,36 +103,153 @@ function ResultDownloads({
     }
   }
 
+  const onConvert = async () => {
+    if (!canPackage || packBusy || convertFormats.length === 0) return
+    setPackError("")
+    setPackBusy(true)
+    setPackProgress({ fraction: 0, detail: "", eta: "" })
+    try {
+      const queued = await packageJob(job.id, {
+        formats: convertFormats,
+        webm_crf: needsWebm ? webmCrf : undefined,
+        segment_seconds: needsSegment ? segmentSeconds : undefined,
+        overwrite: true,
+      })
+      setPackJobId(queued.id)
+      await pollJobToCompletion(queued.id, (j) => {
+        setPackProgress({ fraction: j.fraction, detail: j.detail, eta: j.eta })
+      })
+      const refreshed = await getJob(job.id)
+      onResultJobChange?.(refreshed)
+    } catch (e) {
+      setPackError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setPackBusy(false)
+      setPackJobId(null)
+    }
+  }
+
   return (
-    <>
-      <p className="text-xs text-ok">Готово.</p>
-      {missing.length > 0 && (
+    <div className="flex flex-col gap-2">
+      <p className="text-xs text-ok">Удаление готово.</p>
+      {onOpenResult && (
+        <Button size="sm" variant="outline" className="w-fit" onClick={onOpenResult}>
+          Сравнить до/после
+        </Button>
+      )}
+
+      <div className="flex flex-col gap-1.5 text-xs">
+        <FieldLabel hint="Конвертация из мастер-файла удаления. Можно запускать повторно в разные форматы.">
+          Форматы для скачивания
+        </FieldLabel>
+        <div className="flex flex-col gap-1.5">
+          {OUTPUT_FORMATS.map((f) => {
+            const meta = FORMAT_META[f]
+            const ready = built.has(f)
+            return (
+              <label key={f} className="flex items-center gap-2">
+                <Switch
+                  size="sm"
+                  checked={convertFormats.includes(f)}
+                  disabled={packBusy || !canPackage}
+                  onCheckedChange={(checked) => {
+                    setConvertFormats((prev) => {
+                      const next = checked ? [...prev, f] : prev.filter((x) => x !== f)
+                      return next.length ? next : prev
+                    })
+                  }}
+                />
+                <span className="min-w-0 flex-1">
+                  {meta?.label ?? f}
+                  {ready ? <span className="ml-1 text-ok">· есть</span> : null}
+                </span>
+                {meta?.hint ? <ParamHint text={meta.hint} /> : null}
+              </label>
+            )
+          })}
+        </div>
+      </div>
+
+      {needsWebm && (
+        <ParamSlider
+          label="WebM CRF"
+          hint="Меньше — лучше качество и больше файл (VP9). Обычно 28–36."
+          value={webmCrf}
+          min={18}
+          max={45}
+          step={1}
+          disabled={packBusy || !canPackage}
+          onChange={setWebmCrf}
+        />
+      )}
+      {needsSegment && (
+        <ParamSlider
+          label="Сегмент, с"
+          hint="Длина сегмента HLS/DASH в секундах."
+          value={segmentSeconds}
+          min={2}
+          max={12}
+          step={1}
+          disabled={packBusy || !canPackage}
+          onChange={setSegmentSeconds}
+        />
+      )}
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          size="sm"
+          disabled={!canPackage || packBusy || convertFormats.length === 0}
+          onClick={() => void onConvert()}
+        >
+          {packBusy ? "Конвертация…" : allReady ? "Переконвертировать" : "Сконвертировать"}
+        </Button>
+        {packBusy && (
+          <>
+            <span className="text-xs text-muted-foreground">
+              {Math.round(packProgress.fraction * 100)}%
+              {packProgress.detail ? ` · ${packProgress.detail}` : ""}
+              {packProgress.eta ? ` · ETA ${packProgress.eta}` : ""}
+            </span>
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={!packJobId}
+              onClick={() => packJobId && void cancelJob(packJobId)}
+            >
+              Стоп
+            </Button>
+          </>
+        )}
+      </div>
+      {!canPackage && (
         <p className="text-[11px] text-muted-foreground">
-          В этом прогоне нет: {missing.map((f) => FORMAT_META[f]?.label ?? f).join(", ")}.
-          Включите формат выше и снова запустите удаление.
+          Мастер-файл недоступен — перезапустите удаление.
         </p>
       )}
-      <div className="flex flex-wrap gap-2">
-        {onOpenResult && (
-          <Button size="sm" variant="outline" onClick={onOpenResult}>
-            Сравнить до/после
-          </Button>
-        )}
-        {entries.map(([fmt, url]) => (
-          <Button
-            key={fmt}
-            size="sm"
-            disabled={busyFmt === fmt}
-            onClick={() => void onDownload(fmt, url)}
-          >
-            {busyFmt === fmt
-              ? "…"
-              : `Скачать ${FORMAT_META[fmt]?.label ?? (fmt === "default" ? "файл" : fmt)}`}
-          </Button>
-        ))}
-      </div>
+      {packError && <p className="text-xs text-destructive">{packError}</p>}
+
+      {entries.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          <FieldLabel hint="Готовые файлы этого результата.">Скачать</FieldLabel>
+          <div className="flex flex-wrap gap-2">
+            {entries.map(([fmt, url]) => (
+              <Button
+                key={fmt}
+                size="sm"
+                variant="secondary"
+                disabled={busyFmt === fmt}
+                onClick={() => void onDownload(fmt, url)}
+              >
+                {busyFmt === fmt
+                  ? "…"
+                  : FORMAT_META[fmt]?.label ?? (fmt === "default" ? "файл" : fmt)}
+              </Button>
+            ))}
+          </div>
+        </div>
+      )}
       {dlError && <p className="text-xs text-destructive">{dlError}</p>}
-    </>
+    </div>
   )
 }
 
@@ -131,6 +268,7 @@ export function StageRail({
   runAllError,
   onOpenConfig,
   onOpenResult,
+  onResultJobChange,
 }: Props) {
   const [inpaintMode, setInpaintMode] = useState<InpaintMode>("tracks")
   const [advancedOpen, setAdvancedOpen] = useState(false)
@@ -554,46 +692,18 @@ export function StageRail({
       <StageSection
         n={5}
         title="Результат"
-        hint="Форматы, скачивание и сравнение до/после"
+        hint="Конвертация и скачивание из мастер-файла удаления"
         active={activeStage === 5}
         done={stageDone[5]}
         open={stageOpen(5)}
         onOpenChange={(o) => setStageOpen(5, o)}
       >
-        <div className="flex flex-col gap-1.5 text-xs">
-          <FieldLabel hint="Какие контейнеры собрать при следующем удалении. Уже готовый джоб не перепаковывается сам — нужен новый прогон.">
-            Форматы следующего запуска
-          </FieldLabel>
-          <div className="flex flex-col gap-1.5">
-            {OUTPUT_FORMATS.map((f) => {
-              const meta = FORMAT_META[f]
-              return (
-                <label key={f} className="flex items-center gap-2">
-                  <Switch
-                    size="sm"
-                    checked={params.run.formats.includes(f)}
-                    disabled={noSource}
-                    onCheckedChange={(checked) => {
-                      const next = checked
-                        ? [...params.run.formats, f]
-                        : params.run.formats.filter((x) => x !== f)
-                      set({
-                        run: {
-                          ...params.run,
-                          formats: next.length ? next : ["mp4"],
-                        },
-                      })
-                    }}
-                  />
-                  <span className="min-w-0 flex-1">{meta?.label ?? f}</span>
-                  {meta?.hint ? <ParamHint text={meta.hint} /> : null}
-                </label>
-              )
-            })}
-          </div>
-        </div>
         {resultJob?.state === "COMPLETED" ? (
-          <ResultDownloads job={resultJob} wantedFormats={params.run.formats} onOpenResult={onOpenResult} />
+          <ResultPanel
+            job={resultJob}
+            onOpenResult={onOpenResult}
+            onResultJobChange={onResultJobChange}
+          />
         ) : (
           <p className="text-xs text-muted-foreground">Результата ещё нет. Запустите удаление выше.</p>
         )}
