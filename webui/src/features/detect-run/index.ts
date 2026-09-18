@@ -12,9 +12,59 @@ export type DetectTrack = {
   label: string
   motion?: string
   boxes: (DetectBox | null)[]
+  /** Manual (or restored) anchor frames into `boxes` indices. */
+  keyframes: number[]
 }
 
+export type BoxEditMode = "frame" | "hold"
+
 type ReportBody = { tracks?: unknown }
+
+function sortedUnique(nums: number[]): number[] {
+  return [...new Set(nums.filter((n) => Number.isFinite(n)))].sort((a, b) => a - b)
+}
+
+function parseKeyframes(raw: unknown, boxCount: number): number[] {
+  if (!Array.isArray(raw)) return []
+  return sortedUnique(
+    raw.map((v) => Number(v)).filter((n) => Number.isInteger(n) && n >= 0 && n < boxCount),
+  )
+}
+
+/** Hold `box` from `frame` until the next keyframe (exclusive), or end. */
+export function applyBoxEdit(
+  track: DetectTrack,
+  frame: number,
+  box: DetectBox,
+  mode: BoxEditMode,
+): DetectTrack {
+  if (frame < 0 || frame >= track.boxes.length) return track
+  const boxes = track.boxes.slice()
+  const keyframes = new Set(track.keyframes)
+  keyframes.add(frame)
+  boxes[frame] = box
+  if (mode === "hold") {
+    const nextKey = [...keyframes].filter((k) => k > frame).sort((a, b) => a - b)[0]
+    const end = nextKey ?? boxes.length
+    for (let i = frame + 1; i < end; i++) boxes[i] = box
+  }
+  return { ...track, boxes, keyframes: sortedUnique([...keyframes]) }
+}
+
+/** Drop a key at `frame` and re-hold from the previous key until the next. */
+export function clearTrackKey(track: DetectTrack, frame: number): DetectTrack {
+  if (!track.keyframes.includes(frame)) return track
+  const keyframes = track.keyframes.filter((k) => k !== frame)
+  const prev = [...keyframes].filter((k) => k < frame).sort((a, b) => a - b).at(-1)
+  if (prev === undefined) return { ...track, keyframes }
+  const prevBox = track.boxes[prev]
+  if (!prevBox) return { ...track, keyframes }
+  const nextKey = keyframes.find((k) => k > frame)
+  const end = nextKey ?? track.boxes.length
+  const boxes = track.boxes.slice()
+  for (let i = prev + 1; i < end; i++) boxes[i] = prevBox
+  return { ...track, boxes, keyframes }
+}
 
 export function parseTracks(value: unknown): DetectTrack[] {
   if (!Array.isArray(value)) return []
@@ -35,6 +85,7 @@ export function parseTracks(value: unknown): DetectTrack[] {
       label: String(r.label ?? ""),
       motion: r.motion === undefined ? undefined : String(r.motion),
       boxes,
+      keyframes: parseKeyframes(r.keyframes, boxes.length),
     })
   }
   return tracks
@@ -70,6 +121,7 @@ export function useDetectRun(source: Source | null) {
   const [tracks, setTracks] = useState<DetectTrack[]>([])
   const [excludedIds, setExcludedIds] = useState<number[]>([])
   const [selectedTrackId, setSelectedTrackId] = useState<number | null>(null)
+  const [boxEditMode, setBoxEditMode] = useState<BoxEditMode>("hold")
   const runIdRef = useRef(0)
 
   const [prevSourceId, setPrevSourceId] = useState(source?.id)
@@ -81,6 +133,7 @@ export function useDetectRun(source: Source | null) {
     setTracks([])
     setExcludedIds([])
     setSelectedTrackId(null)
+    setBoxEditMode("hold")
     setError("")
   }
 
@@ -167,15 +220,17 @@ export function useDetectRun(source: Source | null) {
     setExcludedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
   }, [])
 
-  const patchBox = useCallback((id: number, frame: number, box: DetectBox) => {
-    setTracks((prev) =>
-      prev.map((t) => {
-        if (t.id !== id || frame < 0 || frame >= t.boxes.length) return t
-        const boxes = t.boxes.slice()
-        boxes[frame] = box
-        return { ...t, boxes }
-      }),
-    )
+  const patchBox = useCallback(
+    (id: number, frame: number, box: DetectBox) => {
+      setTracks((prev) =>
+        prev.map((t) => (t.id === id ? applyBoxEdit(t, frame, box, boxEditMode) : t)),
+      )
+    },
+    [boxEditMode],
+  )
+
+  const clearKey = useCallback((id: number, frame: number) => {
+    setTracks((prev) => prev.map((t) => (t.id === id ? clearTrackKey(t, frame) : t)))
   }, [])
 
   const enabledTracks = tracks.filter((t) => !excludedIds.includes(t.id))
@@ -195,6 +250,9 @@ export function useDetectRun(source: Source | null) {
     setSelectedTrackId,
     toggleTrack,
     patchBox,
+    clearKey,
+    boxEditMode,
+    setBoxEditMode,
     loadFromJob,
   }
 }

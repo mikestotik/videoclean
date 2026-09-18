@@ -241,6 +241,22 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
     })
   }, [detect.tracks, detect.excludedIds, detect.manifest, currentFrame, probe?.frame_count])
 
+  const selectedTrack = useMemo(
+    () => detect.tracks.find((t) => t.id === detect.selectedTrackId) ?? null,
+    [detect.tracks, detect.selectedTrackId],
+  )
+
+  /** Map box-array key indices → video frame numbers for the timeline. */
+  const keyframeFrames = useMemo(() => {
+    if (!selectedTrack || !probe) return []
+    const n = probe.frame_count
+    if (selectedTrack.boxes.length === n) return selectedTrack.keyframes
+    const previewFrames = detect.manifest?.frames ?? []
+    return selectedTrack.keyframes
+      .map((i) => previewFrames[i]?.index)
+      .filter((f): f is number => typeof f === "number")
+  }, [selectedTrack, probe, detect.manifest])
+
   const resultJobId = inpaint.lastJobId
   if (resultJob && resultJob.id !== resultJobId) setResultJob(null)
   useEffect(() => {
@@ -410,6 +426,25 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
               onFrameChange={setCurrentFrame}
               annotatedFrames={annotatedFrames}
               maskedFrames={maskedFrames}
+              keyframeFrames={viewerMode === "detect" ? keyframeFrames : []}
+              trackLabel={
+                viewerMode === "detect" && selectedTrack
+                  ? selectedTrack.label || `трек ${selectedTrack.id}`
+                  : null
+              }
+              onClearKey={
+                viewerMode === "detect" && selectedTrack
+                  ? (frame) => {
+                      const n = probe.frame_count
+                      if (selectedTrack.boxes.length === n) {
+                        detect.clearKey(selectedTrack.id, frame)
+                        return
+                      }
+                      const i = (detect.manifest?.frames ?? []).findIndex((f) => f.index === frame)
+                      if (i >= 0) detect.clearKey(selectedTrack.id, i)
+                    }
+                  : undefined
+              }
             />
           </div>
         </>

@@ -344,6 +344,23 @@ export function StageRail({
             {tracksReady ? " · готово к удалению" : params.detect.all ? "" : " · только осмотр"}
           </p>
         )}
+        {hasDetectResult && (
+          <div className="space-y-1.5">
+            <Label className="text-[11px] text-muted-foreground">Правка рамки</Label>
+            <ToggleGroup
+              variant="outline"
+              size="sm"
+              value={[detect.boxEditMode]}
+              onValueChange={(v) => {
+                const next = v.at(-1)
+                if (next === "frame" || next === "hold") detect.setBoxEditMode(next)
+              }}
+            >
+              <ToggleGroupItem value="hold">Протянуть вперёд</ToggleGroupItem>
+              <ToggleGroupItem value="frame">Только кадр</ToggleGroupItem>
+            </ToggleGroup>
+          </div>
+        )}
       </StageSection>
 
       <StageSection
