@@ -12,7 +12,7 @@ from videoclean.application.verify_quality import blend_overlap
 
 
 def resolve_workers(requested: int, *, device: str, video_aware: bool) -> int:
-    """Pick worker count. GPU video models stay serial unless explicitly >1."""
+    """Pick worker count. Video-aware (ProPainter) stays serial unless explicitly >1."""
     if video_aware:
         return 1
     if requested and requested > 0:
@@ -32,7 +32,7 @@ def inpaint_frames(
     workers: int = 1,
     on_progress: Callable[[int, int], None] | None = None,
 ) -> list[np.ndarray]:
-    """Inpaint every frame; use threads when workers>1 (OpenCV/LaMa release GIL)."""
+    """Inpaint every frame; use threads when workers>1 (LaMa releases GIL in torch)."""
     n = len(frames)
     if n == 0:
         return []

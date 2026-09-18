@@ -13,13 +13,12 @@
 | `--detector-model` | Модель детектора | `IDEA-Research/grounding-dino-tiny` | HF id модели | См. docs/MODELS.md |
 | `--detector-threshold` | Порог детектора | `0.15` | Минимальный скор бокса | Ничего не находит → `0.10`–`0.12`; мусорные боксы → `0.20`+ |
 | `--segmenter` / `--segmenter-model` | Сегментатор | `sam2` / `facebook/sam2-hiera-tiny` | Боксы → маски. `sam2` — покадрово, `sam2-video` — пропагация через клип (нужен torch≥2.5) | `sam2-video` лучше для движущихся объектов на CUDA |
-| `--inpainter` / `--inpainter-model` | Инпейнтер | `opencv-telea` / `camenduru/ProPainter` | Чем заливать: `opencv-telea` (CPU, быстро, мылит), `lama` (нейросеть покадрово), `propainter` (видео-aware, только CUDA) | Финальное качество: propainter на GPU; локально на CPU — telea/lama |
+| `--inpainter` / `--inpainter-model` | Инпейнтер | `lama` / `camenduru/ProPainter` | Чем заливать: `lama` (нейросеть покадрово, CPU/CUDA), `propainter` (видео-aware, только CUDA) | Финальное качество: propainter на GPU; на CPU — lama |
 | `--mask-dilate` | Dilate маски, px | `3` | Расширение SAM-маски | Тонкие буквы остаются по краям → `5`–`8`; большой оверлей «съедает» фон → уменьшить |
-| `--telea-radius` | TELEA radius | `9` | Радиус TELEA | Только для opencv-telea. Больше — глаже, мыльнее |
 | `--min-mask-coverage` | — | `0.0004` | Джоба падает, если средняя маска < доли кадра | Страховка от «молча ничего не удалил». Поднимать при ложных срабатываниях на крошечных зонах |
 | `--verify` / `--no-verify` | Проверять leftover | вкл | Verify 2.0: residual + re-detect; локальный re-inpaint проблемных участков | Выключать для скорости на длинных видео |
 | `--verify-max-passes` | Verify: проходы | `1` | Сколько раз искать остатки и перезаливать (0 = без re-inpaint) | `2` в профиле quality |
-| `--inpaint-workers` | Потоки инпейнта | `0` (auto) | Параллель для TELEA/LaMa; ProPainter всегда 1 | CPU: auto по ядрам; GPU: обычно 1 |
+| `--inpaint-workers` | Потоки инпейнта | `0` (auto) | Параллель для LaMa; ProPainter всегда 1 | CPU: auto по ядрам; GPU: обычно 1 |
 | `--inpaint-chunk-overlap` | Overlap чанков | `8` | Перекрытие при нарезке video-inpaint / verify | Швы на стыках → поднять |
 | `--profile` | Профиль | `custom` | `fast` / `balanced` / `quality` — перебивает segmenter/inpainter/verify knobs | Качество на CUDA: sam2-video+ProPainter |
 
@@ -118,7 +117,7 @@ uv run videoclean preview \
 
 WebUI: панель «Превью» на рабочей странице. Кнопки: «Превью: разбор + маски» (LLM-парс на выбранных кадрах), «Маски по таргетам» (детекция по отредактированному списку таргетов без LLM), «Запустить полный прогон с этими таргетами» (полный пайплайн с `targets_override`, LLM-парс пропускается).
 
-Ограничения превью: инпейнтер не участвует (TELEA мылит, ProPainter требует весь клип как контекст — превью проверяет покрытие масок, не красоту заливки); сегментатор всегда покадровый `sam2`, `sam2-video` в превью не работает (ему нужен весь клип).
+Ограничения превью: инпейнтер не участвует (превью проверяет покрытие масок, не красоту заливки); сегментатор всегда покадровый `sam2`, `sam2-video` в превью не работает (ему нужен весь клип).
 
 ## WebUI/API-поля
 

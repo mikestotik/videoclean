@@ -30,9 +30,6 @@ def run_download(
     if info is None:
         raise PipelineError(f"unknown component {component_id!r}")
     _check(is_cancelled)
-    if info.id == "inpainter:opencv-telea":
-        _emit(on_progress, 1.0, "built-in")
-        return
     if info.kind in {"detector", "segmenter"}:
         download_hf(info.model_ref, on_progress=on_progress, is_cancelled=is_cancelled)
         return

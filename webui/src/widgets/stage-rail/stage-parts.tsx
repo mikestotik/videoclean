@@ -31,7 +31,7 @@ import {
 } from "./params"
 
 const PROFILE_OPTIONS: { id: PipelineProfileId; label: string; hint: string }[] = [
-  { id: "fast", label: "Быстро", hint: "TELEA, без verify — черновик." },
+  { id: "fast", label: "Быстро", hint: "LaMa, без verify — черновик." },
   { id: "balanced", label: "Баланс", hint: "LaMa + один verify-pass." },
   { id: "quality", label: "Качество", hint: "Больше keyframes; на CUDA — sam2-video + ProPainter и до 2 verify-pass." },
   { id: "custom", label: "Свой", hint: "Ручные настройки без пресета." },
@@ -447,7 +447,7 @@ export function InpaintControls({
       <div className="flex items-center gap-2">
         <FieldLabel
           className="w-[7.5rem] shrink-0"
-          hint="Чем заполнять вырезанные области. Для финального качества на GPU — ProPainter; на CPU — LaMa."
+          hint="Чем заполнять вырезанные области. На CPU — LaMa; для финального качества на GPU — ProPainter."
         >
           Инпейнтер
         </FieldLabel>
@@ -547,19 +547,6 @@ export function InpaintControls({
             </SelectContent>
           </Select>
         </div>
-      )}
-
-      {params.run.inpainter === "opencv-telea" && (
-        <ParamSlider
-          label={RUN_PARAM_META.telea_radius.label}
-          hint={RUN_PARAM_META.telea_radius.hint}
-          value={params.run.telea_radius}
-          min={RUN_PARAM_META.telea_radius.min}
-          max={RUN_PARAM_META.telea_radius.max}
-          step={RUN_PARAM_META.telea_radius.step}
-          disabled={disabled}
-          onChange={(v) => setRun({ telea_radius: v })}
-        />
       )}
 
       <ParamSlider

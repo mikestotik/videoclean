@@ -32,7 +32,7 @@ flowchart TB
 
 LLM parser достаёт из `--prompt` короткие запросы (`red mug`, `channel logo`). Detector ищет их на кадрах. Select оставляет нужный экземпляр (`where`, «третья слева»). Segmenter режет маску, inpainter заливает. `verify` ещё раз гоняет detector; `--no-verify` выключает. `--prompt` обязателен.
 
-`--device` задаёт устройство для Grounding DINO, SAM2, LaMa и ProPainter. `opencv-telea` всегда на CPU. FFmpeg читает и пишет файлы на любой машине.
+`--device` задаёт устройство для Grounding DINO, SAM2, LaMa и ProPainter. FFmpeg читает и пишет файлы на любой машине.
 
 ## Флаги
 
@@ -43,12 +43,11 @@ LLM parser достаёт из `--prompt` короткие запросы (`red 
 | `--detector-model` | id модели на Hugging Face | `IDEA-Research/grounding-dino-tiny` |
 | `--detector-threshold` | порог бокса | по умолчанию `0.15` |
 | `--mask-dilate` | расширение SAM-маски | по умолчанию `3` px |
-| `--telea-radius` | радиус TELEA | по умолчанию `9` |
 | `--min-mask-coverage` | минимум доли маски | по умолчанию `0.0004` |
 | `--verify-max-coverage` | потолок leftover для второго inpaint | по умолчанию `0.12` |
 | `--segmenter` | боксы → маски | `sam2`, `sam2-video` |
 | `--segmenter-model` | id SAM2 | `facebook/sam2-hiera-tiny` |
-| `--inpainter` | заливка маски | `opencv-telea`, `lama`, `propainter` |
+| `--inpainter` | заливка маски | `lama`, `propainter` |
 | `--inpainter-model` | веса ProPainter | `camenduru/ProPainter` |
 | `--llm` | где крутится LLM parser | `auto`, `local`, `cloud` |
 | `--llm-model` | тег Ollama (`llama3.2`, `llava-phi3`), id API или `.gguf` | |
@@ -85,7 +84,7 @@ uv run videoclean run \
   --device cpu \
   --detector grounding-dino \
   --segmenter sam2 \
-  --inpainter opencv-telea \
+  --inpainter lama \
   --overwrite
 ```
 
@@ -214,7 +213,7 @@ Docker и деплой на RTX 4090: [docs/RUNPOD.md](docs/RUNPOD.md). Веса
 videoclean/                 библиотека (Clean Architecture): domain ← application ← adapters ← composition
   domain/                   Intent, Track, форматы
   application/              порты, use cases, конфиг, выбор треков
-  adapters/                 ffmpeg, grounding_dino, sam2, sam2_video, opencv-telea, lama, propainter, llm
+  adapters/                 ffmpeg, grounding_dino, sam2, sam2_video, lama, propainter, llm
   composition.py            флаг CLI → класс адаптера
   cli.py                    Typer
 server/                     FastAPI-хост (роуты, auth, job-воркер) → зависит только от videoclean

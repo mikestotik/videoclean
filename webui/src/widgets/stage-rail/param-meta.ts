@@ -9,17 +9,13 @@ export type ParamMeta = {
 }
 
 export const INPAINTER_META: Record<string, { label: string; hint: string }> = {
-  "opencv-telea": {
-    label: "Быстрый (TELEA)",
-    hint: "Классический алгоритм OpenCV. Быстро на CPU, но может мылить края. Подходит для проверки.",
-  },
   lama: {
     label: "LaMa (нейросеть)",
-    hint: "Покадровая нейросеть. Обычно чище TELEA, работает на CPU и GPU. Нет учёта соседних кадров.",
+    hint: "Покадровая нейросеть. Работает на CPU и GPU. Нет учёта соседних кадров — на видео возможен flicker.",
   },
   propainter: {
     label: "ProPainter (видео)",
-    hint: "Учитывает движение между кадрами. Лучшее качество, нужен CUDA. На CPU недоступен.",
+    hint: "Учитывает движение между кадрами. Лучшее качество, нужен CUDA.",
   },
 }
 
@@ -60,13 +56,6 @@ export const RUN_PARAM_META = {
     hint: "На сколько пикселей расширить вырез. Если остаются края текста — увеличьте; если «съедает» фон — уменьшите.",
     min: 0,
     max: 15,
-    step: 1,
-  },
-  telea_radius: {
-    label: "Радиус TELEA",
-    hint: "Только для быстрого инпейнтера. Больше — глаже заливка, но сильнее мыло.",
-    min: 1,
-    max: 30,
     step: 1,
   },
   min_mask_coverage: {
@@ -209,7 +198,7 @@ export const ADVANCED_META: Record<string, ParamMeta> = {
   },
   inpaint_workers: {
     label: "Потоки инпейнта",
-    hint: "Параллельные кадры для TELEA/LaMa. 0 — авто (на CPU по ядрам, на GPU обычно 1). ProPainter всегда 1.",
+    hint: "Параллельные кадры для LaMa. 0 — авто (на CPU по ядрам, на GPU обычно 1). ProPainter всегда 1.",
     min: 0,
     max: 16,
     step: 1,

@@ -11,13 +11,13 @@ DEVICES = ("cpu", "cuda", "mps")
 # Names the product understands. Wiring (or "not implemented") lives in composition.
 DETECTORS = ("grounding-dino",)
 SEGMENTERS = ("sam2", "sam2-video")
-INPAINTERS = ("opencv-telea", "lama", "propainter")
+INPAINTERS = ("lama", "propainter")
 LLM_PLACES = ("auto", "local", "cloud")
 
 READY_ADAPTERS = {
     "detector": frozenset({"grounding-dino"}),
     "segmenter": frozenset({"sam2", "sam2-video"}),
-    "inpainter": frozenset({"opencv-telea", "lama", "propainter"}),
+    "inpainter": frozenset({"lama", "propainter"}),
 }
 
 DEFAULT_GROUNDING_DINO_MODEL = "IDEA-Research/grounding-dino-tiny"
@@ -28,10 +28,10 @@ DEFAULT_DETECTORS = ["grounding-dino"]
 # What each flag actually controls. Doctor / backends print this.
 PORT_HELP = (
     ("media", "(fixed)", "ffmpeg", "Read and write video. Not a switch."),
-    ("device", "--device", "cpu | cuda | mps", "Where ML adapters run. OpenCV TELEA stays on CPU."),
+    ("device", "--device", "cpu | cuda | mps", "Where ML adapters run."),
     ("detector", "--detector", "grounding-dino", "Text → boxes from the prompt queries."),
     ("segmenter", "--segmenter", "sam2 | sam2-video", "Boxes → pixel masks."),
-    ("inpainter", "--inpainter", "opencv-telea | lama | propainter", "How the hole is filled."),
+    ("inpainter", "--inpainter", "lama | propainter", "How the hole is filled."),
     ("parser", "(fixed)", "llm", "Prompt → detector queries."),
     ("llm", "--llm", "auto | local | cloud", "Where the prompt parser runs."),
     ("package", "--format", "mp4, mov, mkv, …", "Delivery containers after the mezzanine."),
@@ -78,20 +78,11 @@ BACKENDS: tuple[dict[str, str], ...] = (
     {
         "port": "inpainter",
         "flag": "--inpainter",
-        "name": "opencv-telea",
-        "status": "ready",
-        "device": "CPU only",
-        "model": "—",
-        "does": "Fill the hole one frame at a time.",
-    },
-    {
-        "port": "inpainter",
-        "flag": "--inpainter",
         "name": "lama",
         "status": "ready (needs simple-lama-inpainting + big-lama.pt)",
         "device": "yes",
         "model": "big-lama.pt (torch hub)",
-        "does": "Neural per-frame fill. Better than TELEA; no temporal consistency.",
+        "does": "Neural per-frame fill. Works on CPU and CUDA; no temporal consistency.",
     },
     {
         "port": "inpainter",
@@ -153,7 +144,7 @@ class PipelineConfig:
     detector_threshold: float = 0.15
     segmenter: str = "sam2"
     segmenter_model: str = DEFAULT_SEGMENTER_MODEL
-    inpainter: str = "opencv-telea"
+    inpainter: str = "lama"
     inpainter_model: str = DEFAULT_INPAINTER_MODEL
     llm_place: str = "auto"
     llm_model: str = ""
@@ -163,7 +154,6 @@ class PipelineConfig:
     allow_download: bool = False
     verify: bool = True
     mask_dilate_px: int = 3
-    telea_radius: int = 9
     min_mask_coverage: float = 0.0004
     verify_max_coverage: float = 0.12
     # Built-in profile name (fast|balanced|quality|custom); informational after merge.

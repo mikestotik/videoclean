@@ -40,12 +40,6 @@ def test_all_registry_ids():
     assert len(COMPONENT_IDS) == 13
 
 
-def test_telea_always_ready_helper():
-    from videoclean.adapters.models.catalog import backend_ready
-
-    assert backend_ready("inpainter", "opencv-telea") is True
-
-
 def test_list_status_smoke(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     cat = ModelCatalog()
@@ -87,13 +81,14 @@ def test_backend_ready_uses_catalog():
 
     class FakeCat:
         def is_ready(self, cid: str) -> bool:
-            return cid in {"detector:grounding-dino", "inpainter:propainter"}
+            return cid in {"detector:grounding-dino", "inpainter:propainter", "inpainter:lama"}
 
     fake = FakeCat()
     assert backend_ready("detector", "grounding-dino", catalog=fake) is True
     assert backend_ready("detector", "unknown-detector", catalog=fake) is False
     assert backend_ready("inpainter", "propainter", catalog=fake) is True
-    assert backend_ready("inpainter", "opencv-telea", catalog=fake) is True
+    assert backend_ready("inpainter", "lama", catalog=fake) is True
+    assert backend_ready("inpainter", "opencv-telea", catalog=fake) is False
     assert backend_ready("segmenter", "sam2-video", catalog=fake) is False
 
 

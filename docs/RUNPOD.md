@@ -127,19 +127,17 @@ API for other services: `POST /api/jobs` (multipart `video` + `prompt`), then po
 
 ## 5. Config — download order
 
-`opencv-telea` is always ready. Everything else is opt-in.
-
-**Minimum path** (short clip, CPU-style quality on GPU):
+**Minimum path** (short clip):
 
 1. `detector:grounding-dino` (~650 MB)
 2. `segmenter:sam2-tiny` (~160 MB)
+3. `inpainter:lama` (`big-lama.pt`)
 
-Then **Clean** works: grounding-dino + sam2 + opencv-telea.
+Then **Clean** works: grounding-dino + sam2 + lama.
 
-**Max quality on 4090** (enable the Max quality preset):
+**Max quality on 4090** (profile «Качество» / propainter):
 
-3. `inpainter:propainter` (~400 MB + git clone of vendor)
-4. Optional: `inpainter:lama`
+4. `inpainter:propainter` (~400 MB + git clone of vendor)
 5. Last / hungry: `segmenter:sam2-large` (~900 MB weights, ~24 GB VRAM — easy OOM on 4090; prefer tiny)
 
 Ollama rows stay unavailable unless you run Ollama yourself. Cloud LLM is disabled by default.

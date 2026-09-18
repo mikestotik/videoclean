@@ -46,7 +46,7 @@ def find_weights() -> Path | None:
 
 
 class LamaInpainter:
-    """Per-frame LaMa (TorchScript big-lama). CPU works; better fill than TELEA, no temporal consistency.
+    """Per-frame LaMa (TorchScript big-lama). CPU and CUDA; no temporal consistency.
 
     Loads the JIT weights ourselves with map_location. PyPI simple-lama-inpainting 0.1.0 calls
     torch.jit.load without map_location, which fails on machines without CUDA.

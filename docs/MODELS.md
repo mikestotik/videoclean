@@ -36,10 +36,9 @@
 
 | Модель | Вердикт | Почему |
 |---|---|---|
-| `opencv-telea` (дефолт) | ⚠️ только для тестов | Мылит крупные области (по определению алгоритма), но мгновенен и работает везде. CI/smoke |
-| LaMa (`big-lama.pt`) | ✅ CPU-финалка | Лучшая покадровая нейро-заливка без CUDA. Нет временной согласованности — на видео возможен флик |
+| LaMa (`big-lama.pt`, дефолт) | ✅ CPU/CUDA | Покадровая нейро-заливка. Нет временной согласованности — на видео возможен флик |
 | ProPainter (`camenduru/ProPainter`) | ✅ прод на CUDA | Видео-aware: тянет фон из соседних кадров, лучшее качество на движущемся фоне. Только GPU, память ~8-12GB VRAM на 1080p. fp16 включается автоматически |
-| ProPainter на CPU | ❌ | Не заведён/неприемлемо медленно. На CPU — lama или telea |
+| ProPainter на CPU | ❌ | Не заведён/неприемлемо медленно. На CPU — lama |
 | Stable Diffusion inpaint | ❌ (пока) | Не подключен; генеративный fill меняет содержимое — для удаления логотипов это баг, а не фича |
 
 ## LLM-парсер (промпт → queries для детектора)
@@ -59,5 +58,5 @@ uv run videoclean doctor --device cuda   # что реально подниме�
 ```
 
 - **GPU-сервер (прод):** grounding-dino-tiny + sam2 (или sam2-video для движения) + propainter + qwen3-vl/llava-phi3 (`--vision-batch 2`)
-- **Локально CPU (отладка):** grounding-dino-tiny + sam2-hiera-tiny + opencv-telea + llava-phi3
+- **Локально CPU (отладка):** grounding-dino-tiny + sam2-hiera-tiny + lama + llava-phi3
 - **Никогда:** propainter на CPU, llava-phi3 с vision-batch > 2, reasoning-LLM для парса

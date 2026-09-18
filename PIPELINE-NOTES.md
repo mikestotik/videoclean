@@ -55,7 +55,7 @@
 2. Detect (Grounding DINO → боксы на keyframes)
 3. Track + пропагация якорей (шаблон / interpolate / **обводка→клип**) — B/C + dynamic
 4. Segment (sam2 / sam2-video → маски)
-5. Inpaint (telea / lama / propainter)
+5. Inpaint (lama / propainter)
 6. Verify + encode
 7. Server / WebUI / API DX (ступени, валидации, паритет)
 
@@ -70,7 +70,7 @@
   → template match          → боксы на остальные кадры (часто None)
   → select_tracks           → фильтр + interpolate_gaps
   → sam2 | sam2-video       → маски
-  → telea | lama | propainter → заливка
+  → lama | propainter → заливка
   → verify (опц.)           → re-detect + один re-inpaint
   → ffmpeg encode/package
 ```
@@ -109,13 +109,11 @@
 
 Что делать (участок Segment): multi-frame prompts (добавлять бокс на нескольких keyframes), re-anchor при drift, опционально points + negative points.
 
-### P0.5 Дефолтный инпейнтер для продакшена не годится
+### P0.5 Дефолтный инпейнтер
 
-`opencv-telea` — дефолт. Мылит крупные зоны, без временной связности. LaMa лучше покадрово, но даёт flicker. ProPainter — нормальный путь для видео, но только CUDA + vendor clone + 3 `.pth`.
+**Сделано:** OpenCV TELEA убран из продукта. Дефолт — LaMa (CPU/CUDA). ProPainter — путь качества на CUDA (vendor + 3 `.pth`).
 
-Если в форме стоит telea, «плохо закрашивает» ожидаемо. Если propainter, смотреть маски и OOM/resize.
-
-Что делать (участок Inpaint): дефолт в WebUI на CUDA → propainter; telea оставить smoke; для CPU явно lama; в UI предупреждение по device.
+LaMa покадрово может давать flicker; на CUDA для финала — профиль «Качество» / propainter.
 
 ### P0.6 Обводка не протягивается по клипу (ломает вход B и dynamic)
 
@@ -260,12 +258,12 @@ API сейчас часто взаимоисключает `targets` / `tracks` 
 
 ## 5. Inpaint (заливка)
 
-Файлы: `opencv_telea.py`, `lama.py`, `propainter.py`.
+Файлы: `lama.py`, `propainter.py`.
 
 | # | Замечание | Серьёзность | Направление |
 |---|---|---|---|
-| 5.1 | Telea как дефолт даёт «мыло» на реальных задачах | P0 | См. P0.5 |
-| 5.2 | LaMa покадровая → temporal flicker на видео | P1 | Только fallback; для видео propainter |
+| 5.1 | ~~Telea как дефолт~~ | — | **Сделано:** TELEA удалён; дефолт lama |
+| 5.2 | LaMa покадровая → temporal flicker на видео | P1 | Для видео propainter / профиль quality |
 | 5.3 | ProPainter: resize к кратности 8, потом upsample — мягкость/швы | P2 | Проверить артефакты на тонких краях |
 | 5.4 | ProPainter жрёт клип в память; длинные ролики = OOM | P1 | Жёсткие чанки с overlap + blend (частично есть `subvideo_length`) |
 | 5.5 | Превью не показывает качество заливки | P1 | Отдельная ступень «probe inpaint» на 16–48 кадрах окна |
@@ -300,7 +298,7 @@ API сейчас часто взаимоисключает `targets` / `tracks` 
 | 7.5 | Нет side-by-side: кадр / боксы / маска / inpaint в одной шкале времени для full run | P1 | Viewer слои + scrub по job artifacts |
 | 7.6 | Статус readiness моделей (doctor) слабо связан с формой запуска | P1 | Disable Run + причина, если segmenter/inpainter unavailable |
 | 7.7 | «Запустить всё» смешивает ступени; при отладке нужен жёсткий per-stage | P2 | Ок как есть, но блокировать inpaint-tracks без full-length tracks |
-| 7.8 | Конфиг моделей vs workspace: скачал на Config, а в форме всё ещё telea/cpu | P2 | Пресет «GPU quality»: dino + sam2-video + propainter |
+| 7.8 | Конфиг моделей vs workspace: скачал на Config, а в форме старые knobs | P2 | Профили fast/balanced/quality + готовность lama/propainter |
 | 7.9 | `docs/BUG-001-removal-quality.md` указан в MODELS/AGENTS, файла нет | P3 | Восстановить или убрать ссылки |
 | 7.10 | Дублирующие API: `/api/jobs` и старые `/api/preview` | P3 | Со временем схлопнуть, не блокер качества |
 
@@ -359,4 +357,4 @@ API сейчас часто взаимоисключает `targets` / `tracks` 
 3. Короткий клип: Маски → Удаление; в report смотреть `verifyPasses`, `verifyNote`, `inpaintWorkers`, `profile`.
 4. На CPU с LaMa: Advanced → «Потоки инпейнта» = 0 (auto) vs 4 — сравнить wall-time.
 5. На CUDA: профиль Качество → sam2-video + ProPainter; убедиться что leftover-pass не гоняет весь клип зря (ranges в verifyNote).
-6. Регресс: профиль **Свой** + telea + `--no-verify` / verify off — быстрый smoke.
+6. Регресс: профиль **Быстро** (lama, verify off) — быстрый smoke; без `big-lama.pt` джоба должна явно сказать скачать веса.

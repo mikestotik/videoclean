@@ -82,8 +82,8 @@ class FakeSegmenter:
 
 
 class FakeInpainter:
-    name = "opencv-telea"
-    device_note = "CPU only"
+    name = "lama"
+    device_note = "CPU/CUDA"
     video_aware = False
 
     def inpaint(self, frame, mask):
@@ -138,7 +138,7 @@ def test_run_cleanup_with_fakes(tmp_path: Path):
     assert report["state"] == "COMPLETED"
     assert report["detectorUsed"] == "grounding-dino"
     assert report["segmenter"] == "sam2"
-    assert report["inpainter"] == "opencv-telea"
+    assert report["inpainter"] == "lama"
     assert report["media"] == "ffmpeg"
     assert out.is_file()
 

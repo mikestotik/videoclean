@@ -129,18 +129,8 @@ COMPONENTS: tuple[ComponentInfo, ...] = (
     ),
 )
 
-TELEA = ComponentInfo(
-    id="inpainter:opencv-telea",
-    title="OpenCV TELEA",
-    kind="inpainter",
-    model_ref="(builtin)",
-    size_hint="CPU, always on",
-    backend="opencv-telea",
-    source="builtin",
-)
-
 COMPONENT_IDS: tuple[str, ...] = tuple(c.id for c in COMPONENTS)
-COMPONENT_BY_ID: dict[str, ComponentInfo] = {c.id: c for c in (*COMPONENTS, TELEA)}
+COMPONENT_BY_ID: dict[str, ComponentInfo] = {c.id: c for c in COMPONENTS}
 EXTRA_FILENAME = "catalog_extra.json"
 
 _BACKEND_TO_COMPONENT: dict[tuple[str, str], str] = {
@@ -153,11 +143,9 @@ _BACKEND_TO_COMPONENT: dict[tuple[str, str], str] = {
 
 
 def component_id_for(kind: str, name: str, segmenter_model: str = "") -> str | None:
-    """Map a Clean-tab backend name to a catalog component id (None = always-ready)."""
+    """Map a Clean-tab backend name to a catalog component id."""
     kind = (kind or "").strip().lower()
     name = (name or "").strip().lower()
-    if kind == "inpainter" and name == "opencv-telea":
-        return None
     if kind == "segmenter" and name in {"sam2", "sam2-video"}:
         return segmenter_component_id(segmenter_model)
     return _BACKEND_TO_COMPONENT.get((kind, name))
@@ -192,8 +180,6 @@ def backend_ready(
     catalog: ModelCatalog | None = None,
     segmenter_model: str = "",
 ) -> bool:
-    if kind == "inpainter" and name == "opencv-telea":
-        return True
     cid = component_id_for(kind, name, segmenter_model=segmenter_model)
     if cid is None:
         return False
@@ -219,7 +205,7 @@ class ModelCatalog:
         return resolve_data_dir()
 
     def list_infos(self) -> list[ComponentInfo]:
-        infos: list[ComponentInfo] = [TELEA, *COMPONENTS]
+        infos: list[ComponentInfo] = list(COMPONENTS)
         seen = {info.id for info in infos}
         for extra in load_extras(self._data_dir()):
             if extra.id not in seen:
@@ -273,8 +259,6 @@ class ModelCatalog:
         return state == "ready"
 
     def _probe(self, info: ComponentInfo, tags: set[str] | None) -> tuple[str, str]:
-        if info.id == "inpainter:opencv-telea":
-            return "ready", "built-in, CPU"
         if info.kind in {"detector", "segmenter"}:
             if hf_cached(info.model_ref):
                 return "ready", f"{info.model_ref} cached"

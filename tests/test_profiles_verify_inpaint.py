@@ -37,7 +37,7 @@ def test_apply_profile_overwrites_owned_keys():
     out = apply_profile(
         {"profile": "fast", "device": "cpu", "inpainter": "propainter", "verify": True}
     )
-    assert out["inpainter"] == "opencv-telea"
+    assert out["inpainter"] == "lama"
     assert out["verify"] is False
     assert out["profile"] == "fast"
 
@@ -76,10 +76,19 @@ def test_resolve_workers_auto():
     assert resolve_workers(0, device="cpu", video_aware=False) >= 1
 
 
-def test_inpaint_frames_parallel_telea():
-    from videoclean.adapters.inpainters.opencv_telea import OpenCvTeleaInpainter
+class _StubInpainter:
+    name = "stub"
+    video_aware = False
 
-    inp = OpenCvTeleaInpainter(radius=3)
+    def inpaint(self, frame, mask):
+        out = frame.copy()
+        if mask is not None and np.any(mask):
+            out[mask > 0] = 0
+        return out
+
+
+def test_inpaint_frames_parallel_stub():
+    inp = _StubInpainter()
     frames = [np.zeros((32, 32, 3), dtype=np.uint8) for _ in range(6)]
     for f in frames:
         f[8:16, 8:16] = 200
@@ -89,12 +98,11 @@ def test_inpaint_frames_parallel_telea():
     out = inpaint_frames(inp, frames, masks, workers=3)
     assert len(out) == 6
     assert out[0].shape == frames[0].shape
+    assert int(out[0][10, 10, 0]) == 0
 
 
 def test_re_inpaint_ranges_only_dirty():
-    from videoclean.adapters.inpainters.opencv_telea import OpenCvTeleaInpainter
-
-    inp = OpenCvTeleaInpainter(radius=3)
+    inp = _StubInpainter()
     originals = [np.full((16, 16, 3), 40, dtype=np.uint8) for _ in range(5)]
     for o in originals:
         o[4:12, 4:12] = 220

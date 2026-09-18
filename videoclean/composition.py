@@ -10,7 +10,6 @@ from videoclean.adapters.detectors.grounding_dino import DEFAULT_MODEL as DEFAUL
 from videoclean.adapters.detectors.grounding_dino import GroundingDinoDetector
 from videoclean.adapters.images import read_bgr, write_bgr
 from videoclean.adapters.inpainters.lama import LamaInpainter
-from videoclean.adapters.inpainters.opencv_telea import OpenCvTeleaInpainter
 from videoclean.adapters.inpainters.propainter import ProPainterInpainter
 from videoclean.adapters.media.ffmpeg import FFmpegMedia
 from videoclean.adapters.llm.resolve import resolve_llm
@@ -53,7 +52,6 @@ def config_from_flags(
     llm_api_key: str = "",
     verify: bool = True,
     mask_dilate_px: int = 3,
-    telea_radius: int = 9,
     min_mask_coverage: float = 0.0004,
     verify_max_coverage: float = 0.12,
     prompt_frame_stride: int = 4,
@@ -96,7 +94,6 @@ def config_from_flags(
         "allow_download": allow_download,
         "verify": verify,
         "mask_dilate_px": int(mask_dilate_px),
-        "telea_radius": int(telea_radius),
         "min_mask_coverage": float(min_mask_coverage),
         "verify_max_coverage": float(verify_max_coverage),
         "prompt_frame_stride": int(prompt_frame_stride),
@@ -140,7 +137,6 @@ def config_from_flags(
         allow_download=bool(merged["allow_download"]),
         verify=bool(merged["verify"]),
         mask_dilate_px=int(merged["mask_dilate_px"]),
-        telea_radius=int(merged["telea_radius"]),
         min_mask_coverage=float(merged["min_mask_coverage"]),
         verify_max_coverage=float(merged["verify_max_coverage"]),
         prompt_frame_stride=int(merged["prompt_frame_stride"]),
@@ -236,8 +232,6 @@ def make_segmenter(cfg: PipelineConfig):
 
 
 def make_inpainter(cfg: PipelineConfig):
-    if cfg.inpainter == "opencv-telea":
-        return OpenCvTeleaInpainter(radius=cfg.telea_radius)
     if cfg.inpainter == "lama":
         return LamaInpainter(device=cfg.device, allow_download=cfg.allow_download)
     if cfg.inpainter == "propainter":

@@ -25,7 +25,7 @@ def profile_defaults(name: str, device: str) -> dict[str, Any]:
             "detector_keyframes": 6,
             "mask_dilate_px": 2,
             "segmenter": "sam2",
-            "inpainter": "opencv-telea",
+            "inpainter": "lama",
             "inpaint_workers": 0,  # auto
             "inpaint_chunk_overlap": 0,
         }
@@ -99,7 +99,7 @@ def profiles_payload(device: str = "cpu") -> list[dict[str, Any]]:
         "quality": "Качество",
     }
     hints = {
-        "fast": "Telea, без verify, мало keyframes — черновик.",
+        "fast": "LaMa, без verify, мало keyframes — черновик.",
         "balanced": "LaMa + один verify-pass — обычный рабочий режим.",
         "quality": "Больше keyframes, sam2-video+ProPainter на CUDA, до 2 verify-pass.",
     }

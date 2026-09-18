@@ -86,7 +86,6 @@ def _flags(
     verify: bool = True,
     require_runtime: bool = False,
     mask_dilate_px: int = 3,
-    telea_radius: int = 9,
     min_mask_coverage: float = 0.0004,
     verify_max_coverage: float = 0.12,
     prompt_frame_stride: int = 4,
@@ -128,7 +127,6 @@ def _flags(
             verify=verify,
             require_runtime=require_runtime,
             mask_dilate_px=mask_dilate_px,
-            telea_radius=telea_radius,
             min_mask_coverage=min_mask_coverage,
             verify_max_coverage=verify_max_coverage,
             prompt_frame_stride=prompt_frame_stride,
@@ -175,7 +173,7 @@ def _device_opt() -> str:
     return typer.Option(
         "cpu",
         "--device",
-        help="cpu | cuda | mps. Where Grounding DINO / SAM2 / ProPainter run. TELEA stays CPU.",
+        help="cpu | cuda | mps. Where Grounding DINO / SAM2 / LaMa / ProPainter run.",
     )
 
 
@@ -205,9 +203,9 @@ def _segmenter_opt() -> str:
 
 def _inpainter_opt() -> str:
     return typer.Option(
-        "opencv-telea",
+        "lama",
         "--inpainter",
-        help="opencv-telea (CPU) | lama (neural, CPU/CUDA) | propainter (video-aware, CUDA).",
+        help="lama (neural, CPU/CUDA) | propainter (video-aware, CUDA).",
     )
 
 
@@ -463,7 +461,7 @@ def preview(
         detector_threshold,
         segmenter,
         segmenter_model,
-        "opencv-telea",
+        "lama",
         "",
         None,
         download_models,
@@ -555,7 +553,6 @@ def run(
     inpainter: str = _inpainter_opt(),
     inpainter_model: str = typer.Option(DEFAULT_INPAINTER_MODEL, "--inpainter-model"),
     mask_dilate: int = typer.Option(3, "--mask-dilate", help="Pixels to dilate SAM masks after segmentation."),
-    telea_radius: int = typer.Option(9, "--telea-radius", help="OpenCV TELEA radius."),
     min_mask_coverage: float = typer.Option(
         0.0004,
         "--min-mask-coverage",
@@ -704,7 +701,6 @@ def run(
         llm_base_url=llm_base_url,
         verify=verify,
         mask_dilate_px=mask_dilate,
-        telea_radius=telea_radius,
         min_mask_coverage=min_mask_coverage,
         verify_max_coverage=verify_max_coverage,
         prompt_frame_stride=prompt_frame_stride,

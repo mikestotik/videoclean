@@ -80,7 +80,7 @@ def serialize_clean_form(payload: Mapping[str, Any] | None = None) -> dict[str, 
     data = dict(payload or {})
     detector = str(data.get("detector") or "grounding-dino").strip().lower()
     segmenter = str(data.get("segmenter") or "sam2").strip().lower()
-    inpainter = str(data.get("inpainter") or "opencv-telea").strip().lower()
+    inpainter = str(data.get("inpainter") or "lama").strip().lower()
     detector_model = str(data.get("detector_model") or "").strip()
     segmenter_model = str(data.get("segmenter_model") or "").strip()
     inpainter_model = str(data.get("inpainter_model") or "").strip()
@@ -119,7 +119,6 @@ def serialize_clean_form(payload: Mapping[str, Any] | None = None) -> dict[str, 
         "allow_download": False,
         "verify": _as_bool(data.get("verify"), True),
         "mask_dilate_px": int(data.get("mask_dilate_px") or 3),
-        "telea_radius": int(data.get("telea_radius") or 9),
         "prompt_frame_stride": int(data.get("prompt_frame_stride") or 4),
         "prompt_frame_max": int(data.get("prompt_frame_max") or 8),
         "parse_chunk_frames": int(data.get("parse_chunk_frames") or 0),
@@ -731,7 +730,7 @@ def grouped_models(state: AppState) -> dict[str, list[dict[str, Any]]]:
                 "message": status.message,
                 "source": info.source,
                 "progress": max(0.0, min(frac, 1.0)),
-                "downloadable": info.id != "inpainter:opencv-telea",
+                "downloadable": True,
             }
         )
     return groups

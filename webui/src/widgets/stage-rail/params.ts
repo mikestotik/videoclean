@@ -19,7 +19,6 @@ export type EditorParams = {
     inpainter: string
     inpainter_model: string
     mask_dilate_px: number
-    telea_radius: number
     verify: boolean
     formats: string[]
     keep_workdir: boolean
@@ -39,7 +38,7 @@ export type EditorParams = {
 
 export type PipelineProfileId = EditorParams["run"]["profile"]
 
-export const INPAINTER_OPTIONS = ["opencv-telea", "lama", "propainter"] as const
+export const INPAINTER_OPTIONS = ["lama", "propainter"] as const
 
 export const DEVICE_OPTIONS = ["cpu", "cuda", "mps"] as const
 
@@ -87,7 +86,7 @@ export function builtInProfileDefaults(
         verify: false,
         mask_dilate_px: 2,
         segmenter: "sam2",
-        inpainter: "opencv-telea",
+        inpainter: "lama",
       },
       advanced: {
         detector_keyframes: "6",
@@ -154,7 +153,6 @@ export const DEFAULT_PARAMS: EditorParams = {
     inpainter: "lama",
     inpainter_model: "",
     mask_dilate_px: 3,
-    telea_radius: 9,
     verify: true,
     formats: ["mp4"],
     keep_workdir: false,
@@ -197,7 +195,6 @@ export function toRunParams(params: EditorParams): Record<string, string | numbe
     inpainter: params.run.inpainter,
     inpainter_model: params.run.inpainter_model,
     mask_dilate_px: params.run.mask_dilate_px,
-    telea_radius: params.run.telea_radius,
     verify: params.run.verify ? "1" : "0",
     keep_workdir: params.run.keep_workdir ? "1" : "0",
     min_mask_coverage: params.run.min_mask_coverage,
@@ -224,7 +221,6 @@ export function toDetectParams(params: EditorParams): Record<string, string | nu
     segmenter: _seg,
     segmenter_model: _segModel,
     inpainter: _inp,
-    telea_radius: _telea,
     verify: _verify,
     mask_policy: _policy,
     propainter_mask_dilation: _pmd,
@@ -266,7 +262,6 @@ function pickRun(run: Record<string, unknown>): Partial<EditorParams["run"]> {
   if (typeof run.inpainter === "string") out.inpainter = run.inpainter
   if (typeof run.inpainter_model === "string") out.inpainter_model = run.inpainter_model
   if (typeof run.mask_dilate_px === "number") out.mask_dilate_px = run.mask_dilate_px
-  if (typeof run.telea_radius === "number") out.telea_radius = run.telea_radius
   if (typeof run.verify === "boolean") out.verify = run.verify
   if (Array.isArray(run.formats)) out.formats = run.formats.map(String)
   if (typeof run.keep_workdir === "boolean") out.keep_workdir = run.keep_workdir
