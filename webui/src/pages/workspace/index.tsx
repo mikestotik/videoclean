@@ -12,7 +12,7 @@ import {
 } from "@widgets/stage-rail"
 import { Timeline } from "@widgets/timeline"
 import { useAnnotate } from "@features/annotate"
-import { useDetectRun } from "@features/detect-run"
+import { tracksAreFullLength, useDetectRun } from "@features/detect-run"
 import { useInpaintRun } from "@features/inpaint-run"
 import { useInterpret, type InterpretTarget } from "@features/interpret"
 import { fetchJobReport, getJob, type Job } from "@/entities/job"
@@ -185,6 +185,25 @@ export function WorkspacePage() {
       ? previewArtifactUrl(detect.lastJobId, detectFrame.artifacts.mask)
       : null
 
+  const overlayTracks = useMemo(() => {
+    const n = probe?.frame_count ?? 0
+    const previewFrames = detect.manifest?.frames ?? []
+    return detect.tracks.map((t) => {
+      let box = null as (typeof t.boxes)[number]
+      if (n > 0 && t.boxes.length === n) box = t.boxes[currentFrame] ?? null
+      else {
+        const i = previewFrames.findIndex((f) => f.index === currentFrame)
+        if (i >= 0) box = t.boxes[i] ?? null
+      }
+      return {
+        id: t.id,
+        label: t.label,
+        box,
+        enabled: !detect.excludedIds.includes(t.id),
+      }
+    })
+  }, [detect.tracks, detect.excludedIds, detect.manifest, currentFrame, probe?.frame_count])
+
   const resultJobId = inpaint.lastJobId
   if (resultJob && resultJob.id !== resultJobId) setResultJob(null)
   useEffect(() => {
@@ -208,29 +227,50 @@ export function WorkspacePage() {
     if (!source || runAllBusy) return
     const prompt = params.prompt.trim()
     setRunAllError("")
-    if (prompt && masks.length === 0) {
-      await inpaint.run(
-        { mode: "prompt", prompt, targets: enabledTargets(params) },
-        toRunParams(params),
-      )
-      return
-    }
     setRunAllBusy(true)
     try {
-      const interp = await interpret.run(prompt, params.run.llm_model)
-      const targets = interp ? toTargetRows(interp.targets) : enabledTargets(params)
+      if (masks.length > 0 && !prompt && enabledTargets(params).length === 0) {
+        await inpaint.run({ mode: "masks", masks }, toRunParams(params))
+        return
+      }
+
+      let targets = enabledTargets(params)
+      let runPrompt = prompt
+      if (targets.length === 0 && prompt) {
+        const interp = await interpret.run(prompt, params.run.llm_model)
+        targets = interp ? toTargetRows(interp.targets) : []
+        runPrompt = interp?.prompt || prompt
+        if (targets.length > 0) {
+          setParams((prev) => ({
+            ...prev,
+            prompt: runPrompt,
+            targets: targets.map((t) => ({ ...t, enabled: true, source: "auto" as const })),
+          }))
+        }
+      }
       if (targets.length === 0) {
         setRunAllError(
-          interp
-            ? "Таргеты не найдены — уточните промпт"
-            : interpret.error || "Не удалось интерпретировать промпт",
+          prompt
+            ? interpret.error || "Таргеты не найдены — уточните промпт"
+            : "Нужен промпт, цели или обводка",
         )
         return
       }
-      await inpaint.run(
-        { mode: "prompt", prompt: interp?.prompt || params.prompt, targets },
-        toRunParams(params),
-      )
+
+      const found = await detect.run({
+        mode: "detect",
+        prompt: runPrompt,
+        targets,
+        all: true,
+        params: toRunParams(params),
+      })
+      const frameCount = source.probe.frame_count
+      if (found && tracksAreFullLength(found, frameCount)) {
+        setViewerMode("detect")
+        await inpaint.run({ mode: "tracks", tracks: found }, toRunParams(params))
+      } else {
+        setRunAllError("Маски не покрыли весь ролик — проверьте цели и запустите Маски ещё раз")
+      }
     } finally {
       setRunAllBusy(false)
     }
@@ -251,6 +291,14 @@ export function WorkspacePage() {
           onSelectJob={(job) => void selectJob(job)}
           refreshKey={libraryTick}
           onUploaded={() => setLibraryTick((t) => t + 1)}
+          maskTracks={detect.tracks}
+          excludedIds={detect.excludedIds}
+          selectedTrackId={detect.selectedTrackId}
+          onToggleTrack={detect.toggleTrack}
+          onSelectTrack={(id) => {
+            detect.setSelectedTrackId(id)
+            setViewerMode("detect")
+          }}
         />
         {restoreError && (
           <p className="shrink-0 border-t border-border/70 px-3 py-2 text-xs text-destructive">
@@ -298,6 +346,20 @@ export function WorkspacePage() {
                 maskOpacity={maskOpacity}
                 onMaskOpacityChange={setMaskOpacity}
                 detectBoxes={detectFrame?.boxes ?? []}
+                detectTracks={overlayTracks}
+                selectedTrackId={detect.selectedTrackId}
+                onSelectTrack={detect.setSelectedTrackId}
+                onResizeTrack={(id, box) => {
+                  const n = probe.frame_count
+                  const track = detect.tracks.find((t) => t.id === id)
+                  if (!track) return
+                  if (track.boxes.length === n) {
+                    detect.patchBox(id, currentFrame, box)
+                    return
+                  }
+                  const i = (detect.manifest?.frames ?? []).findIndex((f) => f.index === currentFrame)
+                  if (i >= 0) detect.patchBox(id, i, box)
+                }}
                 resultJobId={resultJobId}
               />
             </div>

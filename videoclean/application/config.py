@@ -257,3 +257,4 @@ class RunCleanupRequest:
     targets_override: list[dict] | None = None  # manual targets: skips the prompt parser
     tracks_override: list[dict] | None = None  # manual tracks: skips parse + detect
     masks_override: list[str] | None = None  # mask PNG paths: skips parse + detect + segment
+    mask_policy: str = "static"  # static: tile one mask; propagate: anchors → tracks → segment

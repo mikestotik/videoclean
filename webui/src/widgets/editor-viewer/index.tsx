@@ -1,19 +1,28 @@
-import { useCallback, useEffect, useRef } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { timeToFrameIndex } from "@/entities/frame"
 import type { Source } from "@/entities/source"
 import type { Tool } from "@/entities/annotation"
 import type { useAnnotate } from "@/features/annotate"
-import { Brush, Eraser, Trash, Undo2 } from "lucide-react"
+import { Brush, Eraser, Minus, Plus, Trash, Undo2 } from "lucide-react"
 import { Button } from "@/shared/ui/button"
 import { Slider } from "@/shared/ui/slider"
 import { ToggleGroup, ToggleGroupItem } from "@/shared/ui/toggle-group"
+import type { DetectBox } from "@features/detect-run"
 import { AnnotationLayer } from "./annotation-layer"
 import { Compare } from "./compare"
+import { DetectBoxes, type OverlayTrack } from "./detect-boxes"
 import { MaskOverlay } from "./mask-overlay"
 
 export type EditorMode = "annotate" | "detect" | "result"
 
 const SCRUB_PX_PER_FRAME = 4
+const ZOOM_MIN = 1
+const ZOOM_MAX = 8
+const ZOOM_STEP = 1.25
+
+function clampZoom(value: number): number {
+  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, value))
+}
 
 type Props = {
   source: Source
@@ -25,6 +34,10 @@ type Props = {
   maskOpacity: number
   onMaskOpacityChange?: (v: number) => void
   detectBoxes: (number[] | null)[]
+  detectTracks?: OverlayTrack[]
+  selectedTrackId?: number | null
+  onSelectTrack?: (id: number) => void
+  onResizeTrack?: (id: number, box: DetectBox) => void
   resultJobId: string | null
 }
 
@@ -38,13 +51,26 @@ export function EditorViewer({
   maskOpacity,
   onMaskOpacityChange,
   detectBoxes,
+  detectTracks,
+  selectedTrackId = null,
+  onSelectTrack,
+  onResizeTrack,
   resultJobId,
 }: Props) {
   const { fps, frame_count: frameCount, width, height } = source.probe
   const videoRef = useRef<HTMLVideoElement>(null)
+  const stageRef = useRef<HTMLDivElement>(null)
   const playingRef = useRef(false)
   const scrubRef = useRef<{ x: number; frame: number } | null>(null)
+  const panRef = useRef<{ x: number; y: number; sl: number; st: number } | null>(null)
   const { setActiveFrame, setTool, setSize, undo, clearFrame, isDirty } = annotate
+  const [zoom, setZoom] = useState(1)
+
+  const [prevSourceId, setPrevSourceId] = useState(source.id)
+  if (prevSourceId !== source.id) {
+    setPrevSourceId(source.id)
+    setZoom(1)
+  }
 
   const clamp = useCallback(
     (frame: number) => Math.min(Math.max(0, frame), Math.max(0, frameCount - 1)),
@@ -77,10 +103,40 @@ export function EditorViewer({
     } else if (e.code === "Space") {
       e.preventDefault()
       togglePlay()
+    } else if (e.key === "+" || e.key === "=") {
+      e.preventDefault()
+      setZoom((z) => clampZoom(z * ZOOM_STEP))
+    } else if (e.key === "-" || e.key === "_") {
+      e.preventDefault()
+      setZoom((z) => clampZoom(z / ZOOM_STEP))
+    } else if (e.key === "0") {
+      e.preventDefault()
+      setZoom(1)
     }
   }
 
-  const scrubbing = mode !== "annotate"
+  const zoomAt = (next: number, clientX: number, clientY: number) => {
+    const stage = stageRef.current
+    if (!stage) {
+      setZoom(next)
+      return
+    }
+    const prev = zoom
+    const rect = stage.getBoundingClientRect()
+    const cx = clientX - rect.left + stage.scrollLeft
+    const cy = clientY - rect.top + stage.scrollTop
+    setZoom(next)
+    requestAnimationFrame(() => {
+      const el = stageRef.current
+      if (!el || prev <= 0) return
+      const ratio = next / prev
+      el.scrollLeft = cx * ratio - (clientX - rect.left)
+      el.scrollTop = cy * ratio - (clientY - rect.top)
+    })
+  }
+
+  const scrubbing = mode !== "annotate" && zoom <= 1
+  const panning = zoom > 1
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
@@ -93,17 +149,39 @@ export function EditorViewer({
           </div>
         )
       ) : (
+        <div className="relative min-h-0 flex-1">
         <div
+          ref={stageRef}
           tabIndex={0}
-          className="relative mx-auto max-h-full w-full max-w-full shrink overflow-hidden rounded-lg border border-border/80 bg-black outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-          style={{ aspectRatio: `${width} / ${height}` }}
+          className="h-full min-h-0 overflow-auto rounded-lg border border-border/80 bg-black outline-none [container-type:size] focus-visible:ring-2 focus-visible:ring-ring/50"
           onKeyDown={onKeyDown}
+          onWheel={(e) => {
+            if (!e.ctrlKey && !e.metaKey) return
+            e.preventDefault()
+            const factor = e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP
+            zoomAt(clampZoom(zoom * factor), e.clientX, e.clientY)
+          }}
           onPointerDown={(e) => {
+            if (e.button === 1 || (panning && e.button === 0)) {
+              const stage = stageRef.current
+              if (!stage) return
+              panRef.current = { x: e.clientX, y: e.clientY, sl: stage.scrollLeft, st: stage.scrollTop }
+              e.currentTarget.setPointerCapture(e.pointerId)
+              return
+            }
             if (!scrubbing || e.button !== 0) return
             scrubRef.current = { x: e.clientX, frame: currentFrame }
             e.currentTarget.setPointerCapture(e.pointerId)
           }}
           onPointerMove={(e) => {
+            const pan = panRef.current
+            if (pan) {
+              const stage = stageRef.current
+              if (!stage) return
+              stage.scrollLeft = pan.sl - (e.clientX - pan.x)
+              stage.scrollTop = pan.st - (e.clientY - pan.y)
+              return
+            }
             const s = scrubRef.current
             if (!scrubbing || !s) return
             const next = clamp(s.frame + Math.round((e.clientX - s.x) / SCRUB_PX_PER_FRAME))
@@ -111,50 +189,98 @@ export function EditorViewer({
           }}
           onPointerUp={() => {
             scrubRef.current = null
+            panRef.current = null
           }}
         >
-          <video
-            ref={videoRef}
-            src={source.video_url}
-            preload="auto"
-            playsInline
-            className="absolute inset-0 h-full w-full"
-            onPlay={() => {
-              playingRef.current = true
+          <div
+            className="relative mx-auto"
+            style={{
+              aspectRatio: `${width} / ${height}`,
+              width: `calc(min(100cqw, 100cqh * ${width} / ${height}) * ${zoom})`,
+              height: `calc(min(100cqh, 100cqw * ${height} / ${width}) * ${zoom})`,
             }}
-            onPause={() => {
-              playingRef.current = false
-            }}
-            onTimeUpdate={() => {
-              const v = videoRef.current
-              if (v && playingRef.current) {
-                onFrameChange(timeToFrameIndex(v.currentTime, fps, Math.max(0, frameCount - 1)))
-              }
-            }}
-          />
-          {mode === "annotate" && (
-            <AnnotationLayer width={width} height={height} frame={currentFrame} annotate={annotate} />
-          )}
-          {mode === "detect" && <MaskOverlay url={detectMaskUrl} opacity={maskOpacity} />}
-          {mode === "detect" &&
-            detectBoxes.map((box, i) =>
-              box && box.length >= 4 && width > 0 && height > 0 ? (
-                <div
-                  key={i}
-                  className="pointer-events-none absolute border border-mask"
-                  style={{
-                    left: `${(box[0] / width) * 100}%`,
-                    top: `${(box[1] / height) * 100}%`,
-                    width: `${((box[2] - box[0]) / width) * 100}%`,
-                    height: `${((box[3] - box[1]) / height) * 100}%`,
-                  }}
-                >
-                  <span className="absolute -top-4 left-0 bg-background/80 px-1 text-[10px] text-mask">
-                    {i}
-                  </span>
-                </div>
-              ) : null,
+          >
+            <video
+              ref={videoRef}
+              src={source.video_url}
+              preload="auto"
+              playsInline
+              className="absolute inset-0 h-full w-full object-contain"
+              onPlay={() => {
+                playingRef.current = true
+              }}
+              onPause={() => {
+                playingRef.current = false
+              }}
+              onTimeUpdate={() => {
+                const v = videoRef.current
+                if (v && playingRef.current) {
+                  onFrameChange(timeToFrameIndex(v.currentTime, fps, Math.max(0, frameCount - 1)))
+                }
+              }}
+            />
+            {mode === "annotate" && (
+              <AnnotationLayer width={width} height={height} frame={currentFrame} annotate={annotate} />
             )}
+            {mode === "detect" && <MaskOverlay url={detectMaskUrl} opacity={maskOpacity} />}
+            {mode === "detect" &&
+              (detectTracks && detectTracks.length > 0 ? (
+                <DetectBoxes
+                  tracks={detectTracks}
+                  videoWidth={width}
+                  videoHeight={height}
+                  selectedId={selectedTrackId}
+                  onSelect={(id) => onSelectTrack?.(id)}
+                  onResize={onResizeTrack}
+                />
+              ) : (
+                detectBoxes.map((box, i) =>
+                  box && box.length >= 4 && width > 0 && height > 0 ? (
+                    <div
+                      key={i}
+                      className="pointer-events-none absolute border border-mask"
+                      style={{
+                        left: `${(box[0] / width) * 100}%`,
+                        top: `${(box[1] / height) * 100}%`,
+                        width: `${((box[2] - box[0]) / width) * 100}%`,
+                        height: `${((box[3] - box[1]) / height) * 100}%`,
+                      }}
+                    />
+                  ) : null,
+                )
+              ))}
+          </div>
+        </div>
+        <div
+          className="absolute right-2 bottom-2 z-20 flex items-center gap-0.5 rounded-md bg-background/85 p-0.5"
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Уменьшить"
+            disabled={zoom <= ZOOM_MIN}
+            onClick={() => setZoom((z) => clampZoom(z / ZOOM_STEP))}
+          >
+            <Minus className="size-3.5" />
+          </Button>
+          <button
+            type="button"
+            className="min-w-10 px-1 text-center text-[11px] tabular-nums text-muted-foreground"
+            onClick={() => setZoom(1)}
+          >
+            {Math.round(zoom * 100)}%
+          </button>
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Увеличить"
+            disabled={zoom >= ZOOM_MAX}
+            onClick={() => setZoom((z) => clampZoom(z * ZOOM_STEP))}
+          >
+            <Plus className="size-3.5" />
+          </Button>
+        </div>
         </div>
       )}
 

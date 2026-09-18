@@ -21,7 +21,7 @@ from videoclean.application.frames import LazyFrames
 from videoclean.application.select import explain_unmatched, select_tracks
 from videoclean.domain.formats import resolve_dest
 from videoclean.domain.intent import Intent, Target
-from videoclean.domain.tracks import Detection, Track, tracks_from_json, tracks_to_json
+from videoclean.domain.tracks import Detection, Track, interpolate_gaps, tracks_from_json, tracks_to_json
 
 
 class RunCleanup:
@@ -155,27 +155,52 @@ class RunCleanup:
         used_detector: str = "manual"
         attempts: list[str] = []
         if req.masks_override:
-            self.progress.start("parse", detail="manual masks")
+            policy = (req.mask_policy or "static").strip().lower()
+            if policy not in {"static", "propagate"}:
+                raise PipelineError(f"mask_policy must be static | propagate, got {policy!r}")
+            self.progress.start("parse", detail=f"manual masks ({policy})")
             intent = Intent(targets=[], parse_mode="manual-masks", raw=req.prompt or "")
             self.progress.finish("parse", f"{len(req.masks_override)} masks")
-            self.progress.start("detect", total=len(frames), detail="manual masks")
-            base = self._or_masks(req.masks_override, (h, w))
-            if base is None:
-                raise PipelineError("masks_override: no readable mask images")
-            if cfg.mask_dilate_px > 0:
-                kernel = cv2.getStructuringElement(
-                    cv2.MORPH_ELLIPSE, (cfg.mask_dilate_px * 2 + 1, cfg.mask_dilate_px * 2 + 1)
-                )
-                base = cv2.dilate(base, kernel)
-            masks = [base.copy() for _ in frames]
-            tracks = []
-            self.progress.finish("detect", "manual masks")
+            self.progress.start("detect", total=len(frames), detail=f"manual masks ({policy})")
+            if policy == "propagate":
+                tracks = self._tracks_from_mask_anchors(req.masks_override, len(frames), (h, w))
+                if not tracks:
+                    raise PipelineError("masks_override: no usable mask anchors for propagate")
+                for tr in tracks:
+                    interpolate_gaps(tr)
+                masks = self.segmenter.masks(images, tracks)
+                if cfg.mask_dilate_px > 0:
+                    kernel = cv2.getStructuringElement(
+                        cv2.MORPH_ELLIPSE, (cfg.mask_dilate_px * 2 + 1, cfg.mask_dilate_px * 2 + 1)
+                    )
+                    masks = [cv2.dilate(m, kernel) if m is not None else m for m in masks]
+                self.progress.finish("detect", f"propagate: {len(tracks)} tracks")
+            else:
+                base = self._or_masks(req.masks_override, (h, w))
+                if base is None:
+                    raise PipelineError("masks_override: no readable mask images")
+                if cfg.mask_dilate_px > 0:
+                    kernel = cv2.getStructuringElement(
+                        cv2.MORPH_ELLIPSE, (cfg.mask_dilate_px * 2 + 1, cfg.mask_dilate_px * 2 + 1)
+                    )
+                    base = cv2.dilate(base, kernel)
+                masks = [base.copy() for _ in frames]
+                tracks = []
+                self.progress.finish("detect", "manual masks (static)")
         elif req.tracks_override:
             self.progress.start("parse", detail="manual tracks")
             try:
                 tracks = tracks_from_json(req.tracks_override)
             except ValueError as exc:
                 raise PipelineError(f"tracks_override: {exc}") from exc
+            n_frames = len(frames)
+            for tr in tracks:
+                if len(tr.boxes) != n_frames:
+                    raise PipelineError(
+                        f"tracks_override: track {tr.track_id} has {len(tr.boxes)} boxes, "
+                        f"video has {n_frames} frames (full-length tracks required)"
+                    )
+                interpolate_gaps(tr)
             labels = list(dict.fromkeys(tr.label for tr in tracks))
             intent = Intent(
                 targets=[Target(kind="object", query=lb) for lb in labels] or [Target(kind="object", query="target")],
@@ -433,6 +458,10 @@ class RunCleanup:
 
     def _ensure_ready(self, req: RunCleanupRequest) -> None:
         if req.masks_override:
+            policy = (req.mask_policy or "static").strip().lower()
+            if policy == "propagate":
+                if not self.segmenter or not getattr(self.segmenter, "name", ""):
+                    raise AdapterUnavailable("segmenter unavailable for mask propagate")
             return
         if req.tracks_override:
             if not self.segmenter or not getattr(self.segmenter, "name", ""):
@@ -456,13 +485,61 @@ class RunCleanup:
         """OR all user masks; resize to frame shape."""
         out: np.ndarray | None = None
         for raw in mask_paths or []:
-            m = cv2.imdecode(np.fromfile(raw, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+            m = cv2.imdecode(np.fromfile(str(raw), dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
             if m is None:
                 continue
             if m.shape != (shape[0], shape[1]):
                 m = cv2.resize(m, (shape[1], shape[0]), interpolation=cv2.INTER_NEAREST)
             out = m if out is None else np.maximum(out, m)
         return out
+
+    def _tracks_from_mask_anchors(
+        self,
+        mask_paths: list[str],
+        n_frames: int,
+        shape: tuple[int, int],
+    ) -> list[Track]:
+        """Build one track from per-frame mask PNGs (stem = absolute frame index)."""
+        boxes: list[tuple[int, int, int, int] | None] = [None] * n_frames
+        for raw in mask_paths or []:
+            path = Path(str(raw))
+            try:
+                idx = int(path.stem)
+            except ValueError:
+                continue
+            if idx < 0 or idx >= n_frames:
+                continue
+            m = cv2.imdecode(np.fromfile(str(path), dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+            if m is None:
+                continue
+            if m.shape != (shape[0], shape[1]):
+                m = cv2.resize(m, (shape[1], shape[0]), interpolation=cv2.INTER_NEAREST)
+            box = _bbox_from_mask(m)
+            if box is not None:
+                boxes[idx] = box
+        if not any(b is not None for b in boxes):
+            return []
+        return [
+            Track(
+                track_id=0,
+                label="mask",
+                boxes=boxes,
+                scores=[1.0 if b is not None else 0.0 for b in boxes],
+                motion="static",
+                notes=["mask-propagate"],
+            )
+        ]
+
+
+def _bbox_from_mask(mask: np.ndarray) -> tuple[int, int, int, int] | None:
+    ys, xs = np.where(mask > 0)
+    if len(xs) == 0:
+        return None
+    x1, x2 = int(xs.min()), int(xs.max()) + 1
+    y1, y2 = int(ys.min()), int(ys.max()) + 1
+    if x2 <= x1 or y2 <= y1:
+        return None
+    return x1, y1, x2, y2
 
 
 def _target_json(t) -> dict:

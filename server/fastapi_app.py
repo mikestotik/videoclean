@@ -374,6 +374,7 @@ def create_app(state: AppState) -> FastAPI:
         propainter_neighbor_length: str = Form(""),
         propainter_subvideo_length: str = Form(""),
         propainter_raft_iter: str = Form(""),
+        mask_policy: str = Form(""),
         overwrite: str = Form(""),
     ):
         kind = (kind or "run").strip().lower() or "run"
@@ -425,9 +426,15 @@ def create_app(state: AppState) -> FastAPI:
             "propainter_neighbor_length": propainter_neighbor_length,
             "propainter_subvideo_length": propainter_subvideo_length,
             "propainter_raft_iter": propainter_raft_iter,
+            "mask_policy": mask_policy,
             "overwrite": overwrite,
         }
         payload = serialize_clean_form({k: v for k, v in fields.items() if v != ""})
+        if (mask_policy or "").strip():
+            policy = mask_policy.strip().lower()
+            if policy not in {"static", "propagate"}:
+                raise HTTPException(400, "mask_policy must be static | propagate")
+            payload["mask_policy"] = policy
         for raw, key in ((targets, "targets_override"), (tracks, "tracks_override")):
             raw = (raw or "").strip()
             if raw:

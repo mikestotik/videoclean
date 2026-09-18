@@ -46,6 +46,7 @@ def cleanup_request_from_row(row: Any) -> RunCleanupRequest:
         targets_override=payload.get("targets_override"),
         tracks_override=payload.get("tracks_override"),
         masks_override=[Path(str(p)) for p in (payload.get("masks_override") or [])] or None,
+        mask_policy=str(payload.get("mask_policy") or "static").strip().lower() or "static",
     )
 
 

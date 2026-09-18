@@ -52,19 +52,26 @@ def infer_motion(track: Track, width: int, height: int) -> str:
 
 
 def interpolate_gaps(track: Track) -> Track:
+    """Fill interior holes by linear interpolation; hold first/last box to the ends."""
     boxes = list(track.boxes)
     known = [i for i, b in enumerate(boxes) if b is not None]
-    if len(known) < 2:
+    if not known:
         return track
-    for a, b in zip(known, known[1:]):
-        if b == a + 1:
-            continue
-        ba, bb = boxes[a], boxes[b]
-        assert ba is not None and bb is not None
-        span = b - a
-        for t in range(1, span):
-            u = t / span
-            boxes[a + t] = tuple(int(round(ba[k] + u * (bb[k] - ba[k]))) for k in range(4))  # type: ignore[misc]
+    if len(known) >= 2:
+        for a, b in zip(known, known[1:]):
+            if b == a + 1:
+                continue
+            ba, bb = boxes[a], boxes[b]
+            assert ba is not None and bb is not None
+            span = b - a
+            for t in range(1, span):
+                u = t / span
+                boxes[a + t] = tuple(int(round(ba[k] + u * (bb[k] - ba[k]))) for k in range(4))  # type: ignore[misc]
+    first, last = known[0], known[-1]
+    for i in range(0, first):
+        boxes[i] = boxes[first]
+    for i in range(last + 1, len(boxes)):
+        boxes[i] = boxes[last]
     track.boxes = boxes
     return track
 

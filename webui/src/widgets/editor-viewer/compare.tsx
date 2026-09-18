@@ -70,18 +70,23 @@ export function Compare({ inputUrl, jobId, width, height }: Props) {
   }
 
   return (
+    <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-md border bg-black [container-type:size]">
     <div
       ref={containerRef}
-      className="relative shrink-0 select-none overflow-hidden rounded-md border bg-black"
-      style={{ aspectRatio: `${width} / ${height}` }}
+      className="relative select-none overflow-hidden"
+      style={{
+        aspectRatio: `${width} / ${height}`,
+        width: `min(100cqw, calc(100cqh * ${width} / ${height}))`,
+        height: `min(100cqh, calc(100cqw * ${height} / ${width}))`,
+      }}
     >
-      <video ref={inputRef} src={inputUrl} controls playsInline className="absolute inset-0 h-full w-full" />
+      <video ref={inputRef} src={inputUrl} controls playsInline className="absolute inset-0 h-full w-full object-contain" />
       <video
         ref={outputRef}
         src={outputUrl}
         playsInline
         muted
-        className="pointer-events-none absolute inset-0 h-full w-full"
+        className="pointer-events-none absolute inset-0 h-full w-full object-contain"
         style={{ clipPath: `inset(0 ${100 - pos}% 0 0)` }}
       />
       <div className="absolute inset-y-0 z-10 w-0.5 bg-background/70" style={{ left: `${pos}%` }}>
@@ -108,6 +113,7 @@ export function Compare({ inputUrl, jobId, width, height }: Props) {
       <span className="pointer-events-none absolute top-2 right-2 z-10 rounded bg-background/80 px-1.5 text-xs">
         До
       </span>
+    </div>
     </div>
   )
 }

@@ -35,12 +35,15 @@ export function BackendSelectors({
   segmenterModel,
   onChange,
   disabled,
+  detectorOnly = false,
 }: {
   detector: string
   segmenter: string
   segmenterModel: string
   onChange: (patch: { detector?: string; segmenter?: string; segmenter_model?: string }) => void
   disabled?: boolean
+  /** Preview stage: segmenter is forced to sam2 server-side — don't pretend otherwise. */
+  detectorOnly?: boolean
 }) {
   const [opts, setOpts] = useState<OptionsShape>({ detectors: [], segmenters: [] })
   useEffect(() => {
@@ -77,42 +80,46 @@ export function BackendSelectors({
           </SelectContent>
         </Select>
       </div>
-      <div className="flex items-center gap-2">
-        <Label className="w-20 shrink-0">Режим</Label>
-        <Select value={segmenter} onValueChange={(v) => { if (v) onChange({ segmenter: v }) }} disabled={disabled}>
-          <SelectTrigger size="sm" className="flex-1">
-            <SelectValue placeholder="sam2" />
-          </SelectTrigger>
-          <SelectContent>
-            {(opts.segmenters.length ? opts.segmenters : ["sam2", "sam2-video"]).map((s) => (
-              <SelectItem key={s} value={s}>
-                {s === "sam2-video" ? "sam2-video (пропагация)" : "sam2 (покадрово)"}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="flex items-center gap-2">
-        <Label className="w-20 shrink-0">Модель</Label>
-        <Select
-          value={modelValue}
-          onValueChange={(v) => { if (v) onChange({ segmenter_model: v }) }}
-          disabled={disabled}
-        >
-          <SelectTrigger size="sm" className="flex-1">
-            <SelectValue placeholder="SAM2 tiny" />
-          </SelectTrigger>
-          <SelectContent>
-            {(opts.segmenter_models ?? []).map((m) => (
-              <SelectItem key={m.id} value={m.model_ref}>
-                {m.title}
-                {m.size_hint ? ` · ${m.size_hint}` : ""}
-                {m.ready === false ? " · не скачана" : ""}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      {!detectorOnly && (
+        <>
+          <div className="flex items-center gap-2">
+            <Label className="w-20 shrink-0">Режим</Label>
+            <Select value={segmenter} onValueChange={(v) => { if (v) onChange({ segmenter: v }) }} disabled={disabled}>
+              <SelectTrigger size="sm" className="flex-1">
+                <SelectValue placeholder="sam2" />
+              </SelectTrigger>
+              <SelectContent>
+                {(opts.segmenters.length ? opts.segmenters : ["sam2", "sam2-video"]).map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {s === "sam2-video" ? "sam2-video (пропагация)" : "sam2 (покадрово)"}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-center gap-2">
+            <Label className="w-20 shrink-0">Модель</Label>
+            <Select
+              value={modelValue}
+              onValueChange={(v) => { if (v) onChange({ segmenter_model: v }) }}
+              disabled={disabled}
+            >
+              <SelectTrigger size="sm" className="flex-1">
+                <SelectValue placeholder="SAM2 tiny" />
+              </SelectTrigger>
+              <SelectContent>
+                {(opts.segmenter_models ?? []).map((m) => (
+                  <SelectItem key={m.id} value={m.model_ref}>
+                    {m.title}
+                    {m.size_hint ? ` · ${m.size_hint}` : ""}
+                    {m.ready === false ? " · не скачана" : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </>
+      )}
     </div>
   )
 }
@@ -143,13 +150,13 @@ export function StageSection({
     >
       <button
         type="button"
-        className="flex w-full items-start gap-2.5 px-3 py-3 text-left hover:bg-muted/30"
+        className="flex w-full items-baseline gap-2.5 px-3 py-3 text-left hover:bg-muted/30"
         onClick={() => onOpenChange(!open)}
         aria-expanded={open}
       >
         <span
           className={cn(
-            "mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold tabular-nums",
+            "flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold tabular-nums relative -top-px",
             active ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground",
           )}
         >
@@ -162,7 +169,7 @@ export function StageSection({
         <span className="mt-0.5 text-[10px] text-muted-foreground">{open ? "▾" : "▸"}</span>
       </button>
       {open && (
-        <div className="flex flex-col gap-2.5 px-3 pb-3.5 pl-10">
+        <div className="flex flex-col gap-2.5 px-3 pb-3.5 pl-3">
           {hint && <p className="-mt-1 text-[11px] text-muted-foreground">{hint}</p>}
           {children}
         </div>

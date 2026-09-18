@@ -10,7 +10,7 @@ from videoclean.adapters.detectors._cv import (
     box_area_frac,
     iou,
     keep_detection_box,
-    match_template,
+    track_across_frames,
     nms,
     sample_indices,
 )
@@ -109,7 +109,7 @@ class GroundingDinoDetector:
             for hit in nms(frame_hits, self.nms_iou):
                 per_frame[i].append((hit.label or "object", hit.score, hit.xyxy))
         if on_progress:
-            on_progress(n_keys, n_keys, f"{self.name} template-track")
+            on_progress(n_keys, n_keys, f"{self.name} track")
         tracks: list[Track] = []
         tid = 3000
         used = [[False] * len(per_frame[i]) for i in range(len(frames))]
@@ -136,9 +136,17 @@ class GroundingDinoDetector:
                 x1, y1, x2, y2 = box
                 crop = frames[i][y1:y2, x1:x2]
                 fh, fw = frames[i].shape[:2]
-                if crop.size and box_area_frac(box, fw, fh) <= self.tracker_max_template_area:
-                    searched = match_template(frames, crop, min_score=self.tracker_min_score)
-                    boxes = [s if s is not None else b for s, b in zip(searched, boxes)]
+                template = (
+                    crop
+                    if crop.size and box_area_frac(box, fw, fh) <= self.tracker_max_template_area
+                    else None
+                )
+                boxes = track_across_frames(
+                    frames,
+                    boxes,
+                    template_bgr=template,
+                    min_score=self.tracker_min_score,
+                )
                 tr = Track(
                     track_id=tid,
                     label=label,

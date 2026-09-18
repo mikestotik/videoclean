@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { useInterpret } from "@features/interpret"
-import { useDetectRun } from "@features/detect-run"
+import { tracksAreFullLength, useDetectRun } from "@features/detect-run"
 import { useInpaintRun } from "@features/inpaint-run"
 import { cancelJob, type Job } from "@/entities/job"
 import type { Source } from "@/entities/source"
@@ -20,6 +20,7 @@ import {
   autoStride,
   enabledTargets,
   resetParams,
+  toDetectParams,
   toRunParams,
   type EditorParams,
   type InpaintMode,
@@ -66,6 +67,12 @@ export function StageRail({
 
   const hasMasks = (masks?.length ?? 0) > 0
   const hasPrompt = params.prompt.trim().length > 0
+  const hasTargets = enabledTargets(params).length > 0
+  const tracksReady = tracksAreFullLength(detect.enabledTracks, frameCount)
+  const canFindMasks =
+    !noSource &&
+    !detect.running &&
+    (params.detect.mode === "targets" ? hasTargets : hasPrompt)
 
   const runAllDisabled =
     noSource ||
@@ -73,7 +80,7 @@ export function StageRail({
     interpret.running ||
     detect.running ||
     inpaint.running ||
-    (!hasPrompt && !hasMasks)
+    (!hasPrompt && !hasMasks && !hasTargets)
 
   const activeStage = resultJob?.state === "COMPLETED"
     ? 5
@@ -117,17 +124,22 @@ export function StageRail({
       targets: enabledTargets(params),
       all: params.detect.all,
       stride: params.detect.stride,
+      params: toDetectParams(params),
     })
 
   const runInpaint = () => {
+    if (inpaintMode === "tracks" && !tracksReady) return
     const payload =
       inpaintMode === "tracks"
-        ? { mode: "tracks" as const, tracks: detect.tracks }
+        ? { mode: "tracks" as const, tracks: detect.enabledTracks }
         : inpaintMode === "masks"
           ? { mode: "masks" as const, masks: masks ?? [] }
           : { mode: "prompt" as const, prompt: params.prompt, targets: enabledTargets(params) }
     void inpaint.run(payload, toRunParams(params))
   }
+
+  const setAdvanced = (key: string, value: string) =>
+    set({ advanced: { ...params.advanced, [key]: value } })
 
   return (
     <aside className="flex h-full min-h-0 flex-col">
@@ -255,8 +267,42 @@ export function StageRail({
           segmenterModel={params.run.segmenter_model}
           onChange={(patch) => set({ run: { ...params.run, ...patch } })}
           disabled={noSource}
+          detectorOnly
         />
-        <Button size="sm" disabled={noSource || detect.running} onClick={runDetect}>
+        <div className="flex items-center gap-2 text-xs">
+          <Label className="w-28 shrink-0">Порог</Label>
+          <input
+            className="h-8 w-20 rounded-md border border-input bg-transparent px-2 text-xs"
+            type="number"
+            min={0.05}
+            max={0.5}
+            step={0.01}
+            disabled={noSource}
+            value={params.advanced.detector_threshold ?? "0.15"}
+            onChange={(e) => setAdvanced("detector_threshold", e.target.value)}
+          />
+        </div>
+        <div className="flex items-center gap-2 text-xs">
+          <Label className="w-28 shrink-0">Keyframes</Label>
+          <input
+            className="h-8 w-20 rounded-md border border-input bg-transparent px-2 text-xs"
+            type="number"
+            min={1}
+            placeholder="auto"
+            disabled={noSource}
+            value={params.advanced.detector_keyframes ?? ""}
+            onChange={(e) => setAdvanced("detector_keyframes", e.target.value)}
+          />
+        </div>
+        <ParamSlider
+          label="Dilate масок, px"
+          value={params.run.mask_dilate_px}
+          min={0}
+          max={15}
+          disabled={noSource}
+          onChange={(v) => set({ run: { ...params.run, mask_dilate_px: v } })}
+        />
+        <Button size="sm" disabled={!canFindMasks} onClick={runDetect}>
           Найти маски
         </Button>
         {detect.running && (
@@ -272,7 +318,10 @@ export function StageRail({
         {detect.error && <p className="text-xs text-destructive">{detect.error}</p>}
         {!detect.running && detect.manifest && (
           <p className="text-xs text-muted-foreground">
-            Покрытие масок: {((detect.manifest.meanMaskCoverage ?? 0) * 100).toFixed(2)}% · треков: {detect.tracks.length}
+            Покрытие: {((detect.manifest.meanMaskCoverage ?? 0) * 100).toFixed(2)}% · треков:{" "}
+            {detect.enabledTracks.length}/{detect.tracks.length}
+            {detect.tracks[0] ? ` · длина ${detect.tracks[0].boxes.length}/${frameCount}` : ""}
+            {tracksReady ? " · готово к удалению" : params.detect.all ? "" : " · только осмотр"}
           </p>
         )}
       </StageSection>
@@ -299,10 +348,26 @@ export function StageRail({
           <ToggleGroupItem value="prompt">По промпту</ToggleGroupItem>
         </ToggleGroup>
         {inpaintMode === "masks" && (
-          <p className="text-xs text-muted-foreground">
-            Маски применяются ко всем кадрам — только для неподвижных объектов.
-          </p>
+          <ToggleGroup
+            variant="outline"
+            size="sm"
+            value={[params.maskPolicy]}
+            onValueChange={(v) => {
+              const next = v.at(-1)
+              if (next === "static" || next === "propagate") set({ maskPolicy: next })
+            }}
+          >
+            <ToggleGroupItem value="static">Держать</ToggleGroupItem>
+            <ToggleGroupItem value="propagate">Протянуть</ToggleGroupItem>
+          </ToggleGroup>
         )}
+        <BackendSelectors
+          detector={params.run.detector}
+          segmenter={params.run.segmenter}
+          segmenterModel={params.run.segmenter_model}
+          onChange={(patch) => set({ run: { ...params.run, ...patch } })}
+          disabled={noSource}
+        />
         <div className="flex items-center gap-2 text-xs">
           <Label className="w-20 shrink-0">Инпейнтер</Label>
           <Select value={params.run.inpainter} onValueChange={(v) => { if (v) set({ run: { ...params.run, inpainter: v } }) }} disabled={noSource}>
@@ -326,14 +391,6 @@ export function StageRail({
             </SelectContent>
           </Select>
         </div>
-        <ParamSlider
-          label="Dilate масок, px"
-          value={params.run.mask_dilate_px}
-          min={0}
-          max={15}
-          disabled={noSource}
-          onChange={(v) => set({ run: { ...params.run, mask_dilate_px: v } })}
-        />
         {params.run.inpainter === "opencv-telea" && (
           <ParamSlider
             label="TELEA radius"
@@ -367,7 +424,7 @@ export function StageRail({
           disabled={
             noSource ||
             inpaint.running ||
-            (inpaintMode === "tracks" && detect.tracks.length === 0) ||
+            (inpaintMode === "tracks" && !tracksReady) ||
             (inpaintMode === "masks" && !(masks && masks.length > 0)) ||
             (inpaintMode === "prompt" && !params.prompt.trim())
           }

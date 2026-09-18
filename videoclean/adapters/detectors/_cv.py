@@ -98,3 +98,108 @@ def match_template(
         y2 = int((max_loc[1] + gray_t.shape[0]) / scale)
         hits.append((x1, y1, x2, y2))
     return hits
+
+
+def _box_point_grid(box: tuple[int, int, int, int], grid: int = 3) -> np.ndarray:
+    x1, y1, x2, y2 = box
+    xs = np.linspace(x1 + 1, max(x1 + 1, x2 - 2), grid)
+    ys = np.linspace(y1 + 1, max(y1 + 1, y2 - 2), grid)
+    pts = np.array([[x, y] for y in ys for x in xs], dtype=np.float32).reshape(-1, 1, 2)
+    return pts
+
+
+def _points_to_box(
+    pts: np.ndarray,
+    status: np.ndarray,
+    fallback: tuple[int, int, int, int],
+    frame_shape: tuple[int, int],
+) -> tuple[int, int, int, int] | None:
+    good = pts[status.reshape(-1) == 1].reshape(-1, 2)
+    if len(good) < max(3, pts.shape[0] // 3):
+        return None
+    h, w = frame_shape
+    x1 = int(np.clip(np.min(good[:, 0]), 0, w - 1))
+    y1 = int(np.clip(np.min(good[:, 1]), 0, h - 1))
+    x2 = int(np.clip(np.max(good[:, 0]) + 1, 1, w))
+    y2 = int(np.clip(np.max(good[:, 1]) + 1, 1, h))
+    if x2 - x1 < 4 or y2 - y1 < 4:
+        return None
+    # Reject huge jumps relative to seed size (lost track).
+    sx1, sy1, sx2, sy2 = fallback
+    seed_area = max(1, (sx2 - sx1) * (sy2 - sy1))
+    area = (x2 - x1) * (y2 - y1)
+    if area > seed_area * 4 or area < seed_area * 0.15:
+        return None
+    return x1, y1, x2, y2
+
+
+def fill_boxes_optical_flow(
+    frames: list[np.ndarray],
+    boxes: list[tuple[int, int, int, int] | None],
+) -> list[tuple[int, int, int, int] | None]:
+    """Fill None slots by Lucas–Kanade flow from nearest known boxes; keep anchors."""
+    if not frames or not boxes:
+        return boxes
+    out = list(boxes)
+    n = len(frames)
+    lk = dict(
+        winSize=(21, 21),
+        maxLevel=3,
+        criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01),
+    )
+    known = [i for i, b in enumerate(out) if b is not None]
+    if not known:
+        return out
+
+    def step(i_from: int, i_to: int, box: tuple[int, int, int, int]) -> tuple[int, int, int, int] | None:
+        prev = cv2.cvtColor(frames[i_from], cv2.COLOR_BGR2GRAY)
+        nxt = cv2.cvtColor(frames[i_to], cv2.COLOR_BGR2GRAY)
+        pts = _box_point_grid(box)
+        nxt_pts, status, _ = cv2.calcOpticalFlowPyrLK(prev, nxt, pts, None, **lk)
+        if nxt_pts is None or status is None:
+            return None
+        return _points_to_box(nxt_pts, status, box, frames[i_to].shape[:2])
+
+    # Forward from each anchor into following holes.
+    for start in known:
+        box = out[start]
+        assert box is not None
+        cur = box
+        for i in range(start + 1, n):
+            if out[i] is not None:
+                break
+            nxt = step(i - 1, i, cur)
+            if nxt is None:
+                break
+            out[i] = nxt
+            cur = nxt
+
+    # Backward from each anchor into preceding holes.
+    for start in reversed(known):
+        box = out[start]
+        assert box is not None
+        cur = box
+        for i in range(start - 1, -1, -1):
+            if out[i] is not None:
+                break
+            nxt = step(i + 1, i, cur)
+            if nxt is None:
+                break
+            out[i] = nxt
+            cur = nxt
+
+    return out
+
+
+def track_across_frames(
+    frames: list[np.ndarray],
+    boxes: list[tuple[int, int, int, int] | None],
+    template_bgr: np.ndarray | None = None,
+    min_score: float = 0.55,
+) -> list[tuple[int, int, int, int] | None]:
+    """Prefer optical-flow fill; fall back to template match for remaining holes."""
+    filled = fill_boxes_optical_flow(frames, boxes)
+    if template_bgr is None or not any(b is None for b in filled):
+        return filled
+    templ = match_template(frames, template_bgr, min_score=min_score)
+    return [b if b is not None else t for b, t in zip(filled, templ)]

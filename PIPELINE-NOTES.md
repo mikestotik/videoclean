@@ -95,29 +95,11 @@
 
 ### P0.2 `interpolate_gaps` в domain обрезан
 
-Активный код: `videoclean/domain/tracks.py`.
-Старый дубль: `videoclean/tracks.py` (hold first/last есть).
-
-В domain-версии дыры заполняются только **между** известными боксами. До первого и после последнего бокса остаются `None` → на краях клипа маски пустые. В legacy-файле как раз был hold first/last. Похоже на регрессию при переносе в domain.
-
-Что делать (участок Track): вернуть hold first/last (или отдельную политику: hold / drop / extrapolate) и тест.
+**Сделано:** domain `interpolate_gaps` снова hold first/last (и single-anchor hold на весь клип).
 
 ### P0.3 Preview-треки нельзя честно кормить в полный inpaint
 
-Превью строит треки длиной = число выбранных кадров (`run_preview.py`), не длиной всего ролика.
-
-UI (`useDetectRun` → `parseTracks`) при разборе `boxes`:
-
-- выкидывает `null` вместо сохранения дыр;
-- склеивает только валидные боксы в короткий массив.
-
-Потом «Inpaint по трекам» шлёт это как `tracks_override` в полный `run`. Индексы кадров разъезжаются. Режим «detect на выборке → inpaint по трекам» по сути сломан, пока detect не гоняется на всех кадрах (`all=true`) и пока фронт не хранит `null`-слоты 1:1 с длиной видео.
-
-Что делать (участок UI + Detect):
-
-- `parseTracks` обязан сохранять `null`;
-- inpaint по tracks разрешать только если `boxes.length === frameCount` (или явно ресемплить/пропагировать на полный клип на бэке);
-- в UI подпись: sparse preview ≠ готовые треки для full run.
+**Сделано (прототип):** `parseTracks` хранит `null`; «По трекам» только при full-length; бэкенд отвергает короткие `tracks_override`; sparse = только осмотр. Params detect реально уходят в preview.
 
 ### P0.4 `sam2-video` якорится только на первый бокс трека
 
@@ -137,15 +119,7 @@ UI (`useDetectRun` → `parseTracks`) при разборе `boxes`:
 
 ### P0.6 Обводка не протягивается по клипу (ломает вход B и dynamic)
 
-Контракт: пользователь грубо мажет на 2–5 кадрах → система понимает объект и ведёт его по ролику.
-
-Сейчас `masks_override` / source masks: маска размножается **одинаковой на все кадры** (`run_cleanup.py`, спека editor-pipeline). Для статичного угла это терпимо. Для движущегося объекта или смены плана — мимо контракта.
-
-Нужно (участок Track / отдельный «anchor propagate»):
-
-- штрихи на кадрах → бокс или seed-mask на этих кадрах;
-- пропагация через клип (sam2-video multi-anchor или трекер), не copy-paste PNG;
-- режим static (hold / replicate) выбрать явно, не молча.
+**Сделано (прототип):** явный `mask_policy=static|propagate` (UI: Держать / Протянуть). Static = tile как раньше. Propagate = bbox с кадров-якорей → interpolate/hold → segmenter. Multi-anchor sam2-video ещё впереди (P0.4).
 
 ### P0.7 Промпт + обводка как один вход (C)
 
@@ -319,7 +293,7 @@ API сейчас часто взаимоисключает `targets` / `tracks` 
 
 | # | Замечание | Серьёзность | Направление |
 |---|---|---|---|
-| 7.1 | Стык preview tracks → full inpaint сломан (P0.3) | P0 | Починить сериализацию boxes + guard по длине |
+| 7.1 | Стык preview tracks → full inpaint сломан (P0.3) | P0 | **Сделано (прототип):** nulls + full-length guard UI/API |
 | 7.2 | Placeholder сегментера в UI: `sam2-video`, дефолт движка `sam2` | P3 | Placeholder = `sam2` |
 | 7.3 | Нет пояснения разницы sam2 / sam2-video рядом с селектом | P2 | Hint 1 строка + ссылка на MODELS |
 | 7.4 | Advanced-параметры (keyframes, tracker thresholds, dilate) спрятаны; для качества они главные | P1 | Вынести «качество масок» в видимый блок ступени Detect/Segment |

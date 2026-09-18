@@ -9,7 +9,7 @@ export function MaskOverlay({ url, opacity }: Props) {
     <img
       src={url}
       alt="mask"
-      className="pointer-events-none absolute inset-0 h-full w-full object-fill"
+      className="pointer-events-none absolute inset-0 h-full w-full object-contain"
       style={{ opacity }}
     />
   )

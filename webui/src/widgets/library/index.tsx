@@ -19,6 +19,7 @@ import { Button } from "@/shared/ui/button"
 import { ScrollArea } from "@/shared/ui/scroll-area"
 import { cn } from "@/shared/lib/utils"
 import { UploadButton } from "./upload"
+import type { DetectTrack } from "@features/detect-run"
 
 const KIND_META: Record<JobKind, { label: string; Icon: typeof Sparkles }> = {
   prompt: { label: "Промпт", Icon: Sparkles },
@@ -165,12 +166,22 @@ function StageGroup({
   activeId,
   onAct,
   onSelectJob,
+  maskTracks,
+  excludedIds,
+  selectedTrackId,
+  onToggleTrack,
+  onSelectTrack,
 }: {
   kind: JobKind
   jobs: Job[]
   activeId: string | null
   onAct: ActFn
   onSelectJob?: (job: Job) => void
+  maskTracks?: DetectTrack[]
+  excludedIds?: number[]
+  selectedTrackId?: number | null
+  onToggleTrack?: (id: number) => void
+  onSelectTrack?: (id: number) => void
 }) {
   const meta = KIND_META[kind]
   const Icon = meta.Icon
@@ -182,13 +193,49 @@ function StageGroup({
         <span>{meta.label}</span>
       </div>
       {jobs.map((job) => (
-        <JobRow
-          key={job.id}
-          job={job}
-          active={job.id === activeId}
-          onAct={onAct}
-          onSelect={onSelectJob}
-        />
+        <div key={job.id}>
+          <JobRow
+            job={job}
+            active={job.id === activeId}
+            onAct={onAct}
+            onSelect={onSelectJob}
+          />
+          {kind === "preview" && job.id === activeId && (maskTracks?.length ?? 0) > 0 && (
+            <ul className="ml-3.5 mt-0.5 space-y-0.5 border-l border-border/60 pl-2">
+              {maskTracks!.map((t) => {
+                const on = !excludedIds?.includes(t.id)
+                const hits = t.boxes.filter((b) => b != null).length
+                const selected = t.id === selectedTrackId
+                return (
+                  <li key={t.id}>
+                    <button
+                      type="button"
+                      className={cn(
+                        "flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-[11px]",
+                        selected ? "bg-muted" : "hover:bg-muted/50",
+                        !on && "opacity-50",
+                      )}
+                      onClick={() => onSelectTrack?.(t.id)}
+                    >
+                      <input
+                        type="checkbox"
+                        className="size-3 shrink-0 accent-primary"
+                        checked={on}
+                        onChange={() => onToggleTrack?.(t.id)}
+                        onClick={(e) => e.stopPropagation()}
+                        aria-label={on ? "Исключить" : "Включить"}
+                      />
+                      <span className="min-w-0 flex-1 truncate">
+                        {t.label || `маска ${t.id}`}
+                      </span>
+                      <span className="shrink-0 tabular-nums text-muted-foreground">{hits}</span>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </div>
       ))}
     </div>
   )
@@ -202,6 +249,11 @@ type Props = {
   onSelectJob?: (job: Job) => void
   refreshKey: number
   onUploaded?: () => void
+  maskTracks?: DetectTrack[]
+  excludedIds?: number[]
+  selectedTrackId?: number | null
+  onToggleTrack?: (id: number) => void
+  onSelectTrack?: (id: number) => void
 }
 
 const EMPTY_ACTIVE: ActivePipelineJobs = { prompt: null, preview: null, run: null }
@@ -214,6 +266,11 @@ export function Library({
   onSelectJob,
   refreshKey,
   onUploaded,
+  maskTracks,
+  excludedIds,
+  selectedTrackId,
+  onToggleTrack,
+  onSelectTrack,
 }: Props) {
   const [sources, setSources] = useState<Source[]>([])
   const [jobs, setJobs] = useState<Job[]>([])
@@ -385,6 +442,11 @@ export function Library({
                           activeId={activeJobs[kind]}
                           onAct={act}
                           onSelectJob={onSelectJob}
+                          maskTracks={maskTracks}
+                          excludedIds={excludedIds}
+                          selectedTrackId={selectedTrackId}
+                          onToggleTrack={onToggleTrack}
+                          onSelectTrack={onSelectTrack}
                         />
                       ) : null,
                     )}

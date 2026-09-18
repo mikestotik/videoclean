@@ -7,10 +7,13 @@ export type StageTarget = TargetRow & {
 
 export type InpaintMode = "tracks" | "masks" | "prompt"
 
+export type MaskPolicy = "static" | "propagate"
+
 export type EditorParams = {
   prompt: string
   targets: StageTarget[]
   detect: { mode: "targets" | "prompt"; all: boolean; stride: number }
+  maskPolicy: MaskPolicy
   run: {
     inpainter: string
     mask_dilate_px: number
@@ -60,6 +63,7 @@ export const DEFAULT_PARAMS: EditorParams = {
   prompt: "",
   targets: [],
   detect: { mode: "targets", all: true, stride: 8 },
+  maskPolicy: "static",
   run: {
     inpainter: "opencv-telea",
     mask_dilate_px: 3,
@@ -113,9 +117,30 @@ export function toRunParams(params: EditorParams): Record<string, string | numbe
     segmenter_model: params.run.segmenter_model,
     device: params.run.device,
     formats: params.run.formats.join(","),
+    mask_policy: params.maskPolicy,
     ...params.advanced,
   }
   return out
+}
+
+/** Params that affect detect preview (segmenter is forced to sam2 on the server). */
+export function toDetectParams(params: EditorParams): Record<string, string | number | boolean> {
+  const run = toRunParams(params)
+  const {
+    segmenter: _seg,
+    segmenter_model: _segModel,
+    inpainter: _inp,
+    telea_radius: _telea,
+    verify: _verify,
+    mask_policy: _policy,
+    propainter_mask_dilation: _pmd,
+    propainter_ref_stride: _prs,
+    propainter_neighbor_length: _pnl,
+    propainter_subvideo_length: _psl,
+    propainter_raft_iter: _pri,
+    ...detectParams
+  } = run
+  return detectParams
 }
 
 export function presetSnapshot(params: EditorParams): Record<string, unknown> {
