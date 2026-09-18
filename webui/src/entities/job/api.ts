@@ -9,6 +9,13 @@ export const deleteJob = (id: string) => api<{ ok: boolean }>(`/api/jobs/${id}`,
 export const probeJob = (id: string) => api<MediaProbe>(`/api/jobs/${id}/probe`)
 export const fetchJobReport = (id: string) => api<unknown>(`/api/jobs/${id}/report`)
 
+export const saveJobTracks = (id: string, tracks: unknown[]) =>
+  api<{ ok: boolean; id: string; tracks: number }>(`/api/jobs/${id}/report/tracks`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tracks }),
+  })
+
 export type SubmitJobFields = {
   kind: "run" | "preview" | "prompt"
   source_id?: string

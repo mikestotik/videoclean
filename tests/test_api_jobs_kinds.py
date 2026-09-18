@@ -172,6 +172,40 @@ def test_job_report_unknown_job_is_404(client):
     assert client.get("/api/jobs/nope/report").status_code == 404
 
 
+def test_put_report_tracks_persists_keyframes(client):
+    client, state, tmp_path = client
+    state.jobs.upsert(
+        "j-tracks",
+        "COMPLETED",
+        request={"kind": "preview"},
+        report={
+            "kind": "preview",
+            "tracks": [{"id": 0, "label": "logo", "boxes": [[1, 2, 10, 12], [1, 2, 10, 12]]}],
+        },
+    )
+    resp = client.put(
+        "/api/jobs/j-tracks/report/tracks",
+        json={
+            "tracks": [
+                {
+                    "id": 0,
+                    "label": "logo",
+                    "boxes": [[5, 5, 20, 20], [5, 5, 20, 20]],
+                    "keyframes": [0],
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["tracks"] == 1
+    saved = client.get("/api/jobs/j-tracks/report").json()
+    assert saved["tracks"][0]["boxes"][0] == [5, 5, 20, 20]
+    assert saved["tracks"][0]["keyframes"] == [0]
+    assert "tracksEditedAt" in saved
+
+
 def test_job_report_without_report_is_404(client):
     client, state, tmp_path = client
     state.jobs.upsert("j-empty", "COMPLETED")

@@ -491,6 +491,93 @@ def annotations_payload(state: AppState, source_row) -> dict[str, Any]:
     return {"frames": out}
 
 
+def _normalize_saved_tracks(raw: Any) -> list[dict[str, Any]]:
+    """Validate editor track payload; keep boxes + optional keyframes."""
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("tracks must be a non-empty list")
+    out: list[dict[str, Any]] = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ValueError(f"tracks[{i}] must be an object")
+        boxes_raw = item.get("boxes")
+        if not isinstance(boxes_raw, list) or not boxes_raw:
+            raise ValueError(f"tracks[{i}].boxes must be a non-empty list")
+        boxes: list[list[int] | None] = []
+        for b in boxes_raw:
+            if b is None:
+                boxes.append(None)
+                continue
+            if not isinstance(b, (list, tuple)) or len(b) < 4:
+                boxes.append(None)
+                continue
+            try:
+                x1, y1, x2, y2 = (int(round(float(v))) for v in b[:4])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"tracks[{i}] has invalid box") from exc
+            boxes.append([x1, y1, x2, y2] if x2 > x1 and y2 > y1 else None)
+        if not any(b is not None for b in boxes):
+            raise ValueError(f"tracks[{i}] has no usable boxes")
+        try:
+            track_id = int(item.get("id", i))
+        except (TypeError, ValueError):
+            track_id = i
+        keys_raw = item.get("keyframes") or []
+        keyframes: list[int] = []
+        if isinstance(keys_raw, list):
+            for k in keys_raw:
+                try:
+                    n = int(k)
+                except (TypeError, ValueError):
+                    continue
+                if 0 <= n < len(boxes):
+                    keyframes.append(n)
+        keyframes = sorted(set(keyframes))
+        row: dict[str, Any] = {
+            "id": track_id,
+            "label": str(item.get("label") or f"track{track_id}"),
+            "boxes": boxes,
+            "keyframes": keyframes,
+        }
+        if item.get("motion") is not None:
+            row["motion"] = str(item["motion"])
+        out.append(row)
+    return out
+
+
+def save_job_tracks(state: AppState, job_id: str, tracks_raw: Any) -> dict[str, Any]:
+    """Persist edited tracks (+ keyframes) into a completed job report."""
+    row = state.jobs.get(job_id)
+    if row is None:
+        raise LookupError(f"unknown job {job_id}")
+    if row["state"] != "COMPLETED":
+        raise RuntimeError(f"job is {row['state']}")
+    report_json = row["report_json"] if "report_json" in row.keys() else None
+    if not report_json:
+        raise LookupError(f"job {job_id} has no report")
+    try:
+        report = json.loads(report_json)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("report is unreadable") from exc
+    if not isinstance(report, dict):
+        raise ValueError("report is unreadable")
+    request = _as_dict(row["request_json"] if "request_json" in row.keys() else None)
+    kind = str(report.get("kind") or request.get("kind") or "")
+    if kind and kind not in {"preview", "run"}:
+        raise ValueError("only preview/run jobs accept track edits")
+    tracks = _normalize_saved_tracks(tracks_raw)
+    report = {**report, "tracks": tracks, "tracksEditedAt": utc_now().isoformat()}
+    state.jobs.upsert(job_id, "COMPLETED", report=report)
+    workdir = report.get("workdir")
+    if isinstance(workdir, str) and workdir:
+        root = Path(workdir)
+        payload = json.dumps(report, ensure_ascii=False, indent=2)
+        for rel in ("output/report.json", "preview/preview.json"):
+            path = root / rel
+            if path.parent.is_dir():
+                path.write_text(payload, encoding="utf-8")
+    return {"ok": True, "id": job_id, "tracks": len(tracks)}
+
+
 def job_dict(state: AppState, row) -> dict[str, Any]:
     job_id = row["id"]
     progress = _as_dict(row["progress_json"] if "progress_json" in row.keys() else None)

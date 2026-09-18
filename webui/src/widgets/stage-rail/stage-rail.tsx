@@ -359,6 +359,20 @@ export function StageRail({
               <ToggleGroupItem value="hold">Протянуть вперёд</ToggleGroupItem>
               <ToggleGroupItem value="frame">Только кадр</ToggleGroupItem>
             </ToggleGroup>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                variant={detect.tracksDirty ? "default" : "outline"}
+                disabled={!detect.lastJobId || detect.saving || detect.tracks.length === 0}
+                onClick={() => void detect.saveTracks()}
+              >
+                {detect.saving ? "Сохраняю…" : detect.tracksDirty ? "Сохранить правки" : "Сохранено"}
+              </Button>
+              {detect.tracksDirty && (
+                <span className="text-[11px] text-muted-foreground">не сохранено</span>
+              )}
+            </div>
+            {detect.saveError && <p className="text-xs text-destructive">{detect.saveError}</p>}
           </div>
         )}
       </StageSection>

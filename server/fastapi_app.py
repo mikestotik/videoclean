@@ -38,6 +38,7 @@ from server.service import (
     queue_source_prompt,
     queue_source_run,
     register_source,
+    save_job_tracks,
     save_mask,
     save_preset,
     serialize_clean_form,
@@ -188,6 +189,7 @@ def create_app(state: AppState) -> FastAPI:
                 "POST /api/preview": "multipart: video + prompt/indices (kind=preview)",
                 "POST /api/preview/from-job": "JSON: reuse input of an existing job",
                 "GET /api/jobs/{id}/preview/{name}": "preview.json or frame artifacts",
+                "PUT /api/jobs/{id}/report/tracks": "save edited tracks + keyframes into job report",
             },
             "presets": {
                 "GET/POST /api/presets": "pipeline presets",
@@ -522,6 +524,17 @@ def create_app(state: AppState) -> FastAPI:
         except (TypeError, ValueError) as exc:
             raise HTTPException(404, f"job {job_id} report is unreadable") from exc
         return JSONResponse(payload)
+
+    @app.put("/api/jobs/{job_id}/report/tracks")
+    def job_report_tracks(job_id: str, body: dict[str, Any], st: AppState = Depends(get_state)):
+        try:
+            return save_job_tracks(st, job_id, body.get("tracks"))
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
 
     @app.get("/api/jobs/{job_id}/output")
     def job_output(job_id: str, st: AppState = Depends(get_state)):

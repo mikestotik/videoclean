@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react"
-import { fetchJobReport, pollJobToCompletion, submitJob } from "@/entities/job"
+import { fetchJobReport, pollJobToCompletion, saveJobTracks, submitJob } from "@/entities/job"
 import { fetchPreviewManifest, type PreviewManifest } from "@/entities/preview"
 import type { Source } from "@/entities/source"
 
@@ -98,6 +98,16 @@ export function tracksAreFullLength(tracks: DetectTrack[], frameCount: number): 
   )
 }
 
+export function tracksToJson(tracks: DetectTrack[]) {
+  return tracks.map((t) => ({
+    id: t.id,
+    label: t.label,
+    motion: t.motion,
+    boxes: t.boxes.map((b) => (b ? ([b[0], b[1], b[2], b[3]] as DetectBox) : null)),
+    keyframes: t.keyframes.slice(),
+  }))
+}
+
 export type DetectRunPayload = {
   mode: "parse" | "detect"
   prompt?: string
@@ -122,6 +132,9 @@ export function useDetectRun(source: Source | null) {
   const [excludedIds, setExcludedIds] = useState<number[]>([])
   const [selectedTrackId, setSelectedTrackId] = useState<number | null>(null)
   const [boxEditMode, setBoxEditMode] = useState<BoxEditMode>("hold")
+  const [tracksDirty, setTracksDirty] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState("")
   const runIdRef = useRef(0)
 
   const [prevSourceId, setPrevSourceId] = useState(source?.id)
@@ -134,6 +147,9 @@ export function useDetectRun(source: Source | null) {
     setExcludedIds([])
     setSelectedTrackId(null)
     setBoxEditMode("hold")
+    setTracksDirty(false)
+    setSaving(false)
+    setSaveError("")
     setError("")
   }
 
@@ -143,10 +159,12 @@ export function useDetectRun(source: Source | null) {
       const runId = ++runIdRef.current
       setRunning(true)
       setError("")
+      setSaveError("")
       setManifest(null)
       setTracks([])
       setExcludedIds([])
       setSelectedTrackId(null)
+      setTracksDirty(false)
       setProgress({ fraction: 0, detail: "", eta: "" })
       try {
         const stride = payload.all ? undefined : payload.stride
@@ -199,6 +217,7 @@ export function useDetectRun(source: Source | null) {
 
   const loadFromJob = useCallback(async (jobId: string) => {
     setError("")
+    setSaveError("")
     try {
       const [m, report] = await Promise.all([
         fetchPreviewManifest(jobId),
@@ -210,6 +229,7 @@ export function useDetectRun(source: Source | null) {
       setExcludedIds([])
       setSelectedTrackId(parsed[0]?.id ?? null)
       setLastJobId(jobId)
+      setTracksDirty(false)
       setProgress({ fraction: 1, detail: "", eta: "" })
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -225,13 +245,33 @@ export function useDetectRun(source: Source | null) {
       setTracks((prev) =>
         prev.map((t) => (t.id === id ? applyBoxEdit(t, frame, box, boxEditMode) : t)),
       )
+      setTracksDirty(true)
+      setSaveError("")
     },
     [boxEditMode],
   )
 
   const clearKey = useCallback((id: number, frame: number) => {
     setTracks((prev) => prev.map((t) => (t.id === id ? clearTrackKey(t, frame) : t)))
+    setTracksDirty(true)
+    setSaveError("")
   }, [])
+
+  const saveTracks = useCallback(async () => {
+    if (!lastJobId || tracks.length === 0 || saving) return false
+    setSaving(true)
+    setSaveError("")
+    try {
+      await saveJobTracks(lastJobId, tracksToJson(tracks))
+      setTracksDirty(false)
+      return true
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : String(e))
+      return false
+    } finally {
+      setSaving(false)
+    }
+  }, [lastJobId, tracks, saving])
 
   const enabledTracks = tracks.filter((t) => !excludedIds.includes(t.id))
 
@@ -253,6 +293,10 @@ export function useDetectRun(source: Source | null) {
     clearKey,
     boxEditMode,
     setBoxEditMode,
+    tracksDirty,
+    saving,
+    saveError,
+    saveTracks,
     loadFromJob,
   }
 }
