@@ -1,21 +1,42 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect } from "react"
 import { Clapperboard, Settings2 } from "lucide-react"
 import { ConfigPage } from "@pages/config"
 import { WorkspacePage } from "@pages/workspace"
+import {
+  lastWorkspacePath,
+  parsePath,
+  useAppRoute,
+  type AppRoute,
+} from "@/shared/lib/route"
 import { cn } from "@/shared/lib/utils"
 
 const NAV = [
   { id: "workspace", label: "Редактор", icon: Clapperboard },
-  { id: "config", label: "Система", icon: Settings2 },
+  { id: "settings", label: "Система", icon: Settings2 },
 ] as const
 
+function navRoute(id: (typeof NAV)[number]["id"]): AppRoute {
+  if (id === "settings") return { page: "settings" }
+  return parsePath(lastWorkspacePath())
+}
+
 export function App() {
-  const [tab, setTab] = useState<(typeof NAV)[number]["id"]>("workspace")
+  const { route, navigate } = useAppRoute()
+
   useEffect(() => {
-    const openConfig = () => setTab("config")
+    const openConfig = () => navigate({ page: "settings" })
     window.addEventListener("videoclean:open-config", openConfig)
     return () => window.removeEventListener("videoclean:open-config", openConfig)
-  }, [])
+  }, [navigate])
+
+  const onRouteSourceIdChange = useCallback(
+    (id: string | null, replace?: boolean) => {
+      navigate({ page: "workspace", sourceId: id }, Boolean(replace))
+    },
+    [navigate],
+  )
+
+  const activeNav = route.page === "settings" ? "settings" : "workspace"
 
   return (
     <div className="flex h-svh flex-col overflow-hidden bg-background">
@@ -32,12 +53,12 @@ export function App() {
 
         <nav className="flex items-center gap-0.5 rounded-md bg-muted/60 p-0.5" aria-label="Разделы">
           {NAV.map(({ id, label, icon: Icon }) => {
-            const active = tab === id
+            const active = activeNav === id
             return (
               <button
                 key={id}
                 type="button"
-                onClick={() => setTab(id)}
+                onClick={() => navigate(navRoute(id))}
                 className={cn(
                   "inline-flex h-7 items-center gap-1.5 rounded px-2.5 text-xs font-medium transition-colors",
                   active
@@ -53,7 +74,16 @@ export function App() {
           })}
         </nav>
       </header>
-      <main className="min-h-0 flex-1">{tab === "workspace" ? <WorkspacePage /> : <ConfigPage />}</main>
+      <main className="min-h-0 flex-1">
+        {route.page === "workspace" ? (
+          <WorkspacePage
+            routeSourceId={route.sourceId}
+            onRouteSourceIdChange={onRouteSourceIdChange}
+          />
+        ) : (
+          <ConfigPage />
+        )}
+      </main>
     </div>
   )
 }

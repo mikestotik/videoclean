@@ -3,6 +3,8 @@ import type { Source } from "./types"
 
 export const listSources = () => api<Source[]>("/api/sources")
 
+export const getSource = (sourceId: string) => api<Source>(`/api/sources/${sourceId}`)
+
 export const uploadSource = (video: File) => {
   const form = new FormData()
   form.append("video", video)

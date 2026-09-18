@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Film, Upload } from "lucide-react"
 import { EditorViewer, type EditorMode } from "@widgets/editor-viewer"
 import { Library } from "@widgets/library"
@@ -18,7 +18,7 @@ import { useInterpret, type InterpretTarget } from "@features/interpret"
 import { fetchJobReport, getJob, type Job } from "@/entities/job"
 import { previewArtifactUrl } from "@/entities/preview"
 import type { TargetKind, TargetRow } from "@/entities/targets"
-import type { Source } from "@/entities/source"
+import { getSource, type Source } from "@/entities/source"
 import { formatTimecode } from "@/shared/lib/format"
 import { Timecode } from "@/shared/ui/timecode"
 import { ToggleGroup, ToggleGroupItem } from "@/shared/ui/toggle-group"
@@ -68,8 +68,13 @@ function applyReportToParams(
   }
 }
 
-export function WorkspacePage() {
-  const [source, setSource] = useState<Source | null>(null)
+type Props = {
+  routeSourceId: string | null
+  onRouteSourceIdChange: (id: string | null, replace?: boolean) => void
+}
+
+export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
+  const [source, setSourceState] = useState<Source | null>(null)
   const [currentFrame, setCurrentFrame] = useState(0)
   const [viewerMode, setViewerMode] = useState<EditorMode>("annotate")
   const [params, setParams] = useState<EditorParams>(DEFAULT_PARAMS)
@@ -90,6 +95,38 @@ export function WorkspacePage() {
   const interpret = useInterpret(source)
   const detect = useDetectRun(source)
   const inpaint = useInpaintRun(source)
+
+  const loadedSourceIdRef = useRef<string | null>(null)
+  loadedSourceIdRef.current = source?.id ?? null
+
+  const setSource = useCallback(
+    (next: Source | null) => {
+      setSourceState(next)
+      onRouteSourceIdChange(next?.id ?? null)
+    },
+    [onRouteSourceIdChange],
+  )
+
+  useEffect(() => {
+    let cancelled = false
+    if (!routeSourceId) {
+      setSourceState(null)
+      return
+    }
+    if (loadedSourceIdRef.current === routeSourceId) return
+    void getSource(routeSourceId)
+      .then((row) => {
+        if (!cancelled) setSourceState(row)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setSourceState(null)
+        onRouteSourceIdChange(null, true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [routeSourceId, onRouteSourceIdChange])
 
   const activeJobs = useMemo(
     () => ({

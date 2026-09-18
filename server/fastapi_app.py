@@ -133,18 +133,26 @@ def create_app(state: AppState) -> FastAPI:
     def health():
         return {"ok": True}
 
-    @app.get("/", response_class=HTMLResponse)
-    @app.get("/config", response_class=HTMLResponse)
-    def index():
+    def _spa_index():
         spa_index = DIST_DIR / "index.html"
         if spa_index.is_file():
             return spa_index.read_text(encoding="utf-8")
         return _PLACEHOLDER_HTML
 
+    @app.get("/", response_class=HTMLResponse)
+    @app.get("/settings", response_class=HTMLResponse)
+    @app.get("/config", response_class=HTMLResponse)
+    def index():
+        return _spa_index()
+
+    @app.get("/v/{source_id}", response_class=HTMLResponse)
+    def workspace_source(source_id: str):
+        return _spa_index()
+
     @app.get("/api")
     def api_index():
         return {
-            "ui": ["/", "/config"],
+            "ui": ["/", "/settings", "/v/{source_id}", "/config"],
             "auth": {
                 "browser": "HTTP Basic (VIDEOCLEAN_UI_USER / VIDEOCLEAN_UI_PASSWORD)",
                 "api": "Authorization: Bearer VIDEOCLEAN_API_TOKEN (falls back to UI password)",
