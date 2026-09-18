@@ -63,10 +63,6 @@ def test_default_detectors_are_grounding_dino():
     assert DEFAULT_DETECTORS == ["grounding-dino"]
 
 
-def test_no_profile_field():
-    assert not hasattr(PipelineConfig(), "profile")
-
-
 def test_llm_place_must_be_known():
     cfg = PipelineConfig(llm_place="edge")
     try:
@@ -91,6 +87,10 @@ def test_tunable_params_have_defaults():
     assert cfg.propainter_subvideo_length == 80
     assert cfg.propainter_raft_iter == 20
     assert cfg.prompt_templates is None
+    assert cfg.profile == "custom"
+    assert cfg.verify_max_passes == 1
+    assert cfg.inpaint_workers == 0
+    assert cfg.inpaint_chunk_overlap == 8
     cfg.validate()
 
 

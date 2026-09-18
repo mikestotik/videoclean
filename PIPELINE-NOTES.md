@@ -337,3 +337,26 @@ API сейчас часто взаимоисключает `targets` / `tracks` 
 После Track: **Segment** (multi-anchor sam2-video) → **Inpaint defaults/UX** → **Parse model defaults**.
 
 Когда скажешь «начинаем участок N», разбираем только его: гипотезы, конкретный дизайн правки, список файлов. Код и прогоны — после твоего ок на дизайн участка.
+
+---
+
+## Сделано: скорость + качество (стек)
+
+| Кусок | Что |
+|---|---|
+| Track | Optical-flow → CSRT/KCF → template (`track_across_frames`) |
+| Segment | `sam2-video` multi-anchor (до 8 боксов на трек) |
+| Verify 2.0 | residual unchanged + re-detect → grow mask → **локальный** re-inpaint ranges; `verify_max_passes` |
+| Inpaint | framewise `inpaint_workers` (auto на CPU); video chunked + overlap blend |
+| Profiles | `fast` / `balanced` / `quality` (+ UI селект, CLI `--profile`) |
+
+Ключевые файлы: `application/profiles.py`, `verify_quality.py`, `inpaint_runtime.py`; `adapters/detectors/_cv.py`; `adapters/segmenters/sam2_video.py`; `use_cases/run_cleanup.py`; WebUI `params.ts` + `InpaintControls`.
+
+### Чеклист прогона
+
+1. Перезапуск `make dev` (бэкенд подхватит новые поля config).
+2. В «Удаление» выбрать профиль **Баланс** (CPU) или **Качество** (CUDA).
+3. Короткий клип: Маски → Удаление; в report смотреть `verifyPasses`, `verifyNote`, `inpaintWorkers`, `profile`.
+4. На CPU с LaMa: Advanced → «Потоки инпейнта» = 0 (auto) vs 4 — сравнить wall-time.
+5. На CUDA: профиль Качество → sam2-video + ProPainter; убедиться что leftover-pass не гоняет весь клип зря (ranges в verifyNote).
+6. Регресс: профиль **Свой** + telea + `--no-verify` / verify off — быстрый smoke.

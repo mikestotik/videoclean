@@ -388,6 +388,10 @@ def create_app(state: AppState) -> FastAPI:
         propainter_neighbor_length: str = Form(""),
         propainter_subvideo_length: str = Form(""),
         propainter_raft_iter: str = Form(""),
+        profile: str = Form(""),
+        verify_max_passes: str = Form(""),
+        inpaint_workers: str = Form(""),
+        inpaint_chunk_overlap: str = Form(""),
         mask_policy: str = Form(""),
         overwrite: str = Form(""),
     ):
@@ -440,6 +444,10 @@ def create_app(state: AppState) -> FastAPI:
             "propainter_neighbor_length": propainter_neighbor_length,
             "propainter_subvideo_length": propainter_subvideo_length,
             "propainter_raft_iter": propainter_raft_iter,
+            "profile": profile,
+            "verify_max_passes": verify_max_passes,
+            "inpaint_workers": inpaint_workers,
+            "inpaint_chunk_overlap": inpaint_chunk_overlap,
             "mask_policy": mask_policy,
             "overwrite": overwrite,
         }

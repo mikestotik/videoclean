@@ -166,6 +166,15 @@ class PipelineConfig:
     telea_radius: int = 9
     min_mask_coverage: float = 0.0004
     verify_max_coverage: float = 0.12
+    # Built-in profile name (fast|balanced|quality|custom); informational after merge.
+    profile: str = "custom"
+    # Verify 2.0: residual+detect re-inpaint passes (0 disables even if verify=True leftover path).
+    verify_max_passes: int = 1
+    # Framewise inpaint threads; 0 = auto (CPU→cores, GPU→1). Video-aware always 1.
+    inpaint_workers: int = 0
+    # Overlap frames when chunking video-aware / local re-inpaint.
+    inpaint_chunk_overlap: int = 8
+
     # Vision prompt parse: send every Nth frame (0 = text-only). Cap keeps Ollama payloads small.
     prompt_frame_stride: int = 4
     prompt_frame_max: int = 8
@@ -223,6 +232,16 @@ class PipelineConfig:
             self.propainter_raft_iter,
         ) < 1:
             raise PipelineError("--propainter-ref-stride/neighbor-length/subvideo-length/raft-iter must be >= 1")
+        if self.verify_max_passes < 0:
+            raise PipelineError(f"--verify-max-passes must be >= 0, got {self.verify_max_passes}")
+        if self.inpaint_workers < 0:
+            raise PipelineError(f"--inpaint-workers must be >= 0, got {self.inpaint_workers}")
+        if self.inpaint_chunk_overlap < 0:
+            raise PipelineError(f"--inpaint-chunk-overlap must be >= 0, got {self.inpaint_chunk_overlap}")
+        prof = (self.profile or "custom").strip().lower() or "custom"
+        if prof not in {"custom", "fast", "balanced", "quality"}:
+            raise PipelineError(f"--profile must be custom|fast|balanced|quality, got {self.profile!r}")
+        self.profile = prof
         if self.prompt_templates is not None:
             root = Path(self.prompt_templates).expanduser()
             if not root.is_dir():

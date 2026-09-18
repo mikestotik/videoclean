@@ -91,6 +91,7 @@ def _flags(
     verify_max_coverage: float = 0.12,
     prompt_frame_stride: int = 4,
     prompt_frame_max: int = 8,
+    parse_chunk_frames: int = 0,
     vision_batch: int = 2,
     detector_keyframes: int | None = None,
     detector_nms_iou: float = 0.3,
@@ -103,6 +104,10 @@ def _flags(
     propainter_subvideo_length: int = 80,
     propainter_raft_iter: int = 20,
     prompt_templates: str | None = None,
+    profile: str = "custom",
+    verify_max_passes: int | None = None,
+    inpaint_workers: int | None = None,
+    inpaint_chunk_overlap: int | None = None,
 ) -> PipelineConfig:
     try:
         return config_from_flags(
@@ -128,6 +133,7 @@ def _flags(
             verify_max_coverage=verify_max_coverage,
             prompt_frame_stride=prompt_frame_stride,
             prompt_frame_max=prompt_frame_max,
+            parse_chunk_frames=parse_chunk_frames,
             vision_batch=vision_batch,
             detector_keyframes=detector_keyframes,
             detector_nms_iou=detector_nms_iou,
@@ -140,6 +146,10 @@ def _flags(
             propainter_subvideo_length=propainter_subvideo_length,
             propainter_raft_iter=propainter_raft_iter,
             prompt_templates=prompt_templates,
+            profile=profile,
+            verify_max_passes=verify_max_passes,
+            inpaint_workers=inpaint_workers,
+            inpaint_chunk_overlap=inpaint_chunk_overlap,
         )
     except PipelineError as exc:
         raise typer.Exit(str(exc)) from exc
@@ -651,6 +661,29 @@ def run(
     keep_workdir: bool = typer.Option(False, "--keep-workdir"),
     overwrite: bool = typer.Option(False, "--overwrite"),
     verify: bool = _verify_opt(),
+    profile: str = typer.Option(
+        "custom",
+        "--profile",
+        help="Built-in stack: custom | fast | balanced | quality (overwrites segmenter/inpainter/verify knobs).",
+    ),
+    verify_max_passes: int = typer.Option(
+        1,
+        "--verify-max-passes",
+        help="Verify 2.0: max residual/detect re-inpaint passes (0 = detect-only skip).",
+        min=0,
+    ),
+    inpaint_workers: int = typer.Option(
+        0,
+        "--inpaint-workers",
+        help="Framewise inpaint threads (0 = auto: CPU cores / GPU 1). Ignored for ProPainter.",
+        min=0,
+    ),
+    inpaint_chunk_overlap: int = typer.Option(
+        8,
+        "--inpaint-chunk-overlap",
+        help="Overlap frames when chunking video inpaint / local verify re-inpaint.",
+        min=0,
+    ),
 ) -> None:
     """Run the cleanup pipeline with live progress."""
     cfg = _flags(
@@ -689,6 +722,10 @@ def run(
         propainter_subvideo_length=propainter_subvideo_length,
         propainter_raft_iter=propainter_raft_iter,
         prompt_templates=prompt_templates,
+        profile=profile,
+        verify_max_passes=verify_max_passes,
+        inpaint_workers=inpaint_workers,
+        inpaint_chunk_overlap=inpaint_chunk_overlap,
     )
     media = FFmpegMedia()
     manifest = media.probe(input)

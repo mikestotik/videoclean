@@ -15,6 +15,7 @@ export type EditorParams = {
   detect: { mode: "targets" | "prompt"; all: boolean; stride: number }
   maskPolicy: MaskPolicy
   run: {
+    profile: "custom" | "fast" | "balanced" | "quality"
     inpainter: string
     inpainter_model: string
     mask_dilate_px: number
@@ -35,6 +36,8 @@ export type EditorParams = {
   }
   advanced: Record<string, string>
 }
+
+export type PipelineProfileId = EditorParams["run"]["profile"]
 
 export const INPAINTER_OPTIONS = ["opencv-telea", "lama", "propainter"] as const
 
@@ -66,6 +69,79 @@ export const ADVANCED_DEFAULTS: Record<string, string> = {
   propainter_neighbor_length: "10",
   propainter_subvideo_length: "80",
   propainter_raft_iter: "20",
+  verify_max_passes: "1",
+  inpaint_workers: "0",
+  inpaint_chunk_overlap: "8",
+}
+
+/** Client-side mirror of server profile_defaults (device-aware). */
+export function builtInProfileDefaults(
+  id: Exclude<PipelineProfileId, "custom">,
+  device: string,
+): { run: Partial<EditorParams["run"]>; advanced: Record<string, string> } {
+  const cuda = (device || "cpu").toLowerCase() === "cuda"
+  if (id === "fast") {
+    return {
+      run: {
+        profile: "fast",
+        verify: false,
+        mask_dilate_px: 2,
+        segmenter: "sam2",
+        inpainter: "opencv-telea",
+      },
+      advanced: {
+        detector_keyframes: "6",
+        verify_max_passes: "0",
+        inpaint_workers: "0",
+        inpaint_chunk_overlap: "0",
+      },
+    }
+  }
+  if (id === "balanced") {
+    return {
+      run: {
+        profile: "balanced",
+        verify: true,
+        mask_dilate_px: 3,
+        segmenter: "sam2",
+        inpainter: "lama",
+      },
+      advanced: {
+        detector_keyframes: "10",
+        verify_max_passes: "1",
+        inpaint_workers: "0",
+        inpaint_chunk_overlap: "8",
+      },
+    }
+  }
+  return {
+    run: {
+      profile: "quality",
+      verify: true,
+      mask_dilate_px: 5,
+      segmenter: cuda ? "sam2-video" : "sam2",
+      inpainter: cuda ? "propainter" : "lama",
+    },
+    advanced: {
+      detector_keyframes: cuda ? "16" : "12",
+      verify_max_passes: "2",
+      inpaint_workers: cuda ? "1" : "0",
+      inpaint_chunk_overlap: "12",
+      propainter_subvideo_length: "80",
+    },
+  }
+}
+
+export function applyBuiltInProfile(params: EditorParams, id: PipelineProfileId): EditorParams {
+  if (id === "custom") {
+    return { ...params, run: { ...params.run, profile: "custom" } }
+  }
+  const patch = builtInProfileDefaults(id, params.run.device)
+  return {
+    ...params,
+    run: { ...params.run, ...patch.run, profile: id },
+    advanced: { ...params.advanced, ...patch.advanced },
+  }
 }
 
 export const DEFAULT_PARAMS: EditorParams = {
@@ -74,7 +150,8 @@ export const DEFAULT_PARAMS: EditorParams = {
   detect: { mode: "targets", all: true, stride: 8 },
   maskPolicy: "static",
   run: {
-    inpainter: "opencv-telea",
+    profile: "balanced",
+    inpainter: "lama",
     inpainter_model: "",
     mask_dilate_px: 3,
     telea_radius: 9,
@@ -88,11 +165,16 @@ export const DEFAULT_PARAMS: EditorParams = {
     llm_model: "",
     detector: "",
     detector_model: "",
-    segmenter: "",
+    segmenter: "sam2",
     segmenter_model: "",
     device: "",
   },
-  advanced: { ...ADVANCED_DEFAULTS },
+  advanced: {
+    ...ADVANCED_DEFAULTS,
+    detector_keyframes: "10",
+    verify_max_passes: "1",
+    inpaint_chunk_overlap: "8",
+  },
 }
 
 export function resetParams(): EditorParams {
@@ -111,6 +193,7 @@ export function enabledTargets(params: EditorParams): TargetRow[] {
 
 export function toRunParams(params: EditorParams): Record<string, string | number | boolean> {
   const out: Record<string, string | number | boolean> = {
+    profile: params.run.profile,
     inpainter: params.run.inpainter,
     inpainter_model: params.run.inpainter_model,
     mask_dilate_px: params.run.mask_dilate_px,
@@ -172,6 +255,14 @@ export function applyPreset(params: EditorParams, payload: Record<string, unknow
 
 function pickRun(run: Record<string, unknown>): Partial<EditorParams["run"]> {
   const out: Partial<EditorParams["run"]> = {}
+  if (
+    run.profile === "custom" ||
+    run.profile === "fast" ||
+    run.profile === "balanced" ||
+    run.profile === "quality"
+  ) {
+    out.profile = run.profile
+  }
   if (typeof run.inpainter === "string") out.inpainter = run.inpainter
   if (typeof run.inpainter_model === "string") out.inpainter_model = run.inpainter_model
   if (typeof run.mask_dilate_px === "number") out.mask_dilate_px = run.mask_dilate_px

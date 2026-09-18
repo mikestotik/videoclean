@@ -17,7 +17,11 @@
 | `--mask-dilate` | Dilate маски, px | `3` | Расширение SAM-маски | Тонкие буквы остаются по краям → `5`–`8`; большой оверлей «съедает» фон → уменьшить |
 | `--telea-radius` | TELEA radius | `9` | Радиус TELEA | Только для opencv-telea. Больше — глаже, мыльнее |
 | `--min-mask-coverage` | — | `0.0004` | Джоба падает, если средняя маска < доли кадра | Страховка от «молча ничего не удалил». Поднимать при ложных срабатываниях на крошечных зонах |
-| `--verify` / `--no-verify` | Проверять leftover | вкл | Повторная детекция после inpaint; если текст остался — re-inpaint с расширенной маской | Выключать для скорости на длинных видео |
+| `--verify` / `--no-verify` | Проверять leftover | вкл | Verify 2.0: residual + re-detect; локальный re-inpaint проблемных участков | Выключать для скорости на длинных видео |
+| `--verify-max-passes` | Verify: проходы | `1` | Сколько раз искать остатки и перезаливать (0 = без re-inpaint) | `2` в профиле quality |
+| `--inpaint-workers` | Потоки инпейнта | `0` (auto) | Параллель для TELEA/LaMa; ProPainter всегда 1 | CPU: auto по ядрам; GPU: обычно 1 |
+| `--inpaint-chunk-overlap` | Overlap чанков | `8` | Перекрытие при нарезке video-inpaint / verify | Швы на стыках → поднять |
+| `--profile` | Профиль | `custom` | `fast` / `balanced` / `quality` — перебивает segmenter/inpainter/verify knobs | Качество на CUDA: sam2-video+ProPainter |
 
 ## Vision-парс промпта (LLM → queries)
 

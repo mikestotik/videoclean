@@ -23,10 +23,19 @@ import {
   ADVANCED_DEFAULTS,
   DEVICE_OPTIONS,
   INPAINTER_OPTIONS,
+  applyBuiltInProfile,
   applyPreset,
   presetSnapshot,
   type EditorParams,
+  type PipelineProfileId,
 } from "./params"
+
+const PROFILE_OPTIONS: { id: PipelineProfileId; label: string; hint: string }[] = [
+  { id: "fast", label: "Быстро", hint: "TELEA, без verify — черновик." },
+  { id: "balanced", label: "Баланс", hint: "LaMa + один verify-pass." },
+  { id: "quality", label: "Качество", hint: "Больше keyframes; на CUDA — sam2-video + ProPainter и до 2 verify-pass." },
+  { id: "custom", label: "Свой", hint: "Ручные настройки без пресета." },
+]
 
 type PollShape = { ollama: { ok: boolean; models: string[] } }
 
@@ -378,8 +387,15 @@ export function InpaintControls({
       .catch(() => setOpts({ detectors: [], segmenters: [] }))
   }, [])
 
-  const setRun = (patch: Partial<EditorParams["run"]>) =>
-    onParamsChange({ ...params, run: { ...params.run, ...patch } })
+  const setRun = (patch: Partial<EditorParams["run"]>, markCustom = false) =>
+    onParamsChange({
+      ...params,
+      run: {
+        ...params.run,
+        ...patch,
+        ...(markCustom ? { profile: "custom" as const } : {}),
+      },
+    })
 
   const inpainters =
     opts.inpainters?.length ? opts.inpainters : [...INPAINTER_OPTIONS]
@@ -394,9 +410,40 @@ export function InpaintControls({
     modelChoices.find((m) => m.state === "ready") ||
     modelChoices[0]
   const modelSelectValue = selectedModel?.id ?? ""
+  const profileHint =
+    PROFILE_OPTIONS.find((p) => p.id === params.run.profile)?.hint ?? PROFILE_OPTIONS[3].hint
 
   return (
     <div className="flex flex-col gap-2 text-xs">
+      <div className="flex items-center gap-2">
+        <FieldLabel
+          className="w-[7.5rem] shrink-0"
+          hint="Готовый стек под задачу. «Качество» на CUDA включает sam2-video, ProPainter и повторную проверку остатков."
+        >
+          Профиль
+        </FieldLabel>
+        <Select
+          value={params.run.profile}
+          onValueChange={(v) => {
+            if (!v) return
+            onParamsChange(applyBuiltInProfile(params, v as PipelineProfileId))
+          }}
+          disabled={disabled}
+        >
+          <SelectTrigger size="sm" className="flex-1">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {PROFILE_OPTIONS.map((p) => (
+              <SelectItem key={p.id} value={p.id}>
+                {p.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <ParamHint text={profileHint} />
+      </div>
+
       <div className="flex items-center gap-2">
         <FieldLabel
           className="w-[7.5rem] shrink-0"
@@ -411,11 +458,14 @@ export function InpaintControls({
             const nextModels = catalog.filter((m) => m.backend === v)
             const next =
               nextModels.find((m) => m.state === "ready") || nextModels[0]
-            setRun({
-              inpainter: v,
-              // Prefer HF id / short ref; never persist raw download URLs in the UI value path.
-              inpainter_model: next ? modelRefForApi(next) : "",
-            })
+            setRun(
+              {
+                inpainter: v,
+                // Prefer HF id / short ref; never persist raw download URLs in the UI value path.
+                inpainter_model: next ? modelRefForApi(next) : "",
+              },
+              true,
+            )
           }}
           disabled={disabled}
         >
@@ -432,7 +482,20 @@ export function InpaintControls({
         </Select>
         <Select
           value={params.run.device || "cpu"}
-          onValueChange={(v) => { if (v) setRun({ device: v }) }}
+          onValueChange={(v) => {
+            if (!v) return
+            // Re-resolve profile knobs for the new device when a built-in profile is active.
+            if (params.run.profile !== "custom") {
+              onParamsChange(
+                applyBuiltInProfile(
+                  { ...params, run: { ...params.run, device: v } },
+                  params.run.profile,
+                ),
+              )
+              return
+            }
+            setRun({ device: v })
+          }}
           disabled={disabled}
         >
           <SelectTrigger size="sm" className="w-28">
@@ -578,7 +641,11 @@ export function AdvancedFields({
   disabled?: boolean
 }) {
   const setAdvanced = (key: string, value: string) =>
-    onParamsChange({ ...params, advanced: { ...params.advanced, [key]: value } })
+    onParamsChange({
+      ...params,
+      run: { ...params.run, profile: "custom" },
+      advanced: { ...params.advanced, [key]: value },
+    })
 
   const sliderKeys = [
     "detector_threshold",
@@ -590,6 +657,9 @@ export function AdvancedFields({
     "prompt_frame_max",
     "parse_chunk_frames",
     "vision_batch",
+    "verify_max_passes",
+    "inpaint_workers",
+    "inpaint_chunk_overlap",
     "propainter_mask_dilation",
     "propainter_ref_stride",
     "propainter_neighbor_length",

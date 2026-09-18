@@ -191,14 +191,88 @@ def fill_boxes_optical_flow(
     return out
 
 
+def fill_boxes_csrt(
+    frames: list[np.ndarray],
+    boxes: list[tuple[int, int, int, int] | None],
+) -> list[tuple[int, int, int, int] | None]:
+    """Fill remaining None slots with OpenCV CSRT (or KCF) from nearest anchors."""
+    if not frames or not boxes:
+        return boxes
+    create = _tracker_factory()
+    if create is None:
+        return boxes
+    out = list(boxes)
+    n = len(frames)
+    known = [i for i, b in enumerate(out) if b is not None]
+    if not known:
+        return out
+
+    def _run(direction: int) -> None:
+        ordered = known if direction > 0 else list(reversed(known))
+        for start in ordered:
+            box = out[start]
+            assert box is not None
+            tracker = create()
+            x1, y1, x2, y2 = box
+            ok = tracker.init(frames[start], (float(x1), float(y1), float(x2 - x1), float(y2 - y1)))
+            if not ok:
+                continue
+            i = start + direction
+            while 0 <= i < n:
+                if out[i] is not None:
+                    break
+                ok, rect = tracker.update(frames[i])
+                if not ok:
+                    break
+                rx, ry, rw, rh = rect
+                h, w = frames[i].shape[:2]
+                nb = (
+                    int(np.clip(rx, 0, w - 1)),
+                    int(np.clip(ry, 0, h - 1)),
+                    int(np.clip(rx + rw, 1, w)),
+                    int(np.clip(ry + rh, 1, h)),
+                )
+                if nb[2] - nb[0] < 4 or nb[3] - nb[1] < 4:
+                    break
+                # Reject wild size jumps vs seed.
+                seed_area = max(1, (x2 - x1) * (y2 - y1))
+                area = (nb[2] - nb[0]) * (nb[3] - nb[1])
+                if area > seed_area * 4 or area < seed_area * 0.15:
+                    break
+                out[i] = nb
+                i += direction
+
+    _run(+1)
+    _run(-1)
+    return out
+
+
+def _tracker_factory():
+    for path in (
+        lambda: cv2.TrackerCSRT_create,
+        lambda: cv2.legacy.TrackerCSRT_create,
+        lambda: cv2.TrackerKCF_create,
+        lambda: cv2.legacy.TrackerKCF_create,
+    ):
+        try:
+            fn = path()
+            if callable(fn):
+                return fn
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
 def track_across_frames(
     frames: list[np.ndarray],
     boxes: list[tuple[int, int, int, int] | None],
     template_bgr: np.ndarray | None = None,
     min_score: float = 0.55,
 ) -> list[tuple[int, int, int, int] | None]:
-    """Prefer optical-flow fill; fall back to template match for remaining holes."""
+    """Optical-flow → CSRT/KCF → template match for remaining holes."""
     filled = fill_boxes_optical_flow(frames, boxes)
+    if any(b is None for b in filled):
+        filled = fill_boxes_csrt(frames, filled)
     if template_bgr is None or not any(b is None for b in filled):
         return filled
     templ = match_template(frames, template_bgr, min_score=min_score)

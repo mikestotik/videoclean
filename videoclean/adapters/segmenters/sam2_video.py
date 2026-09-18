@@ -89,18 +89,20 @@ class Sam2VideoSegmenter:
             state = self._predictor.init_state(video_path=str(root))
             obj_id = 1
             for tr in tracks:
-                frame_idx, box = _first_box(tr, w, h)
-                if box is None:
+                anchors = _anchor_boxes(tr, w, h, max_anchors=8)
+                if not anchors:
                     continue
-                self._predictor.add_new_points_or_box(
-                    inference_state=state,
-                    frame_idx=frame_idx,
-                    obj_id=obj_id,
-                    box=np.array(box, dtype=np.float32),
-                )
+                for frame_idx, box in anchors:
+                    self._predictor.add_new_points_or_box(
+                        inference_state=state,
+                        frame_idx=frame_idx,
+                        obj_id=obj_id,
+                        box=np.array(box, dtype=np.float32),
+                    )
                 obj_id += 1
             if obj_id == 1:
                 return acc
+
 
             def _consume() -> None:
                 for frame_idx, _obj_ids, mask_logits in self._predictor.propagate_in_video(state):
@@ -128,13 +130,54 @@ class Sam2VideoSegmenter:
         return acc
 
 
+def _clamp_box(
+    box: tuple[int, int, int, int],
+    part,
+    w: int,
+    h: int,
+) -> tuple[int, int, int, int] | None:
+    x1, y1, x2, y2 = apply_part(box, part)
+    x1, y1 = max(0, x1), max(0, y1)
+    x2, y2 = min(w, x2), min(h, y2)
+    if x2 - x1 >= 4 and y2 - y1 >= 4:
+        return x1, y1, x2, y2
+    return None
+
+
 def _first_box(tr: Track, w: int, h: int) -> tuple[int, tuple[int, int, int, int] | None]:
     for i, box in enumerate(tr.boxes):
         if box is None:
             continue
-        x1, y1, x2, y2 = apply_part(box, tr.part)
-        x1, y1 = max(0, x1), max(0, y1)
-        x2, y2 = min(w, x2), min(h, y2)
-        if x2 - x1 >= 4 and y2 - y1 >= 4:
-            return i, (x1, y1, x2, y2)
+        clamped = _clamp_box(box, tr.part, w, h)
+        if clamped is not None:
+            return i, clamped
     return 0, None
+
+
+def _anchor_boxes(
+    tr: Track,
+    w: int,
+    h: int,
+    *,
+    max_anchors: int = 8,
+) -> list[tuple[int, tuple[int, int, int, int]]]:
+    """Sample up to max_anchors non-null boxes across the track for multi-frame prompts."""
+    hits: list[tuple[int, tuple[int, int, int, int]]] = []
+    for i, box in enumerate(tr.boxes):
+        if box is None:
+            continue
+        clamped = _clamp_box(box, tr.part, w, h)
+        if clamped is not None:
+            hits.append((i, clamped))
+    if not hits:
+        return []
+    if len(hits) <= max_anchors:
+        return hits
+    # Evenly sample across available keyframes (keep first and last).
+    idxs = sorted(
+        {
+            int(round(j * (len(hits) - 1) / (max_anchors - 1)))
+            for j in range(max_anchors)
+        }
+    )
+    return [hits[i] for i in idxs]

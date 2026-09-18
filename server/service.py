@@ -36,6 +36,12 @@ _doctor_cache: tuple[float, dict[str, str]] | None = None
 _DOCTOR_TTL_S = 60.0
 
 
+def _profiles_for_options(device: str) -> list[dict[str, Any]]:
+    from videoclean.application.profiles import profiles_payload
+
+    return profiles_payload(device)
+
+
 def auth_from_env(env: Mapping[str, str] | None = None) -> tuple[str, str]:
     env = os.environ if env is None else env
     password = str(env.get("VIDEOCLEAN_UI_PASSWORD") or "").strip()
@@ -130,6 +136,22 @@ def serialize_clean_form(payload: Mapping[str, Any] | None = None) -> dict[str, 
         "propainter_neighbor_length": int(data.get("propainter_neighbor_length") or 10),
         "propainter_subvideo_length": int(data.get("propainter_subvideo_length") or 80),
         "propainter_raft_iter": int(data.get("propainter_raft_iter") or 20),
+        "profile": str(data.get("profile") or "custom").strip().lower() or "custom",
+        "verify_max_passes": (
+            int(data["verify_max_passes"])
+            if str(data.get("verify_max_passes") or "").strip()
+            else 1
+        ),
+        "inpaint_workers": (
+            int(data["inpaint_workers"])
+            if str(data.get("inpaint_workers") or "").strip()
+            else 0
+        ),
+        "inpaint_chunk_overlap": (
+            int(data["inpaint_chunk_overlap"])
+            if str(data.get("inpaint_chunk_overlap") or "").strip()
+            else 8
+        ),
         "overwrite": _as_bool(data.get("overwrite"), True),
     }
 
@@ -748,6 +770,7 @@ def options_payload(state: AppState) -> dict[str, Any]:
         ],
         "max_quality_ready": max_quality_ready(catalog),
         "models": grouped_models(state),
+        "profiles": _profiles_for_options(default_device()),
     }
 
 

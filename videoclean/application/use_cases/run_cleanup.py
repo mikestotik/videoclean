@@ -9,6 +9,12 @@ import numpy as np
 
 from videoclean.application.config import PipelineConfig, RunCleanupRequest
 from videoclean.application.errors import AdapterUnavailable, JobCancelled, PipelineError
+from videoclean.application.inpaint_runtime import (
+    inpaint_clip_chunked,
+    inpaint_frames,
+    re_inpaint_ranges,
+    resolve_workers,
+)
 from videoclean.application.ports.detector import Detector
 from videoclean.application.ports.inpainter import Inpainter
 from videoclean.application.ports.jobs import JobStore
@@ -19,6 +25,12 @@ from videoclean.application.ports.segmenter import Segmenter
 from videoclean.application.frames_sample import sample_frame_indices
 from videoclean.application.frames import LazyFrames
 from videoclean.application.select import explain_unmatched, select_tracks
+from videoclean.application.verify_quality import (
+    dirty_ranges,
+    masks_grew,
+    or_masks,
+    residual_unchanged_mask,
+)
 from videoclean.domain.formats import resolve_dest
 from videoclean.domain.intent import Intent, Target
 from videoclean.domain.tracks import Detection, Track, interpolate_gaps, tracks_from_json, tracks_to_json
@@ -300,55 +312,112 @@ class RunCleanup:
         ]
         self.progress.finish("detect", f"{used_detector}: {len(detections)} tracks, coverage {mean_cov:.2%}")
 
-        self.progress.start("inpaint", total=len(frames), detail=f"{self.inpainter.name} 0/{len(frames)}")
-        if getattr(self.inpainter, "video_aware", False):
+        video_aware = bool(getattr(self.inpainter, "video_aware", False))
+        workers = resolve_workers(
+            cfg.inpaint_workers, device=cfg.device, video_aware=video_aware
+        )
+        overlap = int(cfg.inpaint_chunk_overlap)
+        self.progress.start(
+            "inpaint",
+            total=len(frames),
+            detail=f"{self.inpainter.name} workers={workers}",
+        )
+        if video_aware:
             self.progress.tick("inpaint", 0, len(frames), f"{self.inpainter.name} clip")
-            cleaned_frames = self.inpainter.inpaint_clip(images, masks)
-            for i, (frame_path, cleaned) in enumerate(zip(frames, cleaned_frames), start=1):
-                self._write_image(paths.inpainted_dir / frame_path.name, cleaned)
-                self.progress.tick("inpaint", i, len(frames), f"{self.inpainter.name} write {i}/{len(frames)}")
+            cleaned_frames = inpaint_clip_chunked(
+                self.inpainter,
+                images,
+                masks,
+                chunk_len=max(8, int(cfg.propainter_subvideo_length)),
+                overlap=overlap,
+                on_progress=lambda cur, tot: self.progress.tick(
+                    "inpaint", cur, tot, f"{self.inpainter.name} chunk {cur}/{tot}"
+                ),
+            )
         else:
-            for i, (frame_path, image) in enumerate(zip(frames, images), start=1):
-                cleaned = self.inpainter.inpaint(image, masks[i - 1])
-                self._write_image(paths.inpainted_dir / frame_path.name, cleaned)
-                self.progress.tick("inpaint", i, len(frames), f"{self.inpainter.name} {i}/{len(frames)}")
-        self.progress.finish("inpaint", self.inpainter.name)
+            cleaned_frames = inpaint_frames(
+                self.inpainter,
+                images,
+                masks,
+                workers=workers,
+                on_progress=lambda cur, tot: self.progress.tick(
+                    "inpaint", cur, tot, f"{self.inpainter.name} {cur}/{tot}"
+                ),
+            )
+        for i, (frame_path, cleaned) in enumerate(zip(frames, cleaned_frames), start=1):
+            self._write_image(paths.inpainted_dir / frame_path.name, cleaned)
+            self.progress.tick("inpaint", i, len(frames), f"{self.inpainter.name} write {i}/{len(frames)}")
+        self.progress.finish("inpaint", f"{self.inpainter.name} workers={workers}")
 
         verify_passes = 0
-        if cfg.verify and not req.masks_override:
-            self.progress.start("verify", total=len(frames), detail="read inpainted frames")
-            cleaned_paths = [paths.inpainted_dir / p.name for p in frames]
-            cleaned = LazyFrames(cleaned_paths, self._read_image, cache_size=cache_n)
-            self.progress.tick("verify", 0, 1, "re-detect leftover")
-            _, v_attempts, leftover = self._discover(cleaned, intent.queries, stage="verify")
-            leftover = select_tracks(leftover, intent, width=w, height=h, relax=True)
-            v_masks = self.segmenter.masks(cleaned, leftover) if leftover else []
-            still = float(np.mean([np.count_nonzero(m) / m.size for m in v_masks])) if v_masks else 0.0
+        verify_note = "skipped"
+        if cfg.verify and not req.masks_override and cfg.verify_max_passes > 0:
+            self.progress.start("verify", total=len(frames), detail="leftover pass")
+            working_masks = list(masks)
+            cleaned_frames = list(cleaned_frames)
             cap = max(cfg.verify_max_coverage, mean_cov * 1.5)
-            if leftover and cfg.min_mask_coverage <= still <= cap:
-                verify_passes = 1
-                grown = [_or_mask(a, b) for a, b in zip(masks, v_masks)]
-                n = len(frames)
-                if getattr(self.inpainter, "video_aware", False):
-                    self.progress.tick("verify", 0, n, f"re-inpaint leftover {still:.2%}  clip")
-                    redone = self.inpainter.inpaint_clip(images, grown)
-                    for frame_path, frame in zip(frames, redone):
-                        self._write_image(paths.inpainted_dir / frame_path.name, frame)
-                else:
-                    for i in range(n):
-                        frame = self.inpainter.inpaint(images[i], grown[i])
-                        self._write_image(paths.inpainted_dir / frames[i].name, frame)
-                        self.progress.tick(
-                            "verify", i + 1, n, f"re-inpaint leftover {still:.2%}  {i + 1}/{n}"
-                        )
-                self.progress.finish("verify", f"pass 1, leftover {still:.2%}")
-            else:
-                why = "clean" if not leftover else f"leftover {still:.2%} outside [{cfg.min_mask_coverage:.4%}, {cap:.2%}] ({v_attempts})"
-                self.progress.finish("verify", why)
+            max_passes = int(cfg.verify_max_passes)
+            for pass_i in range(1, max_passes + 1):
+                self.progress.tick("verify", 0, 1, f"pass {pass_i}/{max_passes} residual+detect")
+                residual = [
+                    residual_unchanged_mask(orig, clean, mask)
+                    for orig, clean, mask in zip(images, cleaned_frames, working_masks)
+                ]
+                _, v_attempts, leftover = self._discover(cleaned_frames, intent.queries, stage="verify")
+                leftover = select_tracks(leftover, intent, width=w, height=h, relax=True)
+                detect_masks = self.segmenter.masks(cleaned_frames, leftover) if leftover else [
+                    np.zeros_like(working_masks[0]) for _ in working_masks
+                ]
+                grown = [
+                    or_masks(or_masks(prev, det), res)
+                    for prev, det, res in zip(working_masks, detect_masks, residual)
+                ]
+                still = float(np.mean([np.count_nonzero(m) / m.size for m in grown])) if grown else 0.0
+                grew_flags = masks_grew(working_masks, grown)
+                if not any(grew_flags):
+                    verify_note = f"clean after {pass_i - 1} re-inpaint ({v_attempts})"
+                    break
+                if still > cap:
+                    verify_note = (
+                        f"leftover {still:.2%} above cap {cap:.2%} — skip re-inpaint ({v_attempts})"
+                    )
+                    break
+                ranges = dirty_ranges(grew_flags, pad=max(4, overlap))
+                self.progress.tick(
+                    "verify",
+                    0,
+                    len(frames),
+                    f"pass {pass_i} re-inpaint {len(ranges)} range(s) cov={still:.2%}",
+                )
+                cleaned_frames = re_inpaint_ranges(
+                    self.inpainter,
+                    images,
+                    grown,
+                    cleaned_frames,
+                    ranges,
+                    video_aware=video_aware,
+                    chunk_overlap=overlap,
+                    workers=workers,
+                )
+                working_masks = grown
+                verify_passes = pass_i
+                verify_note = f"pass {pass_i}, leftover {still:.2%}, ranges={len(ranges)}"
+            for frame_path, frame in zip(frames, cleaned_frames):
+                self._write_image(paths.inpainted_dir / frame_path.name, frame)
+            # Persist grown masks from last successful pass for debugging.
+            if verify_passes > 0:
+                for frame_path, mask in zip(frames, working_masks):
+                    self._write_image(paths.masks_dir / f"verify_{frame_path.name}", mask)
+            self.progress.finish("verify", verify_note)
         else:
-            why = "skipped (manual masks)" if req.masks_override else "skipped"
+            if req.masks_override:
+                verify_note = "skipped (manual masks)"
+            elif not cfg.verify:
+                verify_note = "skipped"
+            else:
+                verify_note = "skipped (verify_max_passes=0)"
             self.progress.start("verify")
-            self.progress.finish("verify", why)
+            self.progress.finish("verify", verify_note)
 
         self.progress.start("encode", detail="ffmpeg mezzanine")
         mezz = paths.inpainted_dir.parent / "mezzanine.mp4"
@@ -393,6 +462,9 @@ class RunCleanup:
                 "targets": [_target_json(t) for t in intent.targets],
                 "verify": cfg.verify,
                 "verifyPasses": verify_passes,
+                "verifyNote": verify_note,
+                "profile": cfg.profile,
+                "inpaintWorkers": workers,
                 "promptParseMode": intent.parse_mode,
                 "detectorUsed": used_detector,
                 "detectorAttempts": attempts,
