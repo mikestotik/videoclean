@@ -599,6 +599,23 @@ def save_job_tracks(state: AppState, job_id: str, tracks_raw: Any) -> dict[str, 
     return {"ok": True, "id": job_id, "tracks": len(tracks)}
 
 
+def _normalize_package_artifact(fmt: str, path: Path) -> Path:
+    """Resolve HLS/DASH master files to their package directory for zip download."""
+    from videoclean.domain.formats import FORMATS
+
+    spec = FORMATS.get(fmt)
+    if spec is None or spec.kind != "package":
+        return path
+    if path.is_dir():
+        return path
+    if path.is_file() and spec.master_name and path.name == spec.master_name:
+        return path.parent
+    # Older reports may point at master.m3u8 / manifest.mpd inside *.hls-* / *.dash.
+    if path.is_file() and path.parent.is_dir():
+        return path.parent
+    return path
+
+
 def job_output_artifacts(row) -> dict[str, Path]:
     """Map format name → artifact path from report.outputs (file or package dir)."""
     report = _as_dict(row["report_json"] if "report_json" in row.keys() else None)
@@ -608,11 +625,13 @@ def job_output_artifacts(row) -> dict[str, Path]:
         for fmt, path_str in raw.items():
             if not fmt or path_str is None:
                 continue
-            if str(fmt).lower() == "mezzanine":
+            key = str(fmt)
+            if key.lower() == "mezzanine":
                 continue
             path = Path(str(path_str))
-            if path.exists():
-                out[str(fmt)] = path
+            if not path.exists():
+                continue
+            out[key] = _normalize_package_artifact(key, path)
     if out:
         return out
     output_path = Path(row["output_path"] or "") if row["output_path"] else None

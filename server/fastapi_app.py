@@ -13,7 +13,7 @@ import zipfile
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -835,19 +835,21 @@ def create_app(state: AppState) -> FastAPI:
     return app
 
 
-def _zip_directory_response(path: Path) -> StreamingResponse:
+def _zip_directory_response(path: Path) -> Response:
     """Zip an HLS/DASH package directory for download."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for file_path in sorted(path.rglob("*")):
             if file_path.is_file():
                 zf.write(file_path, file_path.relative_to(path).as_posix())
-    buf.seek(0)
-    filename = f"{path.name}.zip"
-    return StreamingResponse(
-        buf,
+    data = buf.getvalue()
+    return Response(
+        content=data,
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{path.name}.zip"',
+            "Content-Length": str(len(data)),
+        },
     )
 
 

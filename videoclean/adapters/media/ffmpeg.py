@@ -361,7 +361,8 @@ def _package_hls(
     )
     if not playlist.is_file():
         raise PipelineError("HLS playlist was not created")
-    return master
+    # Return the package directory so downloads can zip the whole tree.
+    return dest_dir
 
 
 def _package_dash(
@@ -420,7 +421,8 @@ def _package_dash(
     )
     if not manifest.is_file():
         raise PipelineError("DASH manifest was not created")
-    return manifest
+    # Return the package directory so downloads can zip the whole tree.
+    return dest_dir
 
 
 def _run(cmd: list[str], log_file: Path) -> None:
