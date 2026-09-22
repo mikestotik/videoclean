@@ -36,11 +36,11 @@ git checkout -B main origin/main
 
 uv python pin 3.11 || true
 uv sync --extra gpu --extra lama --extra web --no-dev --no-install-package torch --no-install-package torchvision
-uv pip install --python .venv/bin/python --index-url https://download.pytorch.org/whl/cu124 "torch>=2.5" torchvision
+uv pip install --python .venv/bin/python --index-url https://download.pytorch.org/whl/cu128 "torch>=2.5" torchvision
 uv pip install --python .venv/bin/python "git+https://github.com/facebookresearch/sam2.git" hf-transfer matplotlib imageio
-# The lockfile pins torch==2.2.2 for local machines. Without this, every
-# `uv run` below would re-sync the venv and downgrade torch back,
-# silently killing CUDA on the pod.
+# The lockfile pins torch for local machines (CPU build). The pod needs the
+# cu126 build of the SAME version, so install torch from the CUDA index and
+# keep `uv run` from re-syncing the venv back (build tags always differ).
 export UV_NO_SYNC=1
 
 mkdir -p "$VIDEOCLEAN_DATA_DIR" "$HF_HOME"
