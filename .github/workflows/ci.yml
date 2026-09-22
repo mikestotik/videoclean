@@ -19,8 +19,6 @@ jobs:
           uv run pytest -q
 
   webui:
-    # DISABLED for the test loop (backend only): remove `if: false` to re-enable.
-    if: false
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -35,8 +33,6 @@ jobs:
       - run: bun run typecheck
 
   docker-web:
-    # DISABLED for the test loop (backend only): remove `if: false` to re-enable.
-    if: false
     runs-on: ubuntu-latest
     needs: [webui]
     steps:
