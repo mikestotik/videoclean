@@ -5,7 +5,7 @@ on:
     inputs:
       gpu:
         description: GPU type id
-        default: NVIDIA RTX 2000 Ada Generation
+        default: NVIDIA GeForce RTX 3090
       cloud:
         description: SECURE or COMMUNITY
         default: COMMUNITY
