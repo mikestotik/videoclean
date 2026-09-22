@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { Film, Upload } from "lucide-react"
 import { EditorViewer, type EditorMode } from "@widgets/editor-viewer"
 import { Library } from "@widgets/library"
@@ -97,9 +97,6 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
   const detect = useDetectRun(source)
   const inpaint = useInpaintRun(source)
 
-  const loadedSourceIdRef = useRef<string | null>(null)
-  loadedSourceIdRef.current = source?.id ?? null
-
   const setSource = useCallback(
     (next: Source | null) => {
       setSourceState(next)
@@ -108,13 +105,15 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
     [onRouteSourceIdChange],
   )
 
+  // Render-phase reset when the route is cleared (no sync setState in effect).
+  if (!routeSourceId && sourceId !== null) {
+    setSourceState(null)
+  }
+
   useEffect(() => {
     let cancelled = false
-    if (!routeSourceId) {
-      setSourceState(null)
-      return
-    }
-    if (loadedSourceIdRef.current === routeSourceId) return
+    if (!routeSourceId) return
+    if (sourceId === routeSourceId) return
     void getSource(routeSourceId)
       .then((row) => {
         if (!cancelled) setSourceState(row)
@@ -127,7 +126,7 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
     return () => {
       cancelled = true
     }
-  }, [routeSourceId, onRouteSourceIdChange])
+  }, [routeSourceId, sourceId, onRouteSourceIdChange])
 
   const activeJobs = useMemo(
     () => ({
@@ -258,15 +257,13 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
   }, [selectedTrack, probe, detect.manifest])
 
   const resultJobId = inpaint.lastJobId
+  const liveResult = resultJobId ? liveJobs.find((j) => j.id === resultJobId) : undefined
   if (resultJob && resultJob.id !== resultJobId) setResultJob(null)
-  useEffect(() => {
-    if (!resultJobId) return
-    const live = liveJobs.find((j) => j.id === resultJobId)
-    if (live?.state === "COMPLETED") {
-      setResultJob(live)
-      setViewerMode("result")
-    }
-  }, [resultJobId, liveJobs])
+  // Render-phase sync of the completed result (avoids setState-in-effect).
+  if (liveResult?.state === "COMPLETED" && resultJob?.id !== liveResult.id) {
+    setResultJob(liveResult)
+    setViewerMode("result")
+  }
 
   const runAll = async () => {
     if (!source || runAllBusy) return

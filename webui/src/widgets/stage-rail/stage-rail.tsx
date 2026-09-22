@@ -361,9 +361,11 @@ export function StageRail({
                 ? 2
                 : 1
 
-  useEffect(() => {
+  const [prevActiveStage, setPrevActiveStage] = useState(activeStage)
+  if (prevActiveStage !== activeStage) {
+    setPrevActiveStage(activeStage)
     setOpenStages((prev) => (prev[activeStage] ? prev : { ...prev, [activeStage]: true }))
-  }, [activeStage])
+  }
 
   const stageOpen = (n: number) => openStages[n] ?? false
   const setStageOpen = (n: number, open: boolean) =>

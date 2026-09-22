@@ -18,9 +18,19 @@ export default defineConfig([
     languageOptions: {
       globals: globals.browser,
     },
+    rules: {
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+          ignoreRestSiblings: true,
+        },
+      ],
+    },
   },
   {
-    files: ['src/shared/ui/**/*.{ts,tsx}'],
+    files: ['src/shared/{ui,events}/**/*.{ts,tsx}'],
     rules: {
       'react-refresh/only-export-components': 'off',
     },

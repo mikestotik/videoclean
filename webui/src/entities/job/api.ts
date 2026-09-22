@@ -136,13 +136,28 @@ export async function waitJobToCompletion(
   }
 
   return new Promise<Job>((resolve, reject) => {
-    let timeoutId: ReturnType<typeof setTimeout> | undefined
     let unsub = () => {}
     let settled = false
 
+    const timeoutId = setTimeout(() => {
+      const cached = findCachedJob(id)
+      if (cached) {
+        const s = settle(cached)
+        if (s === "done") {
+          finishOk(cached)
+          return
+        }
+        if (s === "fail") {
+          finishErr(new Error(cached.error || `job ${id} ${cached.state.toLowerCase()}`))
+          return
+        }
+      }
+      finishErr(new Error(`job ${id} wait timed out (no SSE terminal state)`))
+    }, deadlineMs)
+
     const cleanup = () => {
       unsub()
-      if (timeoutId !== undefined) clearTimeout(timeoutId)
+      clearTimeout(timeoutId)
     }
     const finishOk = (job: Job) => {
       if (settled) return
@@ -167,22 +182,6 @@ export async function waitJobToCompletion(
     unsub = subscribeJobs((jobs) => {
       consider(jobs.find((j) => j.id === id) ?? findCachedJob(id))
     })
-
-    timeoutId = setTimeout(() => {
-      const cached = findCachedJob(id)
-      if (cached) {
-        const s = settle(cached)
-        if (s === "done") {
-          finishOk(cached)
-          return
-        }
-        if (s === "fail") {
-          finishErr(new Error(cached.error || `job ${id} ${cached.state.toLowerCase()}`))
-          return
-        }
-      }
-      finishErr(new Error(`job ${id} wait timed out (no SSE terminal state)`))
-    }, deadlineMs)
 
     consider(findCachedJob(id) ?? seed)
   })

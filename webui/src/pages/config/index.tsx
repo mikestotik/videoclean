@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import {
   AlertCircle,
   CheckCircle2,
@@ -6,7 +6,6 @@ import {
   HardDrive,
   Loader2,
   Plus,
-  RefreshCw,
   Server,
   Trash2,
   XCircle,
@@ -260,17 +259,6 @@ function AddModelDialog({
   const [title, setTitle] = useState("")
   const [error, setError] = useState("")
 
-  useEffect(() => {
-    if (!open) return
-    setBackend(families[0]?.id ?? "")
-    setModelRef("")
-    setTitle("")
-    setError("")
-    // Reset only when the dialog opens. `families` is a new array on every SSE meta
-    // push; depending on it would wipe the chosen Ollama tag before submit.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
-  }, [open])
-
   const selected = families.find((f) => f.id === backend) ?? families[0]
   const isOllama = selected?.ref_kind === "ollama"
   const isProvider = selected?.ref_kind === "provider"
@@ -386,15 +374,6 @@ function AddProviderDialog({
   const [apiKey, setApiKey] = useState("")
   const [models, setModels] = useState("")
   const [error, setError] = useState("")
-
-  useEffect(() => {
-    if (!open) return
-    setTitle("")
-    setBaseUrl("")
-    setApiKey("")
-    setModels("")
-    setError("")
-  }, [open])
 
   const submit = async () => {
     setError("")
@@ -604,10 +583,6 @@ export function ConfigPage() {
               Подключённые модели и провайдеры. В пайплайне доступны только они.
             </p>
           </div>
-          <Button size="sm" variant="outline" onClick={refresh}>
-            <RefreshCw className="size-3.5" />
-            Обновить
-          </Button>
         </div>
 
         {error && (
@@ -749,7 +724,10 @@ export function ConfigPage() {
         </section>
       </div>
 
+      {/* Remount on open resets the form; `families` identity changes on every
+          SSE push, so it must not drive the reset. */}
       <AddModelDialog
+        key={addKind ?? "closed"}
         kind={addKind ?? "detector"}
         open={Boolean(addKind)}
         onOpenChange={(v) => { if (!v) setAddKind(null) }}
@@ -763,6 +741,7 @@ export function ConfigPage() {
       />
 
       <AddProviderDialog
+        key={addProviderOpen ? "open" : "closed"}
         open={addProviderOpen}
         onOpenChange={setAddProviderOpen}
         busy={busy === "add:provider"}

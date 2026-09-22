@@ -26,6 +26,9 @@ export function Compare({
   currentFrame,
   onFrameChange,
 }: Props) {
+  const events = useEventsOptional()
+  const live = events?.jobs.find((j) => j.id === jobId) ?? findCachedJob(jobId)
+  const liveOutputUrl = live?.output_url ? apiUrl(live.output_url) : null
   const [loaded, setLoaded] = useState<{ jobId: string; url: string } | null>(null)
   const [pos, setPos] = useState(50)
   const [playing, setPlaying] = useState(false)
@@ -34,15 +37,10 @@ export function Compare({
   const outputRef = useRef<HTMLVideoElement>(null)
   const draggingRef = useRef(false)
   const playingRef = useRef(false)
-  const events = useEventsOptional()
-  const live = events?.jobs.find((j) => j.id === jobId) ?? findCachedJob(jobId)
+  if (liveOutputUrl && (loaded?.jobId !== jobId || loaded.url !== liveOutputUrl)) {
+    setLoaded({ jobId, url: liveOutputUrl })
+  }
   const outputUrl = loaded?.jobId === jobId && loaded.url ? loaded.url : null
-
-  useEffect(() => {
-    const url = live?.output_url
-    if (!url) return
-    setLoaded({ jobId, url: apiUrl(url) })
-  }, [jobId, live?.output_url])
 
   useEffect(() => {
     const input = inputRef.current

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import { Loader2 } from "lucide-react"
 import { cropSource, frameUrl, type Source } from "@/entities/source"
 import { Button } from "@/shared/ui/button"
@@ -40,17 +40,23 @@ export function CropDialog({ source, open, onOpenChange, onDone }: Props) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
 
-  useEffect(() => {
-    if (!open || !source) return
-    setStartS("")
-    setEndS("")
-    setLeft("0")
-    setRight("0")
-    setTop("0")
-    setBottom("0")
-    setBusy(false)
-    setError("")
-  }, [open, source])
+  const sourceId = source?.id ?? null
+  const [wasOpen, setWasOpen] = useState(open)
+  const [wasSourceId, setWasSourceId] = useState(sourceId)
+  if (open !== wasOpen || sourceId !== wasSourceId) {
+    setWasOpen(open)
+    setWasSourceId(sourceId)
+    if (open && source) {
+      setStartS("")
+      setEndS("")
+      setLeft("0")
+      setRight("0")
+      setTop("0")
+      setBottom("0")
+      setBusy(false)
+      setError("")
+    }
+  }
 
   const edges = useMemo(
     () => ({

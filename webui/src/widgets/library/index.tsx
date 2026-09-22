@@ -6,6 +6,7 @@ import {
   Eraser,
   Film,
   Loader2,
+  Package,
   RotateCcw,
   ScanSearch,
   Sparkles,
@@ -28,9 +29,10 @@ const KIND_META: Record<JobKind, { label: string; Icon: typeof Sparkles }> = {
   prompt: { label: "Промпт", Icon: Sparkles },
   preview: { label: "Маски", Icon: ScanSearch },
   run: { label: "Результат", Icon: Eraser },
+  package: { label: "Пакет", Icon: Package },
 }
 
-const KIND_ORDER: JobKind[] = ["prompt", "preview", "run"]
+const KIND_ORDER: Array<"prompt" | "preview" | "run"> = ["prompt", "preview", "run"]
 
 const STATE_LABEL: Record<JobState, string> = {
   QUEUED: "В очереди",
@@ -315,14 +317,15 @@ export function Library({
     [jobs, selectedId],
   )
   const jobsByKind = useMemo(() => {
-    const map: Record<"prompt" | "preview" | "run", Job[]> = {
+    const map: Record<JobKind, Job[]> = {
       prompt: [],
       preview: [],
       run: [],
+      package: [],
     }
     for (const job of sourceJobs) {
       if (job.kind === "package") continue
-      if (job.kind in map) map[job.kind as "prompt" | "preview" | "run"].push(job)
+      map[job.kind].push(job)
     }
     for (const kind of KIND_ORDER) {
       map[kind].sort((a, b) => b.created_at.localeCompare(a.created_at))
@@ -447,7 +450,7 @@ export function Library({
                 <JobRow
                   key={j.id}
                   job={j}
-                  active={j.id === activeJobs[j.kind]}
+                  active={j.kind !== "package" && j.id === activeJobs[j.kind]}
                   onAct={act}
                   onSelect={onSelectJob}
                 />
