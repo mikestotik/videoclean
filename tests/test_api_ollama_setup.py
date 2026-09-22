@@ -64,6 +64,9 @@ def test_ollama_install_rejected_when_already_downloading(client, monkeypatch: p
 
 def test_ollama_start_reports_status(client, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(ollama_setup, "_ollama_serving", lambda timeout=2.0: False)
+    fake_bin = client.app.state.vc.data_dir / "ollama"
+    fake_bin.touch()
+    monkeypatch.setattr(ollama_setup, "ollama_binary_path", lambda: fake_bin)
     started = {}
 
     class FakeProc:
@@ -74,7 +77,6 @@ def test_ollama_start_reports_status(client, monkeypatch: pytest.MonkeyPatch):
         return FakeProc()
 
     monkeypatch.setattr(ollama_setup.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(ollama_setup, "ollama_binary_path", lambda: Path("/tmp/ollama"))
     res = client.post("/api/ollama/start")
     assert res.status_code == 200
     assert res.json()["status"] == "started"
