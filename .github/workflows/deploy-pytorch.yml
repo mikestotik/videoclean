@@ -102,7 +102,7 @@ jobs:
             '{
               name:$name,
               image:"runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
-              cloudType:$cloud,
+              cloud:$cloud,
               gpu:{id:$gpu, count:1},
               disk:$cd,
               ports:["7860/http"],
