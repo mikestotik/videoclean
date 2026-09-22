@@ -22,8 +22,8 @@ fi
 export PATH="/root/.local/bin:$PATH"
 
 if ! command -v ollama >/dev/null 2>&1; then
-  # Optional: local LLM for prompt parsing. Never fatal — the pipeline
-  # works without it, so a broken installer must not kill the pod.
+  # Local LLM for prompt parsing (~1 GB download). Non-fatal: a broken
+  # installer must not kill the pod, the pipeline works without it.
   curl -fsSL https://ollama.com/install.sh | sh || echo "WARNING: ollama install failed, continuing without local LLM"
 fi
 if ! pgrep -x ollama >/dev/null 2>&1; then
