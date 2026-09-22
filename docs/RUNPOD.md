@@ -1,6 +1,8 @@
-# RunPod (RTX 4090)
+# RunPod
 
 Web UI (FastAPI) on port **7860**. The image has CUDA torch, FFmpeg, and extras (`gpu`, `lama`, `web`). It does **not** bake Hugging Face weights, so the first `serve` is minutes after pull, not a multi-GB model download.
+
+GPU: минимум **16 GB** (RTX 2000 Ada / RTX 4000 Ada) для `grounding-dino-tiny + sam2-tiny + lama`. ProPainter@1080p на 16 GB — на грани (OOM возможен), пробовать на коротком клипе; `sam2-large` на 16 GB не брать.
 
 Auth is required: `VIDEOCLEAN_UI_USER` + `VIDEOCLEAN_UI_PASSWORD`. Serve refuses to start without a password.
 
@@ -12,7 +14,7 @@ Use a stock RunPod **PyTorch** template, Python **3.11 or 3.12** (not 3.13), CUD
 
 Pod settings:
 
-- GPU: RTX 4090
+- GPU: RTX 2000 Ada / RTX 4000 Ada (16 GB), хватит; 24 GB для ProPainter без риска
 - Expose **HTTP** port `7860` (not only TCP)
 - Container disk: **40 GB**
 - Network volume **50 GB+**, mount **`/workspace`**
@@ -75,7 +77,38 @@ First boot: several minutes (`uv sync` + CUDA torch + sam2). Weights are **not**
 
 Local LLM without Ollama will stay grey. Cloud LLM is disabled by default — everything runs locally.
 
-## 1. Build and push the image
+## 1. GitHub Actions (образ + автодеплой пода)
+
+1. GitHub secrets: `RUNPOD_API_KEY` (RunPod Console → Settings → API Keys),
+   `VIDEOCLEAN_UI_PASSWORD`. Optional repo var: `VIDEOCLEAN_UI_USER` (default `admin`).
+2. Workflow **Build image** (`workflow_dispatch` или push в `main`) собирает монолит
+   (`Dockerfile`) для `linux/amd64` и пушит в GHCR:
+   `ghcr.io/mikestotik/videoclean:runpod` (+ `:sha`).
+3. **Сделать пакет Public** после первого пуша: страница пакета
+   `ghcr.io/mikestotik/videoclean` → **Package settings** → **Change visibility** → **Public**.
+   По умолчанию GHCR-пакет private (даже в public-репо) — RunPod тянет образ без авторизации.
+4. По завершении build запускается **Deploy RunPod**: скрипт `scripts/runpod-deploy.sh`
+   находит под по имени (`videoclean-test`) и, если найден, PATCH (новый образ, рестарт),
+   иначе создаёт (POST `/v1/pods`). GPU/cloud/размеры — inputs workflow с дефолтами.
+   Data-центр подбирается сам (или укажите `data_center_ids`).
+5. Автодеплой после каждого build выключен: включите repo variable `AUTO_DEPLOY = true`,
+   чтобы под рестартовался сам; иначе — только кнопкой (workflow_dispatch). Так push в `main`
+   не прерывает работающие джобы.
+
+`env` под заменяется целиком при деплое: ручные переменные пода (напр. `VIDEOCLEAN_API_TOKEN`)
+будут перезаписаны (переживают только то, что в коде/script). Volume: дефолт `--volume 50`
+создаёт **pod volume** — переживает рестарты и деплои, но **не переживает terminate пода**.
+Чтобы веса пережили удаление пода, создайте network volume в консоли (Storage) и укажите
+`network_volume_id` (скрипт сам подставит его datacenter в под).
+
+Тот же скрипт для локального ручного деплоя:
+
+```bash
+bash scripts/runpod-deploy.sh --dry-run          # план без API
+RUNPOD_API_KEY=... VIDEOCLEAN_UI_PASSWORD=... bash scripts/runpod-deploy.sh
+```
+
+## 2. Build and push the image (вручную)
 
 From this repo (linux/amd64; RunPod cannot pull a Mac ARM image):
 
@@ -84,18 +117,18 @@ docker build --platform linux/amd64 -t mikestotik/videoclean:runpod .
 docker push mikestotik/videoclean:runpod
 ```
 
-## 2. Create a GPU pod
+## 3. Create a GPU pod
 
 1. [RunPod console → Pods](https://www.runpod.io/console/pods) → **Deploy**.
-2. GPU: **RTX 4090** (24 GB). CUDA 12.4 drivers are fine.
+2. GPU: **RTX 2000 Ada / RTX 4000 Ada** (16 GB) — минимум для полного стека в fp16; **RTX 4090** (24 GB) для ProPainter без риска OOM. CUDA 12.4 drivers are fine.
 3. **Edit template**:
-   - Container image: `mikestotik/videoclean:runpod`
+   - Container image: `ghcr.io/mikestotik/videoclean:runpod` (или `mikestotik/videoclean:runpod` для ручного пуша)
    - Expose **HTTP** port `7860` (not only TCP).
    - Container disk: **40 GB** (torch + extras; weights go on the volume).
    - Volume: **50 GB+** (models, jobs, uploads). Mount path **`/workspace`**.
    - Start command: leave empty (image `CMD` runs `scripts/start.sh` → `videoclean serve`).
 
-## 3. Environment
+## 4. Environment
 
 | Variable | Value |
 |---|---|
@@ -111,7 +144,7 @@ docker push mikestotik/videoclean:runpod
 
 Point data + HF cache at `/workspace` so downloads survive pod stop/terminate when a network volume is attached. Defaults in the image are `/root/.videoclean` and `/root/.cache/huggingface` (container disk only). Catalog status honors `HF_HUB_CACHE` / `HF_HOME` (huggingface_hub), not only `~/.cache/huggingface`.
 
-## 4. Start and open the UI
+## 5. Start and open the UI
 
 Deploy the pod. Logs should show `videoclean doctor --device cuda` then `videoclean serve`.
 
@@ -131,7 +164,7 @@ API for other services (Swagger: `/api/docs`, ReDoc: `/api/redoc`):
 
 Auth: `Authorization: Bearer $VIDEOCLEAN_API_TOKEN` (or the UI password if the token is unset). Absolute webhook URLs need `VIDEOCLEAN_PUBLIC_BASE_URL` (this proxy URL). Index: `GET /api`.
 
-## 5. Config — download order
+## 6. Config — download order
 
 **Minimum path** (short clip):
 
@@ -150,7 +183,7 @@ Ollama rows stay unavailable unless you run Ollama yourself. Cloud LLM is disabl
 
 Do not start a second cleanup while one is RUNNING — it queues FIFO.
 
-## 6. Workspace
+## 7. Workspace
 
 Upload a short mp4, prompt required (e.g. `remove the channel logo`). Device should default to `cuda`. Run on the workspace screen. Download the output when state is `COMPLETED`.
 
