@@ -8,13 +8,13 @@ on:
     inputs:
       gpu:
         description: GPU type id
-        default: NVIDIA GeForce RTX 3090
+        default: NVIDIA GeForce RTX 4090
       cloud:
         description: SECURE or COMMUNITY
         default: COMMUNITY
       pod_name:
         description: Pod name (must be unique; fails if taken)
-        default: videoclean-dev
+        default: videoclean-dev3
       container_disk_gb:
         description: Container disk in GB
         default: "40"
@@ -40,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Create pod (v2 API)
         env:
