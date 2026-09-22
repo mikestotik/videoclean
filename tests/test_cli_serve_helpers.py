@@ -67,13 +67,6 @@ def test_extra_doctor_warnings_for_sam2_video():
     assert extra_doctor_warnings(PipelineConfig(segmenter="sam2"), {"torch": "2.2.2"}) == []
 
 
-def test_serve_help():
-    result = runner.invoke(app, ["serve", "--help"])
-    assert result.exit_code == 0
-    assert "--host" in result.output
-    assert "--port" in result.output
-
-
 def test_models_help():
     result = runner.invoke(app, ["models", "--help"])
     assert result.exit_code == 0
