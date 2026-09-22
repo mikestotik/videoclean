@@ -159,7 +159,7 @@ fi
 api() {
   # api METHOD URL [DATA] — fails on HTTP >= 400 (body captured on failure)
   local method="$1" url="$2" data="${3:-}"
-  local args=(-sS --fail-with-body -X "$method" -H "Authorization: Bearer $RUNPOD_API_KEY")
+  local args=(-sS --fail-with-body --max-time 60 --retry 2 -X "$method" -H "Authorization: Bearer $RUNPOD_API_KEY")
   if [[ -n "$data" ]]; then
     args+=(-H "Content-Type: application/json" --data "$data")
   fi

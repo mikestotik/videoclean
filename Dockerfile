@@ -41,13 +41,19 @@ COPY videoclean ./videoclean
 COPY server ./server
 COPY scripts/start.sh ./scripts/start.sh
 
-# pyproject pins torch==2.2.2; override with cu124 wheels (>=2.5) for sam2-video.
-# Do not download Hugging Face weights at build time.
-RUN uv sync --extra gpu --extra lama --extra web --no-dev \
-    && uv pip install --python /opt/videoclean/bin/python \
+# pyproject pins torch==2.2.2 for local hardware; the server image installs
+# cu124 wheels (>=2.5) for sam2-video instead. torch is excluded from the
+# sync so it is downloaded only once. Do not download HF weights at build time.
+# Split into layers: deps -> torch -> sam2, so code-only rebuilds reuse them.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --extra gpu --extra lama --extra web --no-dev \
+        --no-install-package torch --no-install-package torchvision
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --python /opt/videoclean/bin/python \
         --index-url https://download.pytorch.org/whl/cu124 \
-        --upgrade "torch>=2.5" torchvision \
-    && uv pip install --python /opt/videoclean/bin/python \
+        "torch>=2.5" torchvision
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --python /opt/videoclean/bin/python \
         "git+https://github.com/facebookresearch/sam2.git" \
     && chmod +x /app/scripts/start.sh
 
