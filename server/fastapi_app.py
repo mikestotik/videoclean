@@ -29,6 +29,7 @@ from videoclean.adapters.models.catalog import (
     remove_extra,
     remove_provider,
 )
+from videoclean.adapters.llm.ollama_setup import ollama_installed
 from server.app_state import AppState, build_app_state
 from server.events import format_sse
 from server.service import (
@@ -69,6 +70,8 @@ from server.service import (
     source_frame_path,
     sources_payload,
     start_download,
+    start_ollama_install,
+    start_ollama_serve,
 )
 from videoclean.application.errors import PipelineError
 
@@ -1111,6 +1114,22 @@ def create_app(state: AppState) -> FastAPI:
     def ollama():
         return _ollama_payload()
 
+    @app.post("/api/ollama/install")
+    def install_ollama(st: AppState = Depends(get_state)):
+        try:
+            started = start_ollama_install(st)
+        except PipelineError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"ok": True, "download": started}
+
+    @app.post("/api/ollama/start")
+    def start_ollama(st: AppState = Depends(get_state)):
+        try:
+            status = start_ollama_serve(st)
+        except PipelineError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"ok": True, "status": status}
+
     return app
 
 
@@ -1139,6 +1158,7 @@ def _ollama_payload() -> dict[str, Any]:
         "kind": "openai_compat",
         "base_url": os.environ.get("VIDEOCLEAN_OLLAMA_URL") or "http://127.0.0.1:11434",
         "ok": names is not None,
+        "installed": ollama_installed(),
         "models": names or [],
         "note": "builtin OpenAI-compatible provider; add more via POST /api/providers",
     }

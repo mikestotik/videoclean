@@ -32,12 +32,10 @@ def test_all_registry_ids():
         "segmenter:sam21-large",
         "inpainter:lama",
         "inpainter:propainter",
-        "llm:ollama-llama3.2",
-        "llm:ollama-llava-phi3",
     )
     for cid in expected:
         assert cid in COMPONENT_IDS
-    assert len(COMPONENT_IDS) == 13
+    assert len(COMPONENT_IDS) == 11
 
 
 def test_list_status_smoke(monkeypatch, tmp_path):
@@ -123,7 +121,9 @@ def test_ollama_tags_caches_negative_and_uses_short_timeout(monkeypatch):
     assert len(calls) == 2
 
 
-def test_list_status_caches_ollama_tags(monkeypatch, tmp_path: Path):
+def test_list_status_dynamic_ollama_extra(monkeypatch, tmp_path: Path):
+    from videoclean.adapters.models import catalog as cat
+
     monkeypatch.setenv("HOME", str(tmp_path))
     calls = {"n": 0}
 
@@ -131,13 +131,15 @@ def test_list_status_caches_ollama_tags(monkeypatch, tmp_path: Path):
         calls["n"] += 1
         return None
 
-    monkeypatch.setattr("videoclean.adapters.models.catalog.ollama_tags", fake_tags)
-    rows = ModelCatalog().list_status()
+    monkeypatch.setattr(cat, "ollama_tags", fake_tags)
+    info = cat.add_extra(kind="llm", backend="ollama", model_ref="qwen2.5vl:3b")
+    assert info.id == "extra:llm:ollama:qwen2.5vl:3b"
+    rows = cat.ModelCatalog().list_status()
     assert calls["n"] == 1
     assert rows
     llm = {r.info.id: r for r in rows}
-    assert llm["llm:ollama-llama3.2"].state == "error"
-    assert "start ollama" in llm["llm:ollama-llama3.2"].message
+    assert llm[info.id].state == "error"
+    assert "start ollama" in llm[info.id].message
 
 
 def test_download_component_records_progress(tmp_path: Path):
@@ -196,18 +198,18 @@ def test_run_download_dispatches_hf(monkeypatch):
     assert seen == ["facebook/sam2-hiera-tiny"]
 
 
-def test_run_download_dispatches_others(monkeypatch):
+def test_run_download_dispatches_others(monkeypatch, tmp_path: Path):
     from videoclean.adapters.models import downloaders as d
 
+    monkeypatch.setenv("HOME", str(tmp_path))
     calls: list[str] = []
     monkeypatch.setattr(d, "download_lama", lambda **kw: calls.append("lama"))
     monkeypatch.setattr(d, "download_propainter", lambda **kw: calls.append("propainter"))
     monkeypatch.setattr(d, "download_ollama", lambda tag, **kw: calls.append(tag))
     d.run_download("inpainter:lama")
     d.run_download("inpainter:propainter")
-    d.run_download("llm:ollama-llama3.2")
-    d.run_download("llm:ollama-llava-phi3")
-    assert calls == ["lama", "propainter", "llama3.2", "llava-phi3"]
+    d.run_download("extra:llm:ollama:qwen2.5vl:3b")
+    assert calls == ["lama", "propainter", "qwen2.5vl:3b"]
 
 
 def test_download_hf_snapshot_and_cancel(monkeypatch):

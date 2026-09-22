@@ -112,21 +112,6 @@ COMPONENTS: tuple[ComponentInfo, ...] = (
         model_ref=DEFAULT_HF_REPO,
         size_hint="~400 MB",
     ),
-    ComponentInfo(
-        id="llm:ollama-llama3.2",
-        title="Ollama llama3.2",
-        kind="llm",
-        model_ref="llama3.2",
-        size_hint="~2 GB",
-    ),
-    ComponentInfo(
-        id="llm:ollama-llava-phi3",
-        title="Ollama llava-phi3",
-        kind="llm",
-        model_ref="llava-phi3",
-        size_hint="~2.3 GB",
-        backend="ollama",
-    ),
 )
 
 COMPONENT_IDS: tuple[str, ...] = tuple(c.id for c in COMPONENTS)
@@ -185,8 +170,6 @@ _BACKEND_TO_COMPONENT: dict[tuple[str, str], str] = {
     ("detector", "grounding-dino"): "detector:grounding-dino",
     ("inpainter", "lama"): "inpainter:lama",
     ("inpainter", "propainter"): "inpainter:propainter",
-    ("llm", "llama3.2"): "llm:ollama-llama3.2",
-    ("llm", "llava-phi3"): "llm:ollama-llava-phi3",
 }
 
 

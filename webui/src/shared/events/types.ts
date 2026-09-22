@@ -7,7 +7,7 @@ export type PollSnapshot = {
   downloads?: unknown[]
   models: Record<string, unknown[]>
   doctor: Record<string, string>
-  ollama: { ok: boolean; base_url: string; models: string[] }
+  ollama: { ok: boolean; installed?: boolean; base_url: string; models: string[] }
   providers?: unknown[]
   /** Full /api/options payload (also pushed on SSE meta/downloads). */
   options?: Record<string, unknown> & {

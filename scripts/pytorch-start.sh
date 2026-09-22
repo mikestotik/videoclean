@@ -21,14 +21,9 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 export PATH="/root/.local/bin:$PATH"
 
-if ! command -v ollama >/dev/null 2>&1; then
-  # Local LLM for prompt parsing (~1 GB download). Non-fatal: a broken
-  # installer must not kill the pod, the pipeline works without it.
-  curl -fsSL https://ollama.com/install.sh | sh || echo "WARNING: ollama install failed, continuing without local LLM"
-fi
-if ! pgrep -x ollama >/dev/null 2>&1; then
-  nohup ollama serve >/workspace/ollama.log 2>&1 &
-fi
+# NOTE: ollama is NOT installed here on purpose. It is an on-demand
+# component: install + start it from the Config page in the WebUI
+# (POST /api/ollama/install, POST /api/ollama/start).
 
 mkdir -p /workspace
 cd /workspace

@@ -58,10 +58,18 @@ type ProviderInfo = {
   models: string[]
 }
 
+type DownloadInfo = {
+  component_id: string
+  state?: string
+  progress?: number
+  message?: string
+}
+
 type PollData = {
   models: Record<string, ModelInfo[]>
   doctor: Record<string, string>
-  ollama: { ok: boolean; base_url: string; models: string[] }
+  ollama: { ok: boolean; installed?: boolean; base_url: string; models: string[] }
+  downloads?: DownloadInfo[]
   providers?: ProviderInfo[]
   options?: {
     families?: Record<string, FamilyBackend[]>
@@ -75,6 +83,7 @@ function asPollData(snap: PollSnapshot | null): PollData | null {
     models: snap.models as Record<string, ModelInfo[]>,
     doctor: snap.doctor,
     ollama: snap.ollama,
+    downloads: snap.downloads as DownloadInfo[] | undefined,
     providers: snap.providers as ProviderInfo[] | undefined,
     options: snap.options as PollData["options"],
   }
@@ -536,6 +545,30 @@ export function ConfigPage() {
     }
   }
 
+  const installOllama = async () => {
+    setBusy("ollama:install")
+    setError("")
+    try {
+      await api("/api/ollama/install", { method: "POST" })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy("")
+    }
+  }
+
+  const startOllama = async () => {
+    setBusy("ollama:start")
+    setError("")
+    try {
+      await api("/api/ollama/start", { method: "POST" })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy("")
+    }
+  }
+
   const doctorEntries = useMemo(() => {
     if (!data?.doctor) return []
     const preferred = ["python", "ffmpeg", "ffprobe", "opencv", "torch", "cuda", "mps"]
@@ -563,6 +596,13 @@ export function ConfigPage() {
 
   const providers = data?.providers ?? data?.options?.providers ?? []
   const familiesForAdd = addKind ? (data?.options?.families?.[addKind] ?? []) : []
+  const ollamaDl = useMemo(() => {
+    if (!data?.downloads) return null
+    const row = data.downloads.find(
+      (d) => d.component_id === "system:ollama" && (d.state === "running" || d.state === "queued"),
+    )
+    return row ?? null
+  }, [data])
 
   if (!data) {
     return (
@@ -652,18 +692,88 @@ export function ConfigPage() {
           </div>
 
           <div className="rounded-lg border border-border/70 bg-background/40 p-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <p className="text-sm font-medium">Ollama</p>
-              <Badge
-                variant="secondary"
-                className={cn(
-                  "text-[10px]",
-                  data.ollama.ok ? "bg-ok/15 text-ok" : "bg-destructive/15 text-destructive",
+            <div className="flex flex-wrap items-start gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm font-medium">Ollama</p>
+                  <Badge
+                    variant="secondary"
+                    className={cn(
+                      "text-[10px]",
+                      data.ollama.ok
+                        ? "bg-ok/15 text-ok"
+                        : ollamaDl
+                          ? "bg-primary/15 text-primary"
+                          : data.ollama.installed
+                            ? "bg-primary/15 text-primary"
+                            : "bg-destructive/15 text-destructive",
+                    )}
+                  >
+                    {data.ollama.ok
+                      ? "Доступна"
+                      : ollamaDl
+                        ? `Устанавливается ${Math.round((ollamaDl.progress ?? 0) * 100)}%`
+                        : data.ollama.installed
+                          ? "Не запущена"
+                          : "Не установлена"}
+                  </Badge>
+                </div>
+                {ollamaDl?.message && (
+                  <p className="mt-1 font-mono text-[11px] text-muted-foreground">{ollamaDl.message}</p>
                 )}
-              >
-                {data.ollama.ok ? "Доступна" : "Недоступна"}
-              </Badge>
+                {!data.ollama.ok && !data.ollama.installed && !ollamaDl && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Локальный LLM-сервер, ~1 ГБ. Модели докачиваются отдельно кнопками «Скачать» ниже.
+                  </p>
+                )}
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5">
+                {ollamaDl && (
+                  <Button size="sm" variant="outline" onClick={() => void cancelDownloads()}>
+                    Отменить
+                  </Button>
+                )}
+                {!data.ollama.ok && !data.ollama.installed && !ollamaDl && (
+                  <Button
+                    size="sm"
+                    variant="default"
+                    disabled={busy === "ollama:install"}
+                    onClick={() => void installOllama()}
+                  >
+                    {busy === "ollama:install" ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <>
+                        <Download className="size-3.5" />
+                        Установить
+                      </>
+                    )}
+                  </Button>
+                )}
+                {!data.ollama.ok && data.ollama.installed && (
+                  <Button
+                    size="sm"
+                    variant="default"
+                    disabled={busy === "ollama:start"}
+                    onClick={() => void startOllama()}
+                  >
+                    {busy === "ollama:start" ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      "Запустить"
+                    )}
+                  </Button>
+                )}
+              </div>
             </div>
+            {ollamaDl && (
+              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full bg-primary transition-[width] duration-300"
+                  style={{ width: `${Math.round((ollamaDl.progress ?? 0) * 100)}%` }}
+                />
+              </div>
+            )}
             {data.ollama.ok && data.ollama.models.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {data.ollama.models.map((m) => (

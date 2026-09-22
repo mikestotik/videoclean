@@ -1090,6 +1090,56 @@ def cancel_downloads(state: AppState) -> list[str]:
     return cancelled
 
 
+def start_ollama_install(state: AppState) -> str:
+    """Install the ollama binary in the background, with progress in downloads."""
+    from videoclean.adapters.llm.ollama_setup import (
+        OLLAMA_SYSTEM_ID,
+        install_ollama_binary,
+        ollama_installed,
+    )
+    from videoclean.application.use_cases.download_component import DownloadComponent
+
+    if ollama_installed():
+        raise PipelineError("ollama is already installed")
+    active = _active_downloads(state)
+    if active:
+        raise PipelineError(f"already downloading {active[0]['component_id']}")
+
+    def _runner(component_id: str, *, on_progress=None, is_cancelled=None) -> None:
+        install_ollama_binary(on_progress=on_progress, is_cancelled=is_cancelled)
+
+    installer = DownloadComponent(_runner)
+
+    def _run() -> None:
+        try:
+            installer.execute(OLLAMA_SYSTEM_ID, state.jobs, None)
+        except Exception:  # noqa: BLE001
+            return
+        try:
+            state.events.publish("meta")
+        except Exception:  # noqa: BLE001
+            pass
+
+    threading.Thread(target=_run, name="vc-ollama-install", daemon=True).start()
+    return f"starting {OLLAMA_SYSTEM_ID}"
+
+
+def start_ollama_serve(state: AppState) -> str:
+    from videoclean.adapters.llm.ollama_setup import start_ollama_serve as _serve
+
+    try:
+        status = _serve(log_path=state.data_dir / "ollama.log")
+    except PipelineError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise PipelineError(f"failed to start ollama: {exc}") from exc
+    try:
+        state.events.publish("meta")
+    except Exception:  # noqa: BLE001
+        pass
+    return status
+
+
 def downloads_payload(state: AppState) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for row in state.jobs.list_downloads(limit=20):
