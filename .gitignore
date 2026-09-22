@@ -5,6 +5,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+server/static_dist/
 .videoclean/
 output/
 *.log

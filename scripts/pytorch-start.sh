@@ -43,5 +43,16 @@ uv pip install --python .venv/bin/python --index-url https://download.pytorch.or
 uv pip install --python .venv/bin/python "git+https://github.com/facebookresearch/sam2.git" hf-transfer matplotlib imageio
 
 mkdir -p "$VIDEOCLEAN_DATA_DIR" "$HF_HOME"
+
+# WebUI: build from source when missing or stale (static_dist is a build
+# artifact and is NOT committed to git).
+if [ ! -f server/static_dist/index.html ] || [ -n "$(find webui -path webui/node_modules -prune -o -type f -newer server/static_dist/index.html -print | head -1)" ]; then
+  if ! command -v bun >/dev/null 2>&1; then
+    curl -fsSL https://bun.sh/install | bash
+  fi
+  export PATH="/root/.bun/bin:$PATH"
+  (cd webui && bun install && bun run build)
+fi
+
 uv run videoclean doctor --device cuda || true
 exec uv run videoclean serve --host 0.0.0.0 --port "$VIDEOCLEAN_PORT"
