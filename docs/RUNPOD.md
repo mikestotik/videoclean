@@ -30,6 +30,8 @@ Pod settings:
 | `SAM2_BUILD_CUDA` | `0` |
 
 Start command (clone once, then serve). Repo is public: `https://github.com/mikestotik/videoclean.git`.
+Automated: workflow **Deploy PyTorch pod** (Actions → Run workflow) creates the pod
+with `scripts/pytorch-start.sh` as the start command — same script as below.
 
 ```bash
 bash -lc '

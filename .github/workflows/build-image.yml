@@ -2,17 +2,19 @@ name: Build image
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - Dockerfile
-      - pyproject.toml
-      - uv.lock
-      - scripts/start.sh
-      - videoclean/**
-      - server/**
-      - webui/**
-      - .github/workflows/build-image.yml
+  # DISABLED for the test loop: image builds only by hand.
+  # Re-enable the push trigger when the custom image is needed again.
+  # push:
+  #   branches: [main]
+  #   paths:
+  #     - Dockerfile
+  #     - pyproject.toml
+  #     - uv.lock
+  #     - scripts/start.sh
+  #     - videoclean/**
+  #     - server/**
+  #     - webui/**
+  #     - .github/workflows/build-image.yml
 
 permissions:
   contents: read
