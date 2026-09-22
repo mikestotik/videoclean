@@ -14,7 +14,7 @@ export SAM2_BUILD_CUDA="${SAM2_BUILD_CUDA:-0}"
 export PATH="/root/.local/bin:/usr/local/bin:$PATH"
 
 apt-get update
-apt-get install -y --no-install-recommends ffmpeg git curl ca-certificates python3.11 python3.11-venv || apt-get install -y --no-install-recommends ffmpeg git curl ca-certificates
+apt-get install -y --no-install-recommends ffmpeg git curl ca-certificates zstd python3.11 python3.11-venv || apt-get install -y --no-install-recommends ffmpeg git curl ca-certificates zstd
 
 if ! command -v uv >/dev/null 2>&1; then
   curl -fsSL https://astral.sh/uv/install.sh | sh
@@ -22,7 +22,9 @@ fi
 export PATH="/root/.local/bin:$PATH"
 
 if ! command -v ollama >/dev/null 2>&1; then
-  curl -fsSL https://ollama.com/install.sh | sh
+  # Optional: local LLM for prompt parsing. Never fatal — the pipeline
+  # works without it, so a broken installer must not kill the pod.
+  curl -fsSL https://ollama.com/install.sh | sh || echo "WARNING: ollama install failed, continuing without local LLM"
 fi
 if ! pgrep -x ollama >/dev/null 2>&1; then
   nohup ollama serve >/workspace/ollama.log 2>&1 &
