@@ -214,12 +214,11 @@ export function toRunParams(params: EditorParams): Record<string, string | numbe
   return out
 }
 
-/** Params that affect detect preview (segmenter is forced to sam2 on the server). */
+/** Params that affect detect preview (segmenter type is forced to sam2 on the server; the model choice passes through). */
 export function toDetectParams(params: EditorParams): Record<string, string | number | boolean> {
   const run = toRunParams(params)
   const {
     segmenter: _seg,
-    segmenter_model: _segModel,
     inpainter: _inp,
     verify: _verify,
     mask_policy: _policy,

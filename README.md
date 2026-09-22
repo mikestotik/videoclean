@@ -88,7 +88,7 @@ uv run videoclean run \
   --overwrite
 ```
 
-`sam2` идёт через `transformers>=4.56` (на Intel Mac с torch 2.2.2 это ок). `sam2-video` — пакет facebookresearch/sam2 и обычно torch≥2.5 (на Intel Mac официальных колёс torch≥2.3 нет). `lama` — `uv sync --extra lama` и `big-lama.pt`. ProPainter рассчитан на CUDA. Что реально поднимется: `uv run videoclean doctor`.
+`sam2` идёт через `transformers>=4.56` (на Intel Mac с torch 2.8.0 это ок). `sam2-video` — пакет facebookresearch/sam2 и обычно torch≥2.5. `lama` — `uv sync --extra lama` и `big-lama.pt`. ProPainter рассчитан на CUDA. Что реально поднимется: `uv run videoclean doctor`.
 
 Если detector не набрал `--detector-threshold`, `run` завершается ошибкой: объектов по промпту нет.
 
@@ -119,8 +119,8 @@ Python 3.11, NVIDIA:
 
 ```bash
 uv sync --extra gpu
-uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
-uv pip install 'transformers>=4.51'
+uv pip install torch==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu128
+uv pip install 'transformers==4.56.2'
 
 uv run huggingface-cli download facebook/sam2-hiera-tiny
 uv run huggingface-cli download IDEA-Research/grounding-dino-tiny

@@ -41,8 +41,8 @@ COPY videoclean ./videoclean
 COPY server ./server
 COPY scripts/start.sh ./scripts/start.sh
 
-# pyproject pins torch==2.2.2 for local hardware; the server image installs
-# cu124 wheels (>=2.5) for sam2-video instead. torch is excluded from the
+# pyproject pins torch==2.8.0 for local hardware; the server image installs
+# the cu128 build of the SAME version instead. torch is excluded from the
 # sync so it is downloaded only once. Do not download HF weights at build time.
 # Split into layers: deps -> torch -> sam2, so code-only rebuilds reuse them.
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -50,8 +50,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
         --no-install-package torch --no-install-package torchvision
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --python /opt/videoclean/bin/python \
-        --index-url https://download.pytorch.org/whl/cu124 \
-        "torch>=2.5" torchvision
+        --index-url https://download.pytorch.org/whl/cu128 \
+        torch==2.8.0 torchvision==0.23.0
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --python /opt/videoclean/bin/python \
         "git+https://github.com/facebookresearch/sam2.git" \

@@ -45,15 +45,10 @@ export SAM2_BUILD_CUDA="${SAM2_BUILD_CUDA:-0}"
 export PATH="/root/.local/bin:/usr/local/bin:$PATH"
 
 apt-get update
-apt-get install -y --no-install-recommends ffmpeg git curl ca-certificates python3.11 python3.11-venv || apt-get install -y --no-install-recommends ffmpeg git curl ca-certificates
+apt-get install -y --no-install-recommends ffmpeg git curl ca-certificates zstd unzip python3.11 python3.11-venv || apt-get install -y --no-install-recommends ffmpeg git curl ca-certificates zstd unzip
 
 curl -fsSL https://astral.sh/uv/install.sh | sh
 export PATH="/root/.local/bin:$PATH"
-
-if ! command -v ollama >/dev/null 2>&1; then
-  curl -fsSL https://ollama.com/install.sh | sh
-fi
-nohup ollama serve >/workspace/ollama.log 2>&1 &
 
 mkdir -p /workspace
 cd /workspace
@@ -65,15 +60,41 @@ git fetch --depth 1 origin main
 git checkout -B main origin/main
 
 uv python pin 3.11 || true
-uv sync --extra gpu --extra lama --extra web --no-dev
-uv pip install --python .venv/bin/python --index-url https://download.pytorch.org/whl/cu124 --upgrade "torch>=2.5" torchvision
+uv sync --extra gpu --extra lama --extra web --no-dev --no-install-package torch --no-install-package torchvision
+uv pip install --python .venv/bin/python --index-url https://download.pytorch.org/whl/cu128 torch==2.8.0 torchvision==0.23.0
 uv pip install --python .venv/bin/python "git+https://github.com/facebookresearch/sam2.git" hf-transfer matplotlib imageio
+# Build tags (+cu128) always differ from the lockfile, so keep `uv run`
+# from re-syncing the venv back to the locked CPU build. Copy instead of
+# hardlinking (cache and .venv are on different filesystems).
+export UV_NO_SYNC=1
+export UV_LINK_MODE=copy
 
 mkdir -p "$VIDEOCLEAN_DATA_DIR" "$HF_HOME"
+
+# WebUI: build from source when missing (static_dist is NOT committed).
+# Never fatal: the API works without UI.
+if [ ! -f server/static_dist/index.html ]; then
+  if ! command -v bun >/dev/null 2>&1; then
+    curl -fsSL https://bun.sh/install | bash || echo "WARNING: bun install failed, UI will be unavailable"
+  fi
+  export PATH="/root/.bun/bin:$PATH"
+  if command -v bun >/dev/null 2>&1; then
+    (cd webui && bun install && bun run build) || echo "WARNING: webui build failed, serving API only"
+  fi
+fi
+
 uv run videoclean doctor --device cuda || true
 exec uv run videoclean serve --host 0.0.0.0 --port "$VIDEOCLEAN_PORT"
 '
 ```
+
+> **Gate check (10 секунд, до долгой установки).** Стоковый torch образа должен видеть CUDA, иначе хост битый и всё остальное бессмысленно:
+> ```bash
+> /usr/bin/python3 -c "import torch; print(torch.__version__, torch.cuda.is_available())" 2>&1 | tail -1
+> ```
+> `True` — едем дальше. `False` — terminate под и бери другой дата-центр, скрипт тут не поможет.
+>
+> **Network volumes (mfs) + SQLite.** `jobs.sqlite` не работает на сетевых томах (`disk I/O error`): держи `VIDEOCLEAN_DATA_DIR` на локальном диске контейнера (`/root/.videoclean`), а `HF_HOME` — на томе. Pod volumes — локальный диск, там всё ок.
 
 First boot: several minutes (`uv sync` + CUDA torch + sam2). Weights are **not** downloaded here. After the UI is up, open `https://<POD_ID>-7860.proxy.runpod.net`, log in, **Конфиг**, download `grounding-dino`, `sam2-tiny`, then `propainter` for max quality. Ollama: if the process is up, models appear under LLM; pull a tag there (for example `llama3.2`).
 
@@ -202,6 +223,6 @@ Open `http://127.0.0.1:7860`. Compose mounts named volumes for `/root/.videoclea
 ## Notes
 
 - `videoclean serve` binds `0.0.0.0` and reads `VIDEOCLEAN_PORT` (RunPod `PORT` is also accepted by `scripts/start.sh`).
-- Image override: `torch>=2.5` from the cu124 wheel index (pyproject still pins `2.2.2` for CPU/Mac).
+- Image override: `torch==2.8.0` + `torchvision==0.23.0` from the cu128 wheel index (pyproject pins the same versions for CPU/Mac).
 - `sam2` Python package is installed with `SAM2_BUILD_CUDA=0` (no nvcc in the runtime image). Weights still come from the Models tab.
 - After a kill/restart, orphan RUNNING jobs are marked FAILED (`interrupted`).
