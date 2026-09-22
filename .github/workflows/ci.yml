@@ -40,3 +40,4 @@ jobs:
       # API image is CUDA-heavy; build locally / on GPU runners. Web image is the light CI check.
       - name: Build web image (no push)
         run: docker build -f Dockerfile.web -t videoclean-web:ci --build-arg VITE_API_BASE_URL=http://localhost:7860 .
+
