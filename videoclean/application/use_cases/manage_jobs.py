@@ -20,9 +20,12 @@ _CONFIG_FIELDS = {f.name for f in fields(PipelineConfig)}
 
 
 def pipeline_config_from_dict(data: dict[str, Any] | None) -> PipelineConfig:
-    from videoclean.application.profiles import apply_profile
+    data = dict(data or {})
+    if str(data.get("device") or "").strip().lower() in {"", "auto"}:
+        from videoclean.application.budget import pick_device
 
-    data = apply_profile(dict(data or {}))
+        data["device_requested"] = str(data.get("device") or "auto")
+        data["device"] = pick_device(data.get("device") or "auto")
     kwargs = {key: data[key] for key in _CONFIG_FIELDS if key in data}
     if "detectors" not in kwargs and "detector" in data:
         kwargs["detectors"] = parse_name_list(

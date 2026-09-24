@@ -75,9 +75,17 @@ def config_from_flags(
     inpaint_workers: int | None = None,
     inpaint_chunk_overlap: int | None = None,
     require_runtime: bool = False,
+    explicit: Mapping | None = None,
 ) -> PipelineConfig:
-    from videoclean.application.profiles import apply_profile
+    from dataclasses import fields as dc_fields
 
+    from videoclean.application.budget import pick_device
+    from videoclean.application.profiles import merge_run_config
+
+    seed = PipelineConfig()
+    defaults = {item.name: getattr(seed, item.name) for item in dc_fields(PipelineConfig)}
+    defaults["device"] = "auto"
+    defaults["detector"] = detector
     raw = {
         "device": device.strip().lower(),
         "detector": detector,
@@ -121,7 +129,12 @@ def config_from_flags(
         raw["inpaint_workers"] = int(inpaint_workers)
     if inpaint_chunk_overlap is not None:
         raw["inpaint_chunk_overlap"] = int(inpaint_chunk_overlap)
-    merged = apply_profile(raw)
+    if explicit is None:
+        explicit_map = {key: value for key, value in raw.items() if value is not None}
+    else:
+        explicit_map = dict(explicit)
+    chosen = explicit_map.get("profile", profile)
+    merged = merge_run_config(defaults, None, chosen, explicit_map, resolve_device=pick_device)
     cfg = PipelineConfig(
         device=str(merged["device"]),
         detectors=parse_name_list(merged.get("detector") or detector, DETECTORS, default=list(DEFAULT_DETECTORS)),
@@ -451,8 +464,22 @@ def sam2_video_torch_warning(segmenter: str, torch_ver: str) -> str | None:
 
 
 def extra_doctor_warnings(cfg: PipelineConfig, facts: Mapping[str, str]) -> list[str]:
+    lines: list[str] = []
     warning = sam2_video_torch_warning(cfg.segmenter, facts.get("torch", ""))
-    return [warning] if warning else []
+    if warning:
+        lines.append(warning)
+    if "hiera-large" in (cfg.segmenter_model or ""):
+        total = 0
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                _free, total = torch.cuda.mem_get_info()
+        except Exception:  # noqa: BLE001
+            total = 0
+        if total and int(total) < 24 * 1024**3:
+            lines.append("warning: hiera-large is unsafe below 24 GB VRAM; SLA default is hiera-tiny")
+    return lines
 
 
 def estimate_seconds(frame_count: int, width: int, height: int, device: str = "cpu") -> float:
@@ -539,7 +566,7 @@ def doctor_sections(cfg: PipelineConfig) -> list[tuple[str, list[str]]]:
     adapters.append(f"{parser.name:<16} {pst}")
     return [
         ("This machine", machine),
-        ("This command (independent flags, not a profile)", requested),
+        ("This command (resolved config)", requested),
         ("Adapters that will actually run", adapters),
     ]
 

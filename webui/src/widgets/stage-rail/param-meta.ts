@@ -20,6 +20,7 @@ export const INPAINTER_META: Record<string, { label: string; hint: string }> = {
 }
 
 export const DEVICE_META: Record<string, { label: string; hint: string }> = {
+  auto: { label: "Авто", hint: "cuda, иначе mps, иначе cpu." },
   cpu: { label: "CPU", hint: "Медленнее, но работает везде." },
   cuda: { label: "CUDA (NVIDIA)", hint: "Видеокарта NVIDIA — быстрее нейросети и нужен для ProPainter." },
   mps: { label: "MPS (Apple)", hint: "Ускорение на чипах Apple Silicon." },
@@ -214,6 +215,33 @@ export const ADVANCED_META: Record<string, ParamMeta> = {
     max: 32,
     step: 1,
   },
+}
+
+export const PARAM_LABELS: Record<string, string> = {
+  device: "Устройство",
+  detector: "Детектор",
+  detector_model: "Модель детектора",
+  segmenter: "Сегментация",
+  segmenter_model: "Модель SAM",
+  inpainter: "Инпейнтер",
+  inpainter_model: "Модель заливки",
+  formats: "Форматы",
+  mask_policy: "Мазки",
+  max_vram_mb: "Потолок VRAM",
+  cpu_threads: "Потоки CPU",
+  inpaint_max_side: "Сторона заливки",
+  verify_redetect: "Повторный поиск",
+  llm_model: "Модель LLM",
+  llm_base_url: "LLM URL",
+  webm_crf: "WebM CRF",
+  segment_seconds: "Сегмент",
+}
+
+export function paramLabel(key: string): string {
+  if (PARAM_LABELS[key]) return PARAM_LABELS[key]
+  const run = RUN_PARAM_META[key as keyof typeof RUN_PARAM_META]
+  if (run) return run.label
+  return ADVANCED_META[key]?.label ?? key
 }
 
 export const MODE_HINTS = {

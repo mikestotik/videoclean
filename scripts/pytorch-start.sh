@@ -12,7 +12,7 @@ export VIDEOCLEAN_PORT="${VIDEOCLEAN_PORT:-7860}"
 # "disk I/O error". Pod volumes are local disk and are fine; with a network
 # volume, point this at container disk (e.g. /root/.videoclean) and keep
 # HF_HOME on the volume.
-export VIDEOCLEAN_DATA_DIR="${VIDEOCLEAN_DATA_DIR:-/workspace/.videoclean}"
+export VIDEOCLEAN_DATA_DIR="${VIDEOCLEAN_DATA_DIR:-/root/.videoclean}"
 export HF_HOME="${HF_HOME:-/workspace/.cache/huggingface}"
 export HF_HUB_CACHE="${HF_HUB_CACHE:-$HF_HOME/hub}"
 export SAM2_BUILD_CUDA="${SAM2_BUILD_CUDA:-0}"
@@ -48,7 +48,7 @@ uv python pin 3.11 || true
 # 'sam2'"). Locked packages are still synced to their pinned versions.
 uv sync --inexact --extra gpu --extra lama --extra web --no-dev --no-install-package torch --no-install-package torchvision
 uv pip install --python .venv/bin/python --index-url https://download.pytorch.org/whl/cu128 torch==2.8.0 torchvision==0.23.0
-uv pip install --python .venv/bin/python "git+https://github.com/facebookresearch/sam2.git" hf-transfer matplotlib imageio
+uv pip install --python .venv/bin/python "git+https://github.com/facebookresearch/sam2.git@2b90b9f5ceec907a1c18123530e92e794ad901a4" hf-transfer matplotlib imageio
 # The lockfile pins torch==2.8.0 for local machines. The pod needs the cu128
 # build of the SAME version, so install torch from the CUDA index and keep
 # `uv run` from re-syncing the venv back (build tags always differ).

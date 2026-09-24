@@ -64,8 +64,12 @@ from server.service import (
     register_source,
     save_job_tracks,
     save_mask,
+    PresetConflict,
+    UnknownPreset,
+    assemble_run_config,
     save_preset,
     serialize_clean_form,
+    update_preset,
     source_dict,
     source_frame_path,
     sources_payload,
@@ -415,10 +419,36 @@ def create_app(state: AppState) -> FastAPI:
     def create_preset(body: dict[str, Any], st: AppState = Depends(get_state)):
         data = body or {}
         try:
-            item = save_preset(st.data_dir, str(data.get("name") or ""), data.get("payload"))
+            item, status = save_preset(
+                st.data_dir,
+                str(data.get("name") or ""),
+                data.get("payload"),
+                replace=bool(data.get("replace")),
+            )
+        except PresetConflict as exc:
+            raise HTTPException(409, exc.detail) from exc
         except PipelineError as exc:
             raise HTTPException(400, str(exc)) from exc
-        return JSONResponse(item, status_code=201)
+        return JSONResponse(item, status_code=status)
+
+    @app.put("/api/presets/{preset_id}")
+    def put_preset(preset_id: str, body: dict[str, Any], st: AppState = Depends(get_state)):
+        data = body or {}
+        try:
+            item = update_preset(
+                st.data_dir,
+                preset_id,
+                name=data.get("name"),
+                payload=data.get("payload") if "payload" in data else None,
+                replace=bool(data.get("replace")),
+            )
+        except UnknownPreset as exc:
+            raise HTTPException(404, "unknown preset") from exc
+        except PresetConflict as exc:
+            raise HTTPException(409, exc.detail) from exc
+        except PipelineError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return item
 
     @app.delete("/api/presets/{preset_id}")
     def remove_preset(preset_id: str, st: AppState = Depends(get_state)):
@@ -603,6 +633,11 @@ def create_app(state: AppState) -> FastAPI:
         inpaint_chunk_overlap: str = Form(""),
         mask_policy: str = Form(""),
         overwrite: str = Form(""),
+        preset: str = Form("", description="Preset id (p_ + 8 hex) or exact name."),
+        max_vram_mb: str = Form("", description="VRAM ceiling in MB. Empty uses the whole card."),
+        cpu_threads: str = Form("", description="CPU thread ceiling. Empty uses every core."),
+        inpaint_max_side: str = Form("", description="Inpaint crop side cap, multiple of 8."),
+        verify_redetect: str = Form("", description="1 to run a second detector pass during verify."),
     ):
         kind = (kind or "run").strip().lower() or "run"
         if kind not in {"run", "preview", "prompt"}:
@@ -661,8 +696,20 @@ def create_app(state: AppState) -> FastAPI:
             "inpaint_chunk_overlap": inpaint_chunk_overlap,
             "mask_policy": mask_policy,
             "overwrite": overwrite,
+            "preset": preset,
+            "max_vram_mb": max_vram_mb,
+            "cpu_threads": cpu_threads,
+            "inpaint_max_side": inpaint_max_side,
+            "verify_redetect": verify_redetect,
         }
-        payload = serialize_clean_form({k: v for k, v in fields.items() if v != ""})
+        try:
+            payload = assemble_run_config(fields, st.data_dir)
+        except UnknownPreset as exc:
+            raise HTTPException(404, "unknown preset") from exc
+        except PresetConflict as exc:
+            raise HTTPException(409, exc.detail) from exc
+        except PipelineError as exc:
+            raise HTTPException(400, str(exc)) from exc
         if (webhook_url or "").strip():
             payload["webhook_url"] = webhook_url.strip()
         if (webhook_secret or "").strip():

@@ -129,6 +129,13 @@ class RunCleanup:
                 pass
             self.jobs.upsert(job_id, "FAILED", report=report, error=str(exc)[:1500])
             raise
+        finally:
+            prev = getattr(self, "_thread_prev", None)
+            if prev is not None:
+                from videoclean.application.budget import restore_thread_caps
+
+                restore_thread_caps(prev)
+                self._thread_prev = None
 
     def _run(self, req: RunCleanupRequest, cfg: PipelineConfig, job_id: str, paths, manifest, report: dict) -> dict:
         self._ensure_ready(req)
@@ -153,16 +160,16 @@ class RunCleanup:
         )
         self.progress.finish("validate", f"{manifest.video_codec} {manifest.width}x{manifest.height}")
 
-        self.progress.start("normalize", total=manifest.frame_count, detail="ffmpeg extract frames")
-        frames = self.media.extract_frames(req.input_path, paths.frames_dir, paths.ffmpeg_log)
+        self.progress.start("normalize", total=manifest.frame_count, detail="ffmpeg raw frames")
+        images = self._open_frames(req, paths, manifest)
+        frames = images
         self.progress.tick("normalize", len(frames), len(frames))
         self.progress.finish("normalize", f"{len(frames)} frames")
 
         (paths.root / "analysis").mkdir(exist_ok=True)
-        cache_n = min(48, max(8, len(frames)))
-        images = LazyFrames(frames, self._read_image, cache_size=cache_n)
         first = images[0]
         h, w = first.shape[:2]
+        self._prepare_runtime(cfg, paths, manifest)
 
         used_detector: str = "manual"
         attempts: list[str] = []
@@ -313,8 +320,9 @@ class RunCleanup:
             (paths.root / "analysis" / "tracks.json").write_text(
                 json.dumps(tracks_to_json(tracks), indent=2), encoding="utf-8"
             )
-        for frame_path, mask in zip(frames, masks):
-            self._write_image(paths.masks_dir / frame_path.name, mask)
+        for i, mask in enumerate(masks):
+            if req.keep_workdir:
+                self._write_image(paths.masks_dir / f"frame_{i:06d}.png", mask)
         mean_cov = float(np.mean([np.count_nonzero(m) / m.size for m in masks])) if masks else 0.0
         if mean_cov < cfg.min_mask_coverage:
             raise PipelineError(
@@ -328,69 +336,45 @@ class RunCleanup:
         ]
         self.progress.finish("detect", f"{used_detector}: {len(detections)} tracks, coverage {mean_cov:.2%}")
 
-        video_aware = bool(getattr(self.inpainter, "video_aware", False))
-        workers = resolve_workers(
-            cfg.inpaint_workers, device=cfg.device, video_aware=video_aware
-        )
         overlap = int(cfg.inpaint_chunk_overlap)
-        self.progress.start(
-            "inpaint",
-            total=len(frames),
-            detail=f"{self.inpainter.name} workers={workers}",
-        )
-        if video_aware:
-            self.progress.tick("inpaint", 0, len(frames), f"{self.inpainter.name} clip")
-            cleaned_frames = inpaint_clip_chunked(
-                self.inpainter,
-                images,
-                masks,
-                chunk_len=max(8, int(cfg.propainter_subvideo_length)),
-                overlap=overlap,
-                on_progress=lambda cur, tot: self.progress.tick(
-                    "inpaint", cur, tot, f"{self.inpainter.name} chunk {cur}/{tot}"
-                ),
+        if not callable(getattr(self.inpainter, "inpaint_masked", None)):
+            raise AdapterUnavailable(
+                f"{getattr(self.inpainter, 'name', 'inpainter')} has no inpaint_masked; "
+                "full-frame inpaint is not used"
             )
-        else:
-            cleaned_frames = inpaint_frames(
-                self.inpainter,
-                images,
-                masks,
-                workers=workers,
-                on_progress=lambda cur, tot: self.progress.tick(
-                    "inpaint", cur, tot, f"{self.inpainter.name} {cur}/{tot}"
-                ),
-            )
-        for i, (frame_path, cleaned) in enumerate(zip(frames, cleaned_frames), start=1):
-            self._write_image(paths.inpainted_dir / frame_path.name, cleaned)
-            self.progress.tick("inpaint", i, len(frames), f"{self.inpainter.name} write {i}/{len(frames)}")
-        self.progress.finish("inpaint", f"{self.inpainter.name} workers={workers}")
+        self.progress.start("inpaint", total=len(frames), detail=f"{self.inpainter.name} crop")
+        cleaned = self._paint_holes(cfg, images, masks, tracks, paths)
+        self.progress.finish("inpaint", f"{self.inpainter.name} crop")
 
         verify_passes = 0
         verify_note = "skipped"
         if cfg.verify and not req.masks_override and cfg.verify_max_passes > 0:
             self.progress.start("verify", total=len(frames), detail="leftover pass")
             working_masks = list(masks)
-            cleaned_frames = list(cleaned_frames)
             cap = max(cfg.verify_max_coverage, mean_cov * 1.5)
             max_passes = int(cfg.verify_max_passes)
+            v_attempts = "residual"
             for pass_i in range(1, max_passes + 1):
-                self.progress.tick("verify", 0, 1, f"pass {pass_i}/{max_passes} residual+detect")
+                self.progress.tick("verify", 0, 1, f"pass {pass_i}/{max_passes} residual")
                 residual = [
-                    residual_unchanged_mask(orig, clean, mask)
-                    for orig, clean, mask in zip(images, cleaned_frames, working_masks)
+                    residual_unchanged_mask(images[i], cleaned[i], working_masks[i])
+                    for i in range(len(frames))
                 ]
-                _, v_attempts, leftover = self._discover(cleaned_frames, intent.queries, stage="verify")
-                leftover_strict = select_tracks(leftover, intent, width=w, height=h, relax=False)
-                leftover = leftover_strict or (
-                    select_tracks(leftover, intent, width=w, height=h, relax=True)
-                    if cfg.select_relax
-                    else []
-                )
-                detect_masks = (
-                    self._segment_masks(cleaned_frames, leftover, stage="verify")
-                    if leftover
-                    else [np.zeros_like(working_masks[0]) for _ in working_masks]
-                )
+                if cfg.verify_redetect:
+                    _, v_attempts, leftover = self._discover(cleaned, intent.queries, stage="verify")
+                    leftover_strict = select_tracks(leftover, intent, width=w, height=h, relax=False)
+                    leftover = leftover_strict or (
+                        select_tracks(leftover, intent, width=w, height=h, relax=True)
+                        if cfg.select_relax
+                        else []
+                    )
+                    detect_masks = (
+                        self._segment_masks(cleaned, leftover, stage="verify")
+                        if leftover
+                        else [np.zeros_like(working_masks[0]) for _ in working_masks]
+                    )
+                else:
+                    detect_masks = [np.zeros_like(working_masks[0]) for _ in working_masks]
                 grown = [
                     or_masks(or_masks(prev, det), res)
                     for prev, det, res in zip(working_masks, detect_masks, residual)
@@ -412,25 +396,13 @@ class RunCleanup:
                     len(frames),
                     f"pass {pass_i} re-inpaint {len(ranges)} range(s) cov={still:.2%}",
                 )
-                cleaned_frames = re_inpaint_ranges(
-                    self.inpainter,
-                    images,
-                    grown,
-                    cleaned_frames,
-                    ranges,
-                    video_aware=video_aware,
-                    chunk_overlap=overlap,
-                    workers=workers,
-                )
+                self._repaint_ranges(cfg, images, grown, cleaned, ranges, tracks)
                 working_masks = grown
                 verify_passes = pass_i
                 verify_note = f"pass {pass_i}, leftover {still:.2%}, ranges={len(ranges)}"
-            for frame_path, frame in zip(frames, cleaned_frames):
-                self._write_image(paths.inpainted_dir / frame_path.name, frame)
-            # Persist grown masks from last successful pass for debugging.
-            if verify_passes > 0:
-                for frame_path, mask in zip(frames, working_masks):
-                    self._write_image(paths.masks_dir / f"verify_{frame_path.name}", mask)
+            if req.keep_workdir and verify_passes > 0:
+                for i, mask in enumerate(working_masks):
+                    self._write_image(paths.masks_dir / f"verify_frame_{i:06d}.png", mask)
             self.progress.finish("verify", verify_note)
         else:
             if req.masks_override:
@@ -443,16 +415,30 @@ class RunCleanup:
             self.progress.finish("verify", verify_note)
 
         self.progress.start("encode", detail="ffmpeg mezzanine")
-        mezz_work = paths.inpainted_dir.parent / "mezzanine.mp4"
-        self.media.encode_mezzanine(
-            paths.inpainted_dir,
-            req.input_path,
-            mezz_work,
-            manifest.fps_ratio,
-            manifest.has_audio,
-            len(frames),
-            paths.ffmpeg_log,
-        )
+        mezz_work = paths.output_dir / "mezzanine.mp4"
+        encode_raw = getattr(type(self.media), "encode_from_store", None)
+        if encode_raw is not None and hasattr(cleaned, "frame_bytes"):
+            self.media.encode_from_store(
+                cleaned,
+                req.input_path,
+                mezz_work,
+                manifest.fps_ratio,
+                manifest.has_audio,
+                paths.ffmpeg_log,
+                nvenc=bool(getattr(self._budget, "nvenc", False)),
+            )
+        else:
+            for i in range(len(cleaned)):
+                self._write_image(paths.inpainted_dir / f"frame_{i:06d}.jpg", cleaned[i])
+            self.media.encode_mezzanine(
+                paths.inpainted_dir,
+                req.input_path,
+                mezz_work,
+                manifest.fps_ratio,
+                manifest.has_audio,
+                len(frames),
+                paths.ffmpeg_log,
+            )
         # Keep master outside process/ so keep_workdir=false does not wipe it.
         mezz = paths.output_dir / "mezzanine.mp4"
         if mezz_work.resolve() != mezz.resolve():
@@ -500,7 +486,7 @@ class RunCleanup:
                 "verifyPasses": verify_passes,
                 "verifyNote": verify_note,
                 "profile": cfg.profile,
-                "inpaintWorkers": workers,
+                "presetId": getattr(cfg, "preset_id", None),
                 "promptParseMode": intent.parse_mode,
                 "detectorUsed": used_detector,
                 "detectorAttempts": attempts,
@@ -515,12 +501,23 @@ class RunCleanup:
                 "outputs": outputs,
                 "output": next(iter(outputs.values())),
                 "workdir": str(paths.root),
+                "timings": self._timings(paths),
+                "budget": self._budget_report(),
+                "hole": getattr(self, "_hole_report", {}),
             }
         )
         paths.report_file.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
         self.progress.finish("report", "ok")
         self.jobs.upsert(job_id, "COMPLETED", report=report)
         if not req.keep_workdir:
+            for store in (images, cleaned):
+                close = getattr(store, "close", None)
+                if close:
+                    close()
+            for name in ("frames.bgr", "cleaned.bgr", "sam2.f32"):
+                target = paths.root / name
+                if target.is_file():
+                    target.unlink(missing_ok=True)
             shutil.rmtree(paths.frames_dir, ignore_errors=True)
             shutil.rmtree(paths.inpainted_dir, ignore_errors=True)
             shutil.rmtree(paths.masks_dir, ignore_errors=True)
@@ -529,6 +526,236 @@ class RunCleanup:
             if process.is_dir():
                 shutil.rmtree(process, ignore_errors=True)
         return report
+
+    def _open_frames(self, req: RunCleanupRequest, paths, manifest):
+        decode = getattr(type(self.media), "decode_bgr", None)
+        n = int(manifest.frame_count or 0)
+        h = int(manifest.height or 0)
+        w = int(manifest.width or 0)
+        if decode is None or n < 1 or h < 1 or w < 1:
+            extracted = self.media.extract_frames(req.input_path, paths.frames_dir, paths.ffmpeg_log)
+            cache_n = min(48, max(8, len(extracted)))
+            return LazyFrames(extracted, self._read_image, cache_size=cache_n)
+        from videoclean.adapters.media.raw_store import FrameStore, assert_local_data_dir
+
+        assert_local_data_dir(paths.root)
+        raw_bytes = n * h * w * 3
+        self._assert_disk(paths.root, raw_bytes * 2)
+        store = FrameStore(paths.root / "frames.bgr", n, h, w)
+        written = self.media.decode_bgr(req.input_path, store, paths.ffmpeg_log)
+        if written != n:
+            raise PipelineError(f"decode wrote {written} frames, probe says {n}")
+        return store
+
+    def _assert_disk(self, root: Path, nbytes: int) -> None:
+        usage = shutil.disk_usage(root)
+        if nbytes > usage.free // 2:
+            raise PipelineError(
+                f"need {nbytes} bytes under {root}, free {usage.free}. "
+                "A second full-frame copy is not allocated."
+            )
+
+    def _prepare_runtime(self, cfg: PipelineConfig, paths, manifest) -> None:
+        import time
+
+        from videoclean.application.budget import TorchProbe, apply_thread_caps, resolve_budget
+
+        t0 = time.monotonic()
+        loaded_now = False
+        for owner in (*self.detectors, self.segmenter, self.inpainter):
+            ensure = getattr(owner, "_ensure", None) or getattr(owner, "_try_load", None)
+            if ensure is None:
+                continue
+            try:
+                ensure()
+            except Exception:
+                pass
+            if getattr(owner, "loaded_now", False):
+                loaded_now = True
+        self._load_s = time.monotonic() - t0
+        self._warm = not loaded_now
+        self._budget = resolve_budget(cfg, probe=TorchProbe())
+        self._thread_prev = apply_thread_caps(self._budget.cpu_threads)
+        if cfg.device == "cuda":
+            try:
+                import torch
+
+                if torch.cuda.is_available():
+                    torch.cuda.reset_peak_memory_stats()
+                    self.inpainter.activation_baseline_bytes = int(torch.cuda.memory_allocated())
+            except Exception:  # noqa: BLE001
+                pass
+        self.inpainter.vram_budget_bytes = self._budget.vram_budget_bytes
+        self.inpainter.inpaint_max_side = self._budget.inpaint_max_side
+        if getattr(self.segmenter, "name", "") == "sam2-video":
+            image_size = 1024
+            n = int(manifest.frame_count or 0)
+            tensor_bytes = n * 3 * image_size * image_size * 4
+            self._assert_disk(paths.root, tensor_bytes)
+            self.segmenter.tensor_path = paths.root / "sam2.f32"
+        if self._budget.nvenc:
+            self._encoder = ("h264_nvenc", "p4", 18)
+        else:
+            self._encoder = ("libx264", "veryfast", 18)
+
+    def _paint_holes(self, cfg, images, masks, tracks, paths):
+        from videoclean.adapters.media.raw_store import FrameStore
+        from videoclean.application.hole_policy import mask_box, mask_coverage, plan_holes
+
+        n = len(images)
+        h, w = images[0].shape[:2]
+        if hasattr(images, "frame_bytes"):
+            cleaned = FrameStore(paths.root / "cleaned.bgr", n, h, w)
+        else:
+            cleaned = [None] * n
+        boxes = [mask_box(m) for m in masks]
+        coverages = [mask_coverage(m) for m in masks]
+        motions = [getattr(tr, "motion", "static") for tr in tracks]
+        family = "propainter" if cfg.inpainter == "propainter" else "lama"
+        plans = plan_holes(
+            frame_hw=(h, w),
+            mask_coverage=coverages,
+            mask_boxes=boxes,
+            track_motions=motions,
+            family=family,
+            device=cfg.device,
+            budget_bytes=int(getattr(self._budget, "vram_budget_bytes", 0) or 0),
+            inpaint_max_side=getattr(cfg, "inpaint_max_side", None),
+            neighbor_length=int(cfg.propainter_neighbor_length),
+            subvideo_length=int(cfg.propainter_subvideo_length),
+            batch_cap=self._budget.inpaint_workers_cap,
+        )
+        if not plans:
+            raise PipelineError("hole policy produced no range")
+        stats = []
+        for plan in plans:
+            step = plan.end - plan.start if plan.policy == "propainter-crop" else 16
+            cursor = plan.start
+            while cursor < plan.end:
+                stop = min(plan.end, cursor + step)
+                window_f = [images[i] for i in range(cursor, stop)]
+                window_m = masks[cursor:stop]
+                painted = self.inpainter.inpaint_masked(window_f, window_m, plan)
+                if len(painted) != stop - cursor:
+                    raise PipelineError("inpaint_masked returned the wrong number of frames")
+                for offset, frame in enumerate(painted):
+                    cleaned[cursor + offset] = frame
+                stats.append(getattr(self.inpainter, "last_hole_stats", {}))
+                del window_f, painted
+                cursor = stop
+        primary = plans[0]
+        last = stats[-1] if stats else {}
+        self._hole_report = {
+            "policy": primary.policy,
+            "meanCoverage": primary.mean_coverage,
+            "fastMoving": primary.fast_moving,
+            "almostFull": primary.almost_full,
+            "side": primary.side,
+            "batch": max((int(s.get("batch") or primary.batch) for s in stats), default=primary.batch),
+            "frameCount": primary.end - primary.start,
+            "featherPx": primary.feather_px,
+            "contextPx": primary.context_px,
+            "limitedBy": last.get("limitedBy") or primary.limited_by,
+            "oomRetry": any(bool(s.get("oomRetry")) for s in stats),
+            "lamaDtype": last.get("lamaDtype") or "fp32",
+            "ranges": [
+                {
+                    "start": p.start,
+                    "end": p.end,
+                    "policy": p.policy,
+                    "side": p.side,
+                    "batch": p.batch,
+                    "limitedBy": p.limited_by,
+                }
+                for p in plans
+            ],
+        }
+        return cleaned
+
+    def _repaint_ranges(self, cfg, images, masks, cleaned, ranges, tracks) -> None:
+        from videoclean.application.hole_policy import mask_box, mask_coverage, plan_holes
+
+        h, w = images[0].shape[:2]
+        family = "propainter" if cfg.inpainter == "propainter" else "lama"
+        for start, end in ranges:
+            window_m = masks[start:end]
+            plans = plan_holes(
+                frame_hw=(h, w),
+                mask_coverage=[mask_coverage(m) for m in window_m],
+                mask_boxes=[mask_box(m) for m in window_m],
+                track_motions=[getattr(tr, "motion", "static") for tr in tracks],
+                family=family,
+                device=cfg.device,
+                budget_bytes=int(getattr(self._budget, "vram_budget_bytes", 0) or 0),
+                inpaint_max_side=getattr(cfg, "inpaint_max_side", None),
+                batch_cap=self._budget.inpaint_workers_cap,
+            )
+            for plan in plans:
+                abs_start = start + plan.start
+                abs_end = start + plan.end
+                painted = self.inpainter.inpaint_masked(
+                    [images[i] for i in range(abs_start, abs_end)],
+                    masks[abs_start:abs_end],
+                    plan,
+                )
+                for offset, frame in enumerate(painted):
+                    cleaned[abs_start + offset] = frame
+
+    def _timings(self, paths) -> dict:
+        seconds = {}
+        stage_seconds = getattr(self.progress, "stage_seconds", None)
+        if stage_seconds:
+            seconds = stage_seconds()
+        detect = 0.0
+        track = 0.0
+        for detector in self.detectors:
+            detect += float(getattr(detector, "last_detect_s", 0.0) or 0.0)
+            track += float(getattr(detector, "last_track_s", 0.0) or 0.0)
+        segment = float(getattr(self, "_segment_s", 0.0) or 0.0)
+        return {
+            "load": round(float(getattr(self, "_load_s", 0.0) or 0.0), 4),
+            "decode": seconds.get("normalize"),
+            "parse": seconds.get("parse", 0.0),
+            "detect": round(detect, 4),
+            "track": round(track, 4),
+            "segment": round(segment, 4),
+            "inpaint": seconds.get("inpaint"),
+            "verify": seconds.get("verify"),
+            "encode": seconds.get("encode"),
+            "package": seconds.get("package"),
+        }
+
+    def _budget_report(self) -> dict:
+        budget = getattr(self, "_budget", None)
+        if budget is None:
+            return {}
+        encoder, preset, crf = getattr(self, "_encoder", ("libx264", "veryfast", 18))
+        peak_load = int(getattr(self.inpainter, "activation_baseline_bytes", 0) or 0)
+        peak_inpaint = int(getattr(self.inpainter, "activation_delta_bytes", 0) or 0)
+
+        def mb(n: int) -> int:
+            return int(n / (1024 * 1024))
+
+        return {
+            "deviceRequested": budget.device_requested,
+            "device": budget.device,
+            "vramTotalMb": mb(budget.vram_total_bytes),
+            "vramFreeMb": mb(budget.vram_free_bytes),
+            "vramCeilingMb": None if budget.vram_ceiling_bytes is None else mb(budget.vram_ceiling_bytes),
+            "vramBudgetMb": mb(budget.vram_budget_bytes),
+            "vramPeakLoadMb": mb(peak_load),
+            "vramPeakInpaintMb": mb(peak_inpaint),
+            "vramSource": budget.vram_source,
+            "cpuCount": budget.cpu_count,
+            "cpuThreads": budget.cpu_threads,
+            "inpaintWorkersCap": budget.inpaint_workers_cap,
+            "inpaintMaxSide": budget.inpaint_max_side,
+            "nvenc": budget.nvenc,
+            "encoder": encoder,
+            "encoderPreset": preset,
+            "crf": crf,
+            "warm": bool(getattr(self, "_warm", False)),
+        }
 
     def _intent_for_masks(self, req: RunCleanupRequest, images, frames, cfg: PipelineConfig) -> Intent:
         """Labels for mask anchors: targets_override, else parse prompt, else empty (entry B)."""
@@ -582,12 +809,17 @@ class RunCleanup:
             detector.max_box_area = max(cur, 0.55)
 
     def _segment_masks(self, images, tracks, *, stage: str):
+        import time
+
         self.progress.tick(stage, 0, max(len(images), 1), f"{self.segmenter.name} masks")
-        return self.segmenter.masks(
+        t0 = time.monotonic()
+        masks = self.segmenter.masks(
             images,
             tracks,
             on_progress=lambda cur, tot, detail="": self.progress.tick(stage, cur, tot, detail),
         )
+        self._segment_s = float(getattr(self, "_segment_s", 0.0) or 0.0) + (time.monotonic() - t0)
+        return masks
 
     def _discover(self, images, queries: list[str], *, stage: str) -> tuple[str, list[str], list]:
         attempts: list[str] = []

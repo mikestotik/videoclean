@@ -158,9 +158,9 @@ export function Timeline({
         ref={stripRef}
         role="slider"
         aria-label="Прокрутка по кадрам"
-        aria-valuemin={0}
-        aria-valuemax={Math.max(0, frameCount - 1)}
-        aria-valuenow={currentFrame}
+        aria-valuemin={frameCount > 0 ? 1 : 0}
+        aria-valuemax={Math.max(0, frameCount)}
+        aria-valuenow={frameCount > 0 ? currentFrame + 1 : 0}
         tabIndex={0}
         className="relative h-5 cursor-ew-resize touch-none rounded-md border border-border/70 bg-muted/40 select-none"
         onPointerDown={(e) => startScrub(e, stripRef.current)}
@@ -178,7 +178,7 @@ export function Timeline({
             <button
               key={f}
               type="button"
-              title={`Ключ · кадр ${f}`}
+              title={`Ключ · кадр ${f + 1}`}
               className={cn(
                 "absolute top-1/2 z-10 size-2.5 -translate-x-1/2 -translate-y-1/2 rotate-45 border border-amber-600 bg-amber-400",
                 f === currentFrame && "ring-2 ring-amber-300",
@@ -228,9 +228,9 @@ export function Timeline({
             }}
             onClick={() => onFrameChange(idx)}
           >
-            <img src={thumbs[idx]} alt={`кадр ${idx}`} className="pointer-events-none h-full w-full object-cover" />
+            <img src={thumbs[idx]} alt={`кадр ${idx + 1}`} className="pointer-events-none h-full w-full object-cover" />
             <span className="pointer-events-none absolute right-0.5 bottom-0.5 rounded bg-background/85 px-1 font-mono text-[9px] tabular-nums">
-              {idx}
+              {idx + 1}
             </span>
             {(annotated.has(idx) || masked.has(idx) || keySet.has(idx)) && (
               <span className="pointer-events-none absolute bottom-1 left-1/2 flex -translate-x-1/2 gap-0.5">

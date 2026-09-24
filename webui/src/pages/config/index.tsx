@@ -618,7 +618,7 @@ export function ConfigPage() {
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-6 py-8">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Настройки</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">Система</h1>
             <p className="mt-1 max-w-xl text-sm text-muted-foreground">
               Подключённые модели и провайдеры. В пайплайне доступны только они.
             </p>

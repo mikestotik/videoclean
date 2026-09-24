@@ -363,7 +363,44 @@ def _presets_file(data_dir: Path) -> Path:
     return Path(data_dir) / "presets.json"
 
 
-def list_presets(data_dir: Path) -> list[dict[str, Any]]:
+class UnknownPreset(Exception):
+    """Job named a preset that is not on disk. HTTP 404, detail exactly `unknown preset`."""
+
+
+class PresetConflict(Exception):
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
+
+
+_PRESET_FORBIDDEN = {
+    "prompt",
+    "userPrompt",
+    "stride",
+    "detect",
+    "run",
+    "advanced",
+    "masks",
+    "masks_override",
+    "tracks",
+    "tracks_override",
+    "targets",
+    "targets_override",
+    "webhook_url",
+    "webhook_secret",
+    "source_id",
+    "kind",
+    "indices",
+    "start",
+    "count",
+    "all",
+    "input_path",
+    "output_path",
+    "llm_api_key",
+}
+
+
+def _read_preset_file(data_dir: Path) -> list[dict[str, Any]]:
     f = _presets_file(data_dir)
     if not f.is_file():
         return []
@@ -374,22 +411,221 @@ def list_presets(data_dir: Path) -> list[dict[str, Any]]:
     return data if isinstance(data, list) else []
 
 
-def save_preset(data_dir: Path, name: str, payload: Any) -> dict[str, Any]:
-    name = (name or "").strip()
-    if not name:
-        raise PipelineError("preset name is required")
+def _write_preset_file(data_dir: Path, presets: list[dict[str, Any]]) -> None:
+    _presets_file(data_dir).write_text(json.dumps(presets, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _check_name(name: str) -> str:
+    text = (name or "").strip()
+    if not text or len(text) > 80 or "\n" in text or "\r" in text:
+        raise PipelineError("preset name must be 1…80 characters without a newline")
+    return text
+
+
+def flatten_preset_payload(payload: Any) -> dict[str, Any]:
+    """Old {detect, run, advanced} becomes a flat bag. stride and llm_api_key drop."""
+    from videoclean.application.profiles import PROFILE_KEYS, profile_defaults
+
     if not isinstance(payload, dict):
         raise PipelineError("preset payload must be an object of pipeline fields")
-    presets = list_presets(data_dir)
+    if any(key in payload for key in ("detect", "run", "advanced")):
+        flat: dict[str, Any] = {}
+        flat.update(payload.get("run") or {})
+        flat.update(payload.get("advanced") or {})
+    else:
+        flat = dict(payload)
+    flat.pop("stride", None)
+    flat.pop("llm_api_key", None)
+    flat.pop("detect", None)
+    for key in list(flat):
+        if key in _PRESET_FORBIDDEN:
+            flat.pop(key, None)
+    profile = str(flat.get("profile") or "custom").strip().lower() or "custom"
+    if profile in {"fast", "balanced", "quality"}:
+        device = str(flat.get("device") or "cpu").strip().lower()
+        if device not in {"cpu", "cuda", "mps"}:
+            device = "cpu"
+        recipe = profile_defaults(profile, device)
+        diverged = False
+        for key in list(flat):
+            if key not in PROFILE_KEYS or key not in recipe:
+                continue
+            if str(flat[key]) == str(recipe[key]):
+                flat.pop(key, None)
+            else:
+                diverged = True
+        if diverged:
+            flat["profile"] = "custom"
+    return flat
+
+
+def list_presets(data_dir: Path) -> list[dict[str, Any]]:
+    rows = []
+    for item in _read_preset_file(data_dir):
+        row = dict(item)
+        try:
+            row["payload"] = flatten_preset_payload(item.get("payload") or {})
+        except PipelineError:
+            row["payload"] = {}
+        rows.append(row)
+    return rows
+
+
+def save_preset(data_dir: Path, name: str, payload: Any, *, replace: bool = False) -> tuple[dict[str, Any], int]:
+    text = _check_name(name)
+    flat = flatten_preset_payload(payload)
+    _reject_unknown_preset_keys(flat)
+    presets = _read_preset_file(data_dir)
+    matches = [p for p in presets if str(p.get("name") or "").strip() == text]
+    if matches and not replace:
+        raise PresetConflict("duplicate preset name")
+    if matches and replace:
+        keep = matches[0]
+        rest = [p for p in presets if p.get("id") != keep.get("id") and str(p.get("name") or "").strip() != text]
+        item = {
+            "id": keep.get("id"),
+            "name": text,
+            "payload": flat,
+            "createdAt": keep.get("createdAt") or utc_now().isoformat(),
+            "updatedAt": utc_now().isoformat(),
+        }
+        rest.append(item)
+        _write_preset_file(data_dir, rest)
+        return item, 200
     item = {
         "id": f"p_{uuid.uuid4().hex[:8]}",
-        "name": name,
-        "payload": payload,
+        "name": text,
+        "payload": flat,
         "createdAt": utc_now().isoformat(),
     }
     presets.append(item)
-    _presets_file(data_dir).write_text(json.dumps(presets, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_preset_file(data_dir, presets)
+    return item, 201
+
+
+def update_preset(data_dir: Path, preset_id: str, *, name: str | None = None, payload: Any = None, replace: bool = False) -> dict[str, Any]:
+    presets = _read_preset_file(data_dir)
+    current = next((p for p in presets if p.get("id") == preset_id), None)
+    if current is None:
+        raise UnknownPreset()
+    text = _check_name(name) if name is not None else str(current.get("name") or "")
+    others = [p for p in presets if p.get("id") != preset_id and str(p.get("name") or "").strip() == text]
+    if others and not replace:
+        raise PresetConflict("duplicate preset name")
+    flat = flatten_preset_payload(current.get("payload") or {}) if payload is None else flatten_preset_payload(payload)
+    if payload is not None:
+        _reject_unknown_preset_keys(flat)
+    kept = [p for p in presets if p.get("id") != preset_id and (not replace or str(p.get("name") or "").strip() != text)]
+    item = {
+        "id": preset_id,
+        "name": text,
+        "payload": flat,
+        "createdAt": current.get("createdAt") or utc_now().isoformat(),
+        "updatedAt": utc_now().isoformat(),
+    }
+    kept.append(item)
+    _write_preset_file(data_dir, kept)
     return item
+
+
+def find_preset(data_dir: Path, token: str) -> dict[str, Any]:
+    text = (token or "").strip()
+    presets = list_presets(data_dir)
+    by_id = [p for p in presets if p.get("id") == text]
+    if by_id:
+        return by_id[0]
+    by_name = [p for p in presets if str(p.get("name") or "").strip() == text]
+    if len(by_name) > 1:
+        raise PresetConflict("ambiguous preset name")
+    if len(by_name) == 1:
+        return by_name[0]
+    raise UnknownPreset()
+
+
+def _reject_unknown_preset_keys(flat: dict[str, Any]) -> None:
+    from dataclasses import fields as dc_fields
+
+    from videoclean.application.config import PipelineConfig
+
+    allowed = {item.name for item in dc_fields(PipelineConfig)}
+    allowed.update(
+        {
+            "detector",
+            "mask_policy",
+            "keep_workdir",
+            "formats",
+            "webm_crf",
+            "segment_seconds",
+            "profile",
+            "max_vram_mb",
+            "cpu_threads",
+            "inpaint_max_side",
+            "verify_redetect",
+            "llm_place",
+            "llm_model",
+            "llm_base_url",
+        }
+    )
+    for key in flat:
+        if key not in allowed:
+            raise PipelineError(f"unknown preset key {key}")
+
+
+def server_defaults() -> dict[str, Any]:
+    from dataclasses import fields as dc_fields
+
+    from videoclean.application.config import PipelineConfig
+
+    cfg = PipelineConfig()
+    out = {item.name: getattr(cfg, item.name) for item in dc_fields(PipelineConfig)}
+    out["device"] = "auto"
+    out["profile"] = "custom"
+    out["detector"] = ",".join(cfg.detectors)
+    return out
+
+
+def assemble_run_config(fields: Mapping[str, str], data_dir: Path) -> dict[str, Any]:
+    """Merge defaults, preset, recipe, and only the keys the form actually sent."""
+    from videoclean.application.budget import pick_device
+    from videoclean.application.profiles import explicit_from_form, merge_run_config
+
+    sent = {key: value for key, value in fields.items() if value != ""}
+    explicit = explicit_from_form(sent)
+    preset_token = explicit.pop("preset", None)
+    preset_payload = None
+    preset_id = None
+    if preset_token:
+        row = find_preset(data_dir, str(preset_token))
+        preset_payload = row.get("payload") or {}
+        preset_id = row.get("id")
+    job_only = {
+        "kind",
+        "source_id",
+        "targets",
+        "tracks",
+        "masks",
+        "mode",
+        "start",
+        "count",
+        "stride",
+        "indices",
+        "all",
+        "fmt",
+        "webhook_url",
+        "webhook_secret",
+    }
+    for key in job_only:
+        explicit.pop(key, None)
+    merged = merge_run_config(
+        server_defaults(),
+        preset_payload,
+        explicit.get("profile"),
+        explicit,
+        resolve_device=pick_device,
+    )
+    if preset_id:
+        merged["preset_id"] = preset_id
+    return merged
 
 
 def delete_preset(data_dir: Path, preset_id: str) -> bool:
@@ -827,6 +1063,7 @@ def job_dict(state: AppState, row) -> dict[str, Any]:
         "error": (row["error"] if "error" in row.keys() else None) or "",
         "progress": progress,
         "stage": progress.get("stage") or "",
+        "stageTitle": progress.get("stageTitle") or "",
         "fraction": _frac(progress.get("fraction")),
         "detail": progress.get("detail") or "",
         "eta": eta_label(row),

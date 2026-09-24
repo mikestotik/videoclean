@@ -68,6 +68,32 @@ class _SilentProgress:
     def finish(self, *args, **kwargs) -> None: ...
 
 
+def _command_explicit() -> dict | None:
+    """Flags the user actually typed. Defaults stay out of the explicit layer."""
+    import click
+    from click.core import ParameterSource
+
+    ctx = click.get_current_context(silent=True)
+    if ctx is None:
+        return None
+    alias = {
+        "mask_dilate": "mask_dilate_px",
+        "format": "formats",
+        "llm": "llm_place",
+        "download_models": "allow_download",
+    }
+    out: dict = {}
+    for name, value in ctx.params.items():
+        try:
+            source = ctx.get_parameter_source(name)
+        except Exception:
+            continue
+        if source != ParameterSource.COMMANDLINE:
+            continue
+        out[alias.get(name, name)] = value
+    return out
+
+
 def _flags(
     device: str,
     detector: str,
@@ -94,7 +120,7 @@ def _flags(
     vision_batch: int = 2,
     detector_keyframes: int | None = None,
     detector_nms_iou: float = 0.3,
-    detector_max_box_area: float = 0.25,
+    detector_max_box_area: float = 0.45,
     tracker_min_score: float = 0.55,
     tracker_max_template_area: float = 0.12,
     propainter_mask_dilation: int = 4,
@@ -110,6 +136,7 @@ def _flags(
 ) -> PipelineConfig:
     try:
         return config_from_flags(
+            explicit=_command_explicit(),
             device=device,
             detector=detector,
             detector_model=detector_model,
@@ -171,9 +198,9 @@ def _prompt_frame_max_opt() -> int:
 
 def _device_opt() -> str:
     return typer.Option(
-        "cpu",
+        "auto",
         "--device",
-        help="cpu | cuda | mps. Where Grounding DINO / SAM2 / LaMa / ProPainter run.",
+        help="auto | cpu | cuda | mps. auto uses cuda, else mps, else cpu.",
     )
 
 
@@ -307,6 +334,20 @@ def doctor(
         verify=verify,
         prompt_frame_stride=prompt_frame_stride,
         prompt_frame_max=prompt_frame_max,
+    )
+    from videoclean.adapters.media.raw_store import assert_local_data_dir
+    from videoclean.application.budget import TorchProbe, resolve_budget
+
+    try:
+        assert_local_data_dir(data_dir())
+    except PipelineError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+    budget = resolve_budget(cfg, probe=TorchProbe())
+    console.print(
+        f"[bold]Budget[/bold]  device={budget.device} requested={budget.device_requested} "
+        f"vram_budget={budget.vram_budget_bytes} ceiling={budget.vram_ceiling_bytes} "
+        f"cpu_threads={budget.cpu_threads}/{budget.cpu_count} nvenc={budget.nvenc}"
     )
     for title, lines in doctor_sections(cfg):
         console.print(f"[bold]{title}[/bold]")
@@ -447,7 +488,7 @@ def preview(
     vision_batch: int = typer.Option(2, "--vision-batch"),
     detector_keyframes: int | None = typer.Option(None, "--detector-keyframes", min=1),
     detector_nms_iou: float = typer.Option(0.3, "--detector-nms-iou"),
-    detector_max_box_area: float = typer.Option(0.25, "--detector-max-box-area"),
+    detector_max_box_area: float = typer.Option(0.45, "--detector-max-box-area"),
     tracker_min_score: float = typer.Option(0.55, "--tracker-min-score"),
     tracker_max_template_area: float = typer.Option(0.12, "--tracker-max-template-area"),
     prompt_templates: str | None = typer.Option(None, "--prompt-templates", exists=True, file_okay=False),
@@ -593,7 +634,7 @@ def run(
         max=0.99,
     ),
     detector_max_box_area: float = typer.Option(
-        0.25,
+        0.45,
         "--detector-max-box-area",
         help="Drop detections covering more than this fraction of the frame (0-1].",
         min=0.01,

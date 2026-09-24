@@ -3,7 +3,7 @@ import { timeToFrameIndex } from "@/entities/frame"
 import { videoUrl, type Source } from "@/entities/source"
 import type { Tool } from "@/entities/annotation"
 import type { useAnnotate } from "@/features/annotate"
-import { Brush, Eraser, Minus, Plus, Trash, Undo2 } from "lucide-react"
+import { Brush, Eraser, Minus, Pause, Play, Plus, Trash, Undo2 } from "lucide-react"
 import { Button } from "@/shared/ui/button"
 import { Slider } from "@/shared/ui/slider"
 import { ToggleGroup, ToggleGroupItem } from "@/shared/ui/toggle-group"
@@ -61,6 +61,7 @@ export function EditorViewer({
   const videoRef = useRef<HTMLVideoElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
   const playingRef = useRef(false)
+  const [playing, setPlaying] = useState(false)
   const scrubRef = useRef<{ x: number; frame: number } | null>(null)
   const panRef = useRef<{ x: number; y: number; sl: number; st: number } | null>(null)
   const { setActiveFrame, setTool, setSize, undo, clearFrame, isDirty } = annotate
@@ -70,6 +71,7 @@ export function EditorViewer({
   if (prevSourceId !== source.id) {
     setPrevSourceId(source.id)
     setZoom(1)
+    setPlaying(false)
   }
 
   const clamp = useCallback(
@@ -234,9 +236,11 @@ export function EditorViewer({
               }}
               onPlay={() => {
                 playingRef.current = true
+                setPlaying(true)
               }}
               onPause={() => {
                 playingRef.current = false
+                setPlaying(false)
               }}
               onTimeUpdate={() => {
                 const v = videoRef.current
@@ -312,6 +316,9 @@ export function EditorViewer({
 
       {mode === "annotate" && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-card/60 px-2.5 py-2 text-xs">
+          <Button size="icon-sm" variant="outline" aria-label={playing ? "Пауза" : "Пуск"} onClick={togglePlay}>
+            {playing ? <Pause /> : <Play />}
+          </Button>
           <ToggleGroup
             variant="outline"
             size="sm"
@@ -347,14 +354,19 @@ export function EditorViewer({
           <Button variant="outline" size="icon-sm" aria-label="Очистить кадр" onClick={clearFrame}>
             <Trash />
           </Button>
-          <span className="ml-auto text-muted-foreground">
-            {isDirty ? "Сохранение…" : "Маска сохранена"}
-          </span>
+          {(isDirty || (annotate.strokesByFrame[currentFrame]?.length ?? 0) > 0) && (
+            <span className="ml-auto text-muted-foreground">
+              {isDirty ? "Сохранение…" : "Маска сохранена"}
+            </span>
+          )}
         </div>
       )}
 
       {mode === "detect" && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-card/60 px-2.5 py-2 text-xs">
+          <Button size="icon-sm" variant="outline" aria-label={playing ? "Пауза" : "Пуск"} onClick={togglePlay}>
+            {playing ? <Pause /> : <Play />}
+          </Button>
           {onMaskOpacityChange && (
             <>
               <span className="text-muted-foreground">Прозрачность маски</span>
@@ -370,7 +382,7 @@ export function EditorViewer({
               />
             </>
           )}
-          <span className="ml-auto text-muted-foreground">Кадр {currentFrame}</span>
+          <span className="ml-auto text-muted-foreground">Кадр {currentFrame + 1}</span>
         </div>
       )}
     </div>

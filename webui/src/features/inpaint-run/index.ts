@@ -12,13 +12,25 @@ export type InpaintPayload = {
   masks?: number[]
 }
 
-export type InpaintProgress = { fraction: number; detail: string; eta: string }
+export type InpaintProgress = {
+  fraction: number
+  detail: string
+  eta: string
+  stage: string
+  stageTitle: string
+}
 
 export function useInpaintRun(source: Source | null) {
   const [running, setRunning] = useState(false)
   const [jobId, setJobId] = useState<string | null>(null)
   const [lastJobId, setLastJobId] = useState<string | null>(null)
-  const [progress, setProgress] = useState<InpaintProgress>({ fraction: 0, detail: "", eta: "" })
+  const [progress, setProgress] = useState<InpaintProgress>({
+    fraction: 0,
+    detail: "",
+    eta: "",
+    stage: "",
+    stageTitle: "",
+  })
   const [error, setError] = useState("")
   const runIdRef = useRef(0)
 
@@ -36,7 +48,7 @@ export function useInpaintRun(source: Source | null) {
       const runId = ++runIdRef.current
       setRunning(true)
       setError("")
-      setProgress({ fraction: 0, detail: "", eta: "" })
+      setProgress({ fraction: 0, detail: "", eta: "", stage: "", stageTitle: "" })
       try {
         const job = await submitJob({
           kind: "run",
@@ -53,7 +65,13 @@ export function useInpaintRun(source: Source | null) {
           job.id,
           (j) => {
             if (runId === runIdRef.current) {
-              setProgress({ fraction: j.fraction, detail: j.detail, eta: j.eta })
+              setProgress({
+                fraction: j.fraction,
+                detail: j.detail,
+                eta: j.eta,
+                stage: j.stage,
+                stageTitle: j.stageTitle ?? "",
+              })
             }
           },
           { seed: job },
@@ -77,7 +95,7 @@ export function useInpaintRun(source: Source | null) {
   const loadFromJob = useCallback((jobId: string) => {
     setLastJobId(jobId)
     setError("")
-    setProgress({ fraction: 1, detail: "", eta: "" })
+    setProgress({ fraction: 1, detail: "", eta: "", stage: "", stageTitle: "" })
   }, [])
 
   return { run, running, jobId, lastJobId, progress, error, loadFromJob }

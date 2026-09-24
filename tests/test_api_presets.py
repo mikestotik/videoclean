@@ -36,6 +36,20 @@ def test_preset_crud(client):
     assert client.delete(f"/api/presets/{item['id']}").status_code == 404
 
 
+def test_unknown_preset_on_job_is_404(client):
+    client, _state, _tmp = client
+    res = client.post("/api/jobs", data={"preset": "p_missing", "prompt": "logo"})
+    assert res.status_code == 404
+    assert res.json()["detail"] == "unknown preset"
+
+
+def test_duplicate_preset_name_is_409(client):
+    client, _state, _tmp = client
+    assert client.post("/api/presets", json={"name": "Логотип", "payload": {"profile": "balanced"}}).status_code == 201
+    again = client.post("/api/presets", json={"name": "Логотип", "payload": {"profile": "fast"}})
+    assert again.status_code == 409
+
+
 def test_preset_validation(client):
     client, state, tmp_path = client
     assert client.post("/api/presets", json={"name": " ", "payload": {}}).status_code == 400

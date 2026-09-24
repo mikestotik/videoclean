@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 from videoclean.application.errors import JobCancelled
 from videoclean.progress import STAGES
 from videoclean.store import JobIndex, utc_now
@@ -21,6 +23,8 @@ class ProgressBridge:
             }
             for key, title, weight in STAGES
         }
+        self._clock: dict[str, float] = {}
+        self._seconds: dict[str, float] = {}
 
     def start(self, key: str, total: int = 0, detail: str = "") -> None:
         self._raise_if_cancelled()
@@ -29,6 +33,7 @@ class ProgressBridge:
         stage["total"] = total
         stage["current"] = 0
         stage["detail"] = detail
+        self._clock[key] = time.monotonic()
         self._flush(key)
 
     def tick(self, key: str, current: int, total: int | None = None, detail: str = "") -> None:
@@ -48,7 +53,17 @@ class ProgressBridge:
         stage["detail"] = detail
         if stage["total"]:
             stage["current"] = stage["total"]
+        started = self._clock.pop(key, None)
+        if started is not None:
+            self._seconds[key] = self._seconds.get(key, 0.0) + (time.monotonic() - started)
         self._flush(key)
+
+    def stage_seconds(self) -> dict[str, float]:
+        return dict(self._seconds)
+
+    def stage_title(self, key: str) -> str:
+        stage = self._stages.get(key) or {}
+        return str(stage.get("title") or key)
 
     def fraction_done(self) -> float:
         weighted = [stage for stage in self._stages.values() if stage["weight"]]
@@ -87,6 +102,7 @@ class ProgressBridge:
             self.job_id,
             {
                 "stage": key,
+                "stageTitle": stage.get("title") or key,
                 "fraction": self.fraction_done(),
                 "detail": stage.get("detail") or "",
                 "heartbeat_at": utc_now().isoformat(),

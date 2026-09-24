@@ -159,8 +159,17 @@ class PipelineConfig:
     mask_dilate_px: int = 3
     min_mask_coverage: float = 0.0004
     verify_max_coverage: float = 0.12
-    # Built-in profile name (fast|balanced|quality|custom); informational after merge.
+    # Built-in picture recipe (fast|balanced|quality|custom); informational after merge.
     profile: str = "custom"
+    # What the caller asked for before auto resolved to cpu|cuda|mps.
+    device_requested: str = "auto"
+    # Empty ceiling means the whole machine. 0 is a validation error, not auto.
+    max_vram_mb: int | None = None
+    cpu_threads: int | None = None
+    inpaint_max_side: int | None = None
+    # Second GroundingDINO+SAM pass. Off unless the caller set it. Not a recipe key.
+    verify_redetect: bool = False
+    preset_id: str | None = None
     # Verify 2.0: residual+detect re-inpaint passes (0 disables even if verify=True leftover path).
     verify_max_passes: int = 1
     # Framewise inpaint threads; 0 = auto (CPU→cores, GPU→1). Video-aware always 1.
@@ -233,6 +242,16 @@ class PipelineConfig:
             raise PipelineError(f"--inpaint-workers must be >= 0, got {self.inpaint_workers}")
         if self.inpaint_chunk_overlap < 0:
             raise PipelineError(f"--inpaint-chunk-overlap must be >= 0, got {self.inpaint_chunk_overlap}")
+        if self.max_vram_mb is not None and not 256 <= int(self.max_vram_mb) <= 262144:
+            raise PipelineError(f"--max-vram-mb must be 256…262144, got {self.max_vram_mb}")
+        if self.cpu_threads is not None and not 1 <= int(self.cpu_threads) <= 256:
+            raise PipelineError(f"--cpu-threads must be 1…256, got {self.cpu_threads}")
+        if self.inpaint_max_side is not None:
+            side = int(self.inpaint_max_side)
+            if side < 64 or side > 8192 or side % 8 != 0:
+                raise PipelineError(f"--inpaint-max-side must be 64…8192 and a multiple of 8, got {side}")
+        if self.inpaint_workers > 32:
+            raise PipelineError(f"--inpaint-workers must be 0…32, got {self.inpaint_workers}")
         prof = (self.profile or "custom").strip().lower() or "custom"
         if prof not in {"custom", "fast", "balanced", "quality"}:
             raise PipelineError(f"--profile must be custom|fast|balanced|quality, got {self.profile!r}")

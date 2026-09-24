@@ -1,23 +1,22 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Film, Upload } from "lucide-react"
 import { EditorViewer, type EditorMode } from "@widgets/editor-viewer"
 import { Library } from "@widgets/library"
 import {
   DEFAULT_PARAMS,
   StageRail,
-  enabledTargets,
-  toRunParams,
+  cloneParams,
   type EditorParams,
   type StageTarget,
 } from "@widgets/stage-rail"
 import { Timeline } from "@widgets/timeline"
 import { useAnnotate } from "@features/annotate"
-import { tracksAreFullLength, useDetectRun } from "@features/detect-run"
+import { useDetectRun } from "@features/detect-run"
 import { useInpaintRun } from "@features/inpaint-run"
-import { useInterpret, type InterpretTarget } from "@features/interpret"
+import { useInterpret } from "@features/interpret"
 import { fetchJobReport, type Job } from "@/entities/job"
 import { previewArtifactUrl } from "@/entities/preview"
-import type { TargetKind, TargetRow } from "@/entities/targets"
+
 import { getSource, videoUrl, type Source } from "@/entities/source"
 import { useEvents } from "@/shared/events"
 import { formatTimecode } from "@/shared/lib/format"
@@ -25,17 +24,7 @@ import { Timecode } from "@/shared/ui/timecode"
 import { ToggleGroup, ToggleGroupItem } from "@/shared/ui/toggle-group"
 import { cn } from "@/shared/lib/utils"
 
-const MODE_LABEL = { annotate: "Разметка", detect: "Маски", result: "Результат" } as const
-
-function toTargetRows(targets: InterpretTarget[]): TargetRow[] {
-  return targets
-    .filter((t) => t.query.trim())
-    .map((t) => ({
-      kind: t.kind === "watermark" || t.kind === "text_overlay" ? (t.kind as TargetKind) : "object",
-      query: t.query,
-      where: t.where,
-    }))
-}
+const MODE_LABEL = { annotate: "Разметка", detect: "Рамки", result: "Результат" } as const
 
 function stageTargetsFromReport(value: unknown): StageTarget[] {
   if (!Array.isArray(value)) return []
@@ -58,14 +47,14 @@ function stageTargetsFromReport(value: unknown): StageTarget[] {
 
 function applyReportToParams(
   prev: EditorParams,
-  report: { prompt?: unknown; targets?: unknown },
+  report: { userPrompt?: unknown; targets?: unknown },
 ): EditorParams {
   const targets = stageTargetsFromReport(report.targets)
-  const prompt = String(report.prompt ?? "").trim()
+  const userPrompt = typeof report.userPrompt === "string" ? report.userPrompt.trim() : ""
   return {
     ...prev,
-    prompt: prompt || prev.prompt,
-    targets: targets.length > 0 ? targets : prev.targets,
+    ...(userPrompt ? { prompt: userPrompt } : {}),
+    ...(targets.length > 0 ? { targets } : {}),
   }
 }
 
@@ -80,10 +69,10 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
   const [viewerMode, setViewerMode] = useState<EditorMode>("annotate")
   const [params, setParams] = useState<EditorParams>(DEFAULT_PARAMS)
   const [maskOpacity, setMaskOpacity] = useState(0.6)
-  const [runAllBusy, setRunAllBusy] = useState(false)
-  const [runAllError, setRunAllError] = useState("")
   const [resultJob, setResultJob] = useState<Job | null>(null)
   const [restoreError, setRestoreError] = useState("")
+  const [failedError, setFailedError] = useState("")
+  const [holdFailed, setHoldFailed] = useState(false)
   const { jobs: liveJobs } = useEvents()
 
   const sourceId = source?.id ?? null
@@ -142,17 +131,41 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
     setPrevSourceId(sourceId)
     setCurrentFrame(0)
     setViewerMode("annotate")
-    setParams(DEFAULT_PARAMS)
+    setParams(cloneParams(DEFAULT_PARAMS))
     setMaskOpacity(0.6)
     setResultJob(null)
     setRestoreError("")
-    setRunAllError("")
+    if (holdFailed) setHoldFailed(false)
+    else setFailedError("")
   }
+
+  const allowSourceChange = useCallback(() => {
+    const dirty = params.prompt.trim().length > 0 || detect.tracksDirty
+    if (!dirty) return true
+    return window.confirm("Сменить видео? Промпт и несохранённые рамки будут сброшены.")
+  }, [detect.tracksDirty, params.prompt])
 
   const selectJob = useCallback(
     async (job: Job) => {
+      if (job.state === "FAILED") {
+        setRestoreError("")
+        if (job.source_id && job.source_id !== source?.id) {
+          if (!allowSourceChange()) return
+          try {
+            const row = await getSource(job.source_id)
+            setHoldFailed(true)
+            setSource(row)
+          } catch (e) {
+            setRestoreError(e instanceof Error ? e.message : String(e))
+            return
+          }
+        }
+        setFailedError(job.error || "Ошибка")
+        return
+      }
       if (job.state !== "COMPLETED") return
       setRestoreError("")
+      setFailedError("")
       try {
         if (job.kind === "prompt") {
           const loaded = await interpret.loadFromJob(job.id)
@@ -160,13 +173,15 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
             setRestoreError("Не удалось загрузить результат промпта")
             return
           }
-          setParams((prev) => applyReportToParams(prev, loaded))
+          setParams((prev) =>
+            applyReportToParams(prev, { userPrompt: loaded.userPrompt, targets: loaded.targets }),
+          )
           setViewerMode("annotate")
           return
         }
         if (job.kind === "preview") {
           const report = (await fetchJobReport(job.id).catch(() => null)) as
-            | { prompt?: unknown; targets?: unknown }
+            | { userPrompt?: unknown; targets?: unknown }
             | null
           if (report) setParams((prev) => applyReportToParams(prev, report))
           await detect.loadFromJob(job.id)
@@ -175,9 +190,15 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
         }
         if (job.kind === "run") {
           const report = (await fetchJobReport(job.id).catch(() => null)) as
-            | { prompt?: unknown; targets?: unknown }
+            | { userPrompt?: unknown; targets?: unknown }
             | null
-          if (report) setParams((prev) => applyReportToParams(prev, report))
+          if (report) {
+            setParams((prev) => {
+              const next = applyReportToParams(prev, report)
+              if (prev.targets.some((t) => t.source === "manual")) return { ...next, targets: prev.targets }
+              return next
+            })
+          }
           inpaint.loadFromJob(job.id)
           setResultJob(job)
           setViewerMode("result")
@@ -186,7 +207,7 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
         setRestoreError(e instanceof Error ? e.message : String(e))
       }
     },
-    [detect, inpaint, interpret],
+    [allowSourceChange, detect, inpaint, interpret, setSource, source?.id],
   )
 
   const [prevDetectJob, setPrevDetectJob] = useState<string | null>(null)
@@ -265,80 +286,21 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
     setViewerMode("result")
   }
 
-  const runAll = async () => {
-    if (!source || runAllBusy) return
-    const prompt = params.prompt.trim()
-    setRunAllError("")
-    setRunAllBusy(true)
-    try {
-      let targets = enabledTargets(params)
-      let runPrompt = prompt
-
-      // Entry B/C: drawn masks are anchors; optional prompt/targets label them.
-      if (masks.length > 0) {
-        if (targets.length === 0 && prompt) {
-          const interp = await interpret.run(prompt, params.run.llm_model)
-          targets = interp ? toTargetRows(interp.targets) : []
-          runPrompt = interp?.prompt || prompt
-          if (targets.length > 0) {
-            setParams((prev) => ({
-              ...prev,
-              prompt: runPrompt,
-              targets: targets.map((t) => ({ ...t, enabled: true, source: "auto" as const })),
-            }))
-          }
-        }
-        await inpaint.run(
-          {
-            mode: "masks",
-            masks,
-            targets: targets.length > 0 ? targets : undefined,
-            prompt: runPrompt,
-          },
-          toRunParams(params),
-        )
-        return
-      }
-
-      if (targets.length === 0 && prompt) {
-        const interp = await interpret.run(prompt, params.run.llm_model)
-        targets = interp ? toTargetRows(interp.targets) : []
-        runPrompt = interp?.prompt || prompt
-        if (targets.length > 0) {
-          setParams((prev) => ({
-            ...prev,
-            prompt: runPrompt,
-            targets: targets.map((t) => ({ ...t, enabled: true, source: "auto" as const })),
-          }))
-        }
-      }
-      if (targets.length === 0) {
-        setRunAllError(
-          prompt
-            ? interpret.error || "Таргеты не найдены — уточните промпт"
-            : "Нужен промпт, цели или обводка",
-        )
-        return
-      }
-
-      const found = await detect.run({
-        mode: "detect",
-        prompt: runPrompt,
-        targets,
-        all: true,
-        params: toRunParams(params),
+  const reportedRun = useRef<string | null>(null)
+  useEffect(() => {
+    if (!liveResult || liveResult.state !== "COMPLETED" || liveResult.kind !== "run") return
+    if (reportedRun.current === liveResult.id) return
+    reportedRun.current = liveResult.id
+    void fetchJobReport(liveResult.id)
+      .then((report) => {
+        setParams((prev) => {
+          const next = applyReportToParams(prev, report as { userPrompt?: unknown; targets?: unknown })
+          if (prev.targets.some((t) => t.source === "manual")) return { ...next, targets: prev.targets }
+          return next
+        })
       })
-      const frameCount = source.probe.frame_count
-      if (found && tracksAreFullLength(found, frameCount)) {
-        setViewerMode("detect")
-        await inpaint.run({ mode: "tracks", tracks: found }, toRunParams(params))
-      } else {
-        setRunAllError("Маски не покрыли весь ролик — проверьте цели и запустите Маски ещё раз")
-      }
-    } finally {
-      setRunAllBusy(false)
-    }
-  }
+      .catch(() => {})
+  }, [liveResult])
 
   const openConfig = () => {
     window.dispatchEvent(new CustomEvent("videoclean:open-config"))
@@ -350,7 +312,11 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
         <Library
           selectedId={sourceId}
           onSelect={setSource}
-          onClearSelection={() => setSource(null)}
+          beforeSourceChange={allowSourceChange}
+          onClearSelection={() => {
+            if (!allowSourceChange()) return
+            setSource(null)
+          }}
           activeJobs={activeJobs}
           onSelectJob={(job) => void selectJob(job)}
           maskTracks={detect.tracks}
@@ -482,14 +448,12 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
           frameCount={probe?.frame_count ?? 0}
           params={params}
           onParamsChange={setParams}
-          interpret={interpret}
           detect={detect}
           inpaint={inpaint}
           resultJob={resultJob}
           masks={masks}
-          onRunAll={() => void runAll()}
-          runAllBusy={runAllBusy}
-          runAllError={runAllError}
+          failedError={failedError}
+          onClearFailed={() => setFailedError("")}
           onOpenConfig={openConfig}
           onOpenResult={() => setViewerMode("result")}
           onResultJobChange={setResultJob}

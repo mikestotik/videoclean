@@ -45,14 +45,9 @@ export function TargetsEditor({ targets, onChange, disabled }: Props) {
 
   if (targets.length === 0) {
     return (
-      <div className="rounded-md border border-dashed border-border/80 px-3 py-4 text-center">
-        <p className="text-xs text-muted-foreground">
-          Целей пока нет. Добавьте вручную или нажмите «Интерпретировать» выше.
-        </p>
-        <Button size="sm" variant="outline" className="mt-2" disabled={disabled} onClick={add}>
-          Добавить цель
-        </Button>
-      </div>
+      <Button size="sm" variant="outline" className="self-start" disabled={disabled} onClick={add}>
+        Добавить цель
+      </Button>
     )
   }
 
@@ -119,7 +114,7 @@ export function TargetsEditor({ targets, onChange, disabled }: Props) {
           </div>
           <Textarea
             value={t.query}
-            onChange={(e) => update(i, { query: e.target.value })}
+            onChange={(e) => update(i, { query: e.target.value, source: "manual" })}
             placeholder="Что искать (англ.), напр. red channel logo"
             disabled={disabled}
             rows={2}

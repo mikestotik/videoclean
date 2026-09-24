@@ -16,6 +16,7 @@ dependencies = [
   "torchvision==0.23.0",
   "transformers==4.56.2",
   "typer>=0.12,<1",
+  "psutil>=6,<8",
 ]
 
 [project.scripts]

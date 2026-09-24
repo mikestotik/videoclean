@@ -151,7 +151,11 @@ class Sam2Segmenter:
         inputs = self._processor(images=rgb, input_boxes=input_boxes, return_tensors="pt")
         inputs = {k: v.to(self.device) if hasattr(v, "to") else v for k, v in inputs.items()}
         with torch.no_grad():
-            outputs = self._model(**inputs, multimask_output=False)
+            if self.device == "cuda":
+                with torch.autocast("cuda", dtype=torch.bfloat16):
+                    outputs = self._model(**inputs, multimask_output=False)
+            else:
+                outputs = self._model(**inputs, multimask_output=False)
         original = inputs.get("original_sizes")
         masks = self._processor.post_process_masks(outputs.pred_masks.cpu(), original)[0]
         return _or_masks(masks, bgr.shape[:2])

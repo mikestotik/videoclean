@@ -87,7 +87,10 @@ class GroundingDinoDetector:
         phrases = _phrases(queries)
         if not phrases:
             return []
+        import time
+
         key_idx = sample_indices(len(frames), min(self._n_keyframes(len(frames)), len(frames)))
+        detect_t0 = time.monotonic()
         n_keys = len(key_idx)
         total_units = n_keys * len(phrases)
         unit = 0
@@ -108,6 +111,8 @@ class GroundingDinoDetector:
                     frame_hits.append(hit)
             for hit in nms(frame_hits, self.nms_iou):
                 per_frame[i].append((hit.label or "object", hit.score, hit.xyxy))
+        self.last_detect_s = time.monotonic() - detect_t0
+        track_t0 = time.monotonic()
         if on_progress:
             on_progress(n_keys, n_keys, f"{self.name} track")
         tracks: list[Track] = []
@@ -157,6 +162,7 @@ class GroundingDinoDetector:
                 tr.motion = infer_motion(tr, frames[0].shape[1], frames[0].shape[0])
                 tracks.append(tr)
                 tid += 1
+        self.last_track_s = time.monotonic() - track_t0
         return tracks
 
     def _try_load(self) -> tuple[bool, str]:
@@ -210,7 +216,15 @@ class GroundingDinoDetector:
         inputs = self._processor(images=rgb, text=cap, return_tensors="pt")
         inputs = {k: v.to(self.device) if hasattr(v, "to") else v for k, v in inputs.items()}
         with torch.no_grad():
-            outputs = self._model(**inputs)
+            if self.device == "cuda":
+                with torch.autocast("cuda", dtype=torch.bfloat16):
+                    outputs = self._model(**inputs)
+            else:
+                outputs = self._model(**inputs)
+        if hasattr(outputs, "logits"):
+            outputs.logits = outputs.logits.float()
+        if hasattr(outputs, "pred_boxes"):
+            outputs.pred_boxes = outputs.pred_boxes.float()
         h, w = bgr.shape[:2]
         target_sizes = torch.tensor([(h, w)], device=self.device)
         try:

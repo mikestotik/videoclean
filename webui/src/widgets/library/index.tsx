@@ -13,9 +13,17 @@ import {
   Trash2,
   X,
 } from "lucide-react"
-import { cancelJob, deleteJob, retryJob, type Job, type JobKind, type JobState } from "@/entities/job"
+import {
+  cancelJob,
+  deleteJob,
+  downloadJobOutput,
+  outputDownloadName,
+  retryJob,
+  type Job,
+  type JobKind,
+  type JobState,
+} from "@/entities/job"
 import { deleteSource, type Source } from "@/entities/source"
-import { apiUrl } from "@/shared/api/client"
 import { useEvents } from "@/shared/events"
 import { formatTimecode } from "@/shared/lib/format"
 import { Button } from "@/shared/ui/button"
@@ -27,7 +35,7 @@ import type { DetectTrack } from "@features/detect-run"
 
 const KIND_META: Record<JobKind, { label: string; Icon: typeof Sparkles }> = {
   prompt: { label: "Промпт", Icon: Sparkles },
-  preview: { label: "Маски", Icon: ScanSearch },
+  preview: { label: "Рамки", Icon: ScanSearch },
   run: { label: "Результат", Icon: Eraser },
   package: { label: "Пакет", Icon: Package },
 }
@@ -61,18 +69,23 @@ function JobRow({
   active,
   onAct,
   onSelect,
+  onDownload,
 }: {
   job: Job
   active: boolean
   onAct: ActFn
   onSelect?: (job: Job) => void
+  onDownload?: (job: Job) => void
 }) {
-  const selectable = job.state === "COMPLETED" && Boolean(onSelect)
+  const selectable = (job.state === "COMPLETED" || job.state === "FAILED") && Boolean(onSelect)
   const time = new Date(job.created_at).toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
   })
-  const summary = job.prompt.trim() || KIND_META[job.kind].label
+  const summary =
+    job.state === "FAILED" && job.error.trim()
+      ? job.error.trim()
+      : job.prompt.trim() || KIND_META[job.kind].label
 
   return (
     <div
@@ -120,7 +133,9 @@ function JobRow({
           </span>
           <span className="shrink-0 tabular-nums text-muted-foreground">{time}</span>
         </div>
-        <p className="mt-0.5 h-4 truncate text-[11px] leading-4 text-muted-foreground">{summary}</p>
+        <p className="mt-0.5 h-4 truncate text-[11px] leading-4 text-muted-foreground" title={summary}>
+          {summary}
+        </p>
         {job.state === "RUNNING" && job.stage ? (
           <div className="mt-1 flex h-3 items-center gap-2 text-[10px] text-muted-foreground">
             <span className="min-w-0 truncate">{job.stage}</span>
@@ -144,19 +159,21 @@ function JobRow({
             <RotateCcw className="size-3" />
           </Button>
         )}
-        {job.has_output && (
-          <a href={job.output_url ? apiUrl(job.output_url) : "#"} download aria-label="Скачать">
-            <Button size="icon-xs" variant="ghost">
-              <Download className="size-3" />
-            </Button>
-          </a>
+        {job.has_output && (job.outputs?.mp4 || job.output_url) && (
+          <Button size="icon-xs" variant="ghost" aria-label="Скачать" onClick={() => onDownload?.(job)}>
+            <Download className="size-3" />
+          </Button>
         )}
         <Button
           size="icon-xs"
           variant="ghost"
           aria-label="Удалить"
           className="text-muted-foreground hover:text-destructive"
-          onClick={() => onAct(deleteJob, job.id)}
+          onClick={() => {
+            const label = job.prompt.trim() || KIND_META[job.kind].label
+            if (!window.confirm(`Удалить «${label}» и связанные данные?`)) return
+            onAct(deleteJob, job.id)
+          }}
         >
           <Trash2 className="size-3" />
         </Button>
@@ -171,6 +188,7 @@ function StageGroup({
   activeId,
   onAct,
   onSelectJob,
+  onDownload,
   maskTracks,
   excludedIds,
   selectedTrackId,
@@ -182,6 +200,7 @@ function StageGroup({
   activeId: string | null
   onAct: ActFn
   onSelectJob?: (job: Job) => void
+  onDownload?: (job: Job) => void
   maskTracks?: DetectTrack[]
   excludedIds?: number[]
   selectedTrackId?: number | null
@@ -204,6 +223,7 @@ function StageGroup({
             active={job.id === activeId}
             onAct={onAct}
             onSelect={onSelectJob}
+            onDownload={onDownload}
           />
           {kind === "preview" && job.id === activeId && (maskTracks?.length ?? 0) > 0 && (
             <ul className="ml-3.5 mt-0.5 space-y-0.5 border-l border-border/60 pl-2">
@@ -231,7 +251,7 @@ function StageGroup({
                         aria-label={on ? "Исключить" : "Включить"}
                       />
                       <span className="min-w-0 flex-1 truncate">
-                        {t.label || `маска ${t.id}`}
+                        {t.label || `рамка ${t.id}`}
                       </span>
                       <span className="shrink-0 tabular-nums text-muted-foreground">{hits}</span>
                     </button>
@@ -252,7 +272,8 @@ type Props = {
   onClearSelection?: () => void
   activeJobs?: ActivePipelineJobs
   onSelectJob?: (job: Job) => void
-  onUploaded?: () => void
+  onUploaded?: (source: Source) => void
+  beforeSourceChange?: () => boolean
   maskTracks?: DetectTrack[]
   excludedIds?: number[]
   selectedTrackId?: number | null
@@ -269,6 +290,7 @@ export function Library({
   activeJobs = EMPTY_ACTIVE,
   onSelectJob,
   onUploaded,
+  beforeSourceChange,
   maskTracks,
   excludedIds,
   selectedTrackId,
@@ -288,6 +310,15 @@ export function Library({
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
+  }
+
+  const downloadOutput = (job: Job) => {
+    const url = job.outputs?.mp4 || job.output_url
+    if (!url) return
+    const fmt = job.outputs?.mp4 ? "mp4" : "default"
+    void downloadJobOutput(url, outputDownloadName(fmt, job.id)).catch((e: unknown) => {
+      setError(e instanceof Error ? e.message : String(e))
+    })
   }
 
   const removeSource = async (source: Source) => {
@@ -340,7 +371,13 @@ export function Library({
           <h2 className="text-sm font-semibold">Библиотека</h2>
           <p className="text-[11px] text-muted-foreground">Видео и прогоны</p>
         </div>
-        <UploadButton onUploaded={() => onUploaded?.()} />
+        <UploadButton
+          onUploaded={(created) => {
+            if (beforeSourceChange && !beforeSourceChange()) return
+            onSelect(created)
+            onUploaded?.(created)
+          }}
+        />
         {error && <p className="text-xs text-destructive">{error}</p>}
       </div>
 
@@ -372,7 +409,11 @@ export function Library({
                   <button
                     type="button"
                     className="flex min-w-0 flex-1 items-center gap-2.5 px-2 py-2 text-left"
-                    onClick={() => onSelect(s)}
+                    onClick={() => {
+                      if (s.id === selectedId) return
+                      if (beforeSourceChange && !beforeSourceChange()) return
+                      onSelect(s)
+                    }}
                   >
                     <Film
                       className={cn(
@@ -429,6 +470,7 @@ export function Library({
                             activeId={activeJobs[kind]}
                             onAct={act}
                             onSelectJob={onSelectJob}
+                            onDownload={downloadOutput}
                             maskTracks={maskTracks}
                             excludedIds={excludedIds}
                             selectedTrackId={selectedTrackId}
@@ -453,6 +495,7 @@ export function Library({
                   active={j.kind !== "package" && j.id === activeJobs[j.kind]}
                   onAct={act}
                   onSelect={onSelectJob}
+                  onDownload={downloadOutput}
                 />
               ))}
             </div>
@@ -468,6 +511,7 @@ export function Library({
         }}
         onDone={(created) => {
           setCropTarget(null)
+          if (beforeSourceChange && !beforeSourceChange()) return
           onSelect(created)
         }}
       />

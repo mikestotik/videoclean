@@ -25,7 +25,7 @@ Pod settings:
 | `VIDEOCLEAN_UI_USER` | `admin` |
 | `VIDEOCLEAN_UI_PASSWORD` | a real password |
 | `VIDEOCLEAN_PORT` | `7860` |
-| `VIDEOCLEAN_DATA_DIR` | `/workspace/.videoclean` |
+| `VIDEOCLEAN_DATA_DIR` | `/root/.videoclean` |
 | `HF_HOME` | `/workspace/.cache/huggingface` |
 | `SAM2_BUILD_CUDA` | `0` |
 
@@ -38,7 +38,7 @@ bash -lc '
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 export VIDEOCLEAN_PORT="${VIDEOCLEAN_PORT:-7860}"
-export VIDEOCLEAN_DATA_DIR="${VIDEOCLEAN_DATA_DIR:-/workspace/.videoclean}"
+export VIDEOCLEAN_DATA_DIR="${VIDEOCLEAN_DATA_DIR:-/root/.videoclean}"
 export HF_HOME="${HF_HOME:-/workspace/.cache/huggingface}"
 export HF_HUB_CACHE="${HF_HUB_CACHE:-$HF_HOME/hub}"
 export SAM2_BUILD_CUDA="${SAM2_BUILD_CUDA:-0}"
@@ -159,14 +159,14 @@ docker push mikestotik/videoclean:runpod
 | `VIDEOCLEAN_UI_USER` | `admin` (or whatever you want) |
 | `VIDEOCLEAN_UI_PASSWORD` | a real password — not `change-me` |
 | `VIDEOCLEAN_PORT` | `7860` |
-| `VIDEOCLEAN_DATA_DIR` | `/workspace/.videoclean` — jobs, uploads, ProPainter vendor+weights, LaMa `big-lama.pt` |
+| `VIDEOCLEAN_DATA_DIR` | `/root/.videoclean` — sqlite, пресеты, mmap кадров. Не сетевой том |
 | `HF_HOME` | `/workspace/.cache/huggingface` |
 | `HF_HUB_CACHE` | optional; defaults to `$HF_HOME/hub` |
 | `VIDEOCLEAN_PROPAINTER_ROOT` | optional override (else `$VIDEOCLEAN_DATA_DIR/vendor/ProPainter`) |
 | `VIDEOCLEAN_PROPAINTER_WEIGHTS` | optional override (else `$VIDEOCLEAN_DATA_DIR/weights/propainter`) |
 | `LAMA_MODEL` | optional path to `big-lama.pt` (else `$VIDEOCLEAN_DATA_DIR/weights/lama/big-lama.pt`) |
 
-Point data + HF cache at `/workspace` so downloads survive pod stop/terminate when a network volume is attached. Defaults in the image are `/root/.videoclean` and `/root/.cache/huggingface` (container disk only). Catalog status honors `HF_HUB_CACHE` / `HF_HOME` (huggingface_hub), not only `~/.cache/huggingface`.
+`HF_HOME` на томе `/workspace`, чтобы веса пережили рестарт. `VIDEOCLEAN_DATA_DIR` остаётся на диске контейнера: sqlite и mmap кадров на сетевом томе не живут. Каталог моделей смотрит `HF_HUB_CACHE` / `HF_HOME`.
 
 ## 5. Start and open the UI
 

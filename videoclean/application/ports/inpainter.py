@@ -15,3 +15,12 @@ class Inpainter(Protocol):
     def inpaint(self, frame: np.ndarray, mask: np.ndarray) -> np.ndarray: ...
 
     def inpaint_clip(self, frames: list[np.ndarray], masks: list[np.ndarray]) -> list[np.ndarray]: ...
+
+    def inpaint_masked(
+        self,
+        frames: list[np.ndarray],
+        masks: list[np.ndarray],
+        plan: object,
+    ) -> list[np.ndarray]:
+        """Crop-aware batch for one RangePlan. No full-frame fallback."""
+        ...

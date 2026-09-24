@@ -10,6 +10,8 @@ export type Job = {
   updated_at: string
   error: string
   stage: string
+  /** Russian title from the server stage list. Absent on old jobs. */
+  stageTitle?: string
   fraction: number
   detail: string
   eta: string

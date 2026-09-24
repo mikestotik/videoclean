@@ -3,4 +3,5 @@ export type Preset = {
   name: string
   payload: Record<string, unknown>
   createdAt: string
+  updatedAt?: string
 }

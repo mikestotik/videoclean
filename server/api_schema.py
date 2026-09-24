@@ -16,6 +16,10 @@ PUBLIC_OPS: set[tuple[str, str]] = {
     ("get", "/api/jobs/{job_id}"),
     ("get", "/api/jobs/{job_id}/output"),
     ("post", "/api/jobs/{job_id}/cancel"),
+    ("get", "/api/presets"),
+    ("post", "/api/presets"),
+    ("put", "/api/presets/{preset_id}"),
+    ("delete", "/api/presets/{preset_id}"),
 }
 
 APP_DESCRIPTION = """
@@ -24,7 +28,7 @@ VideoClean removes named or outlined objects (text, logo, thing) from video.
 ## Public happy path (integration)
 
 1. `POST /api/jobs` with multipart `video` + `prompt` (`kind=run` by default).
-   Optional: `formats` (e.g. `mp4,webm`), `profile`, `webhook_url`, `webhook_secret`.
+   Optional: `formats` (e.g. `mp4,webm`), `profile`, `preset`, `webhook_url`, `webhook_secret`.
 2. Poll `GET /api/jobs/{id}` **or** wait for the terminal webhook.
 3. Download `GET /api/jobs/{id}/output` (use `?fmt=` when multiple outputs).
 

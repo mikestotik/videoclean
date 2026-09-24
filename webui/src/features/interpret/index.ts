@@ -6,6 +6,8 @@ export type InterpretTarget = { kind: string; query: string; where: string | nul
 
 export type InterpretResult = {
   prompt: string
+  /** Phrase the user typed. Never the English out_prompt. */
+  userPrompt?: string
   targets: InterpretTarget[]
   parseMode?: string
   defaulted?: boolean
@@ -15,6 +17,7 @@ export type InterpretResult = {
 
 type ReportBody = {
   prompt?: unknown
+  userPrompt?: unknown
   targets?: unknown
   parseMode?: unknown
   defaulted?: unknown
@@ -89,6 +92,7 @@ export function useInterpret(source: Source | null) {
         if (runId !== runIdRef.current) return null
         const parsed: InterpretResult = {
           prompt: String(report.prompt ?? prompt),
+          userPrompt: typeof report.userPrompt === "string" ? report.userPrompt : prompt,
           targets: parseReportTargets(report.targets),
           ...parseInterpretMeta(report),
         }
@@ -111,6 +115,7 @@ export function useInterpret(source: Source | null) {
       const report = (await fetchJobReport(jobId)) as ReportBody
       const parsed: InterpretResult = {
         prompt: String(report.prompt ?? ""),
+        userPrompt: typeof report.userPrompt === "string" ? report.userPrompt : undefined,
         targets: parseReportTargets(report.targets),
         ...parseInterpretMeta(report),
       }

@@ -147,20 +147,94 @@ class FFmpegMedia:
         cmd += ["-map", "0:v:0", "-frames:v", str(frame_count)]
         if has_audio:
             cmd += ["-map", "1:a:0", "-c:a", "aac", "-b:a", "192k"]
-        cmd += [
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
-            "-preset",
-            "medium",
-            "-crf",
-            "18",
-            "-movflags",
-            "+faststart",
-            str(dest),
-        ]
+        cmd += ["-pix_fmt", "yuv420p", *encoder_argv(False), "-movflags", "+faststart", str(dest)]
         _run(cmd, log_file)
+
+    def decode_bgr(self, src: Path, store, log_file: Path) -> int:
+        """Stream bgr24 into a FrameStore. Returns the number of frames written."""
+        import subprocess
+
+        cmd = [
+            _ffmpeg(),
+            "-hide_banner",
+            "-i",
+            str(src),
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "bgr24",
+            "pipe:1",
+        ]
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(log_file, "ab") as log:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=log)
+            assert proc.stdout is not None
+            written = 0
+            try:
+                for i in range(len(store)):
+                    raw = proc.stdout.read(store.frame_bytes)
+                    if len(raw) < store.frame_bytes:
+                        break
+                    store.write_bytes_at(i, raw)
+                    written += 1
+            finally:
+                proc.stdout.close()
+                code = proc.wait()
+            if code != 0 and written == 0:
+                raise PipelineError(f"ffmpeg decode failed (exit {code}); see {log_file}")
+        return written
+
+    def encode_from_store(
+        self,
+        store,
+        src: Path,
+        dest: Path,
+        fps_ratio: str,
+        has_audio: bool,
+        log_file: Path,
+        *,
+        nvenc: bool,
+    ) -> None:
+        """Encode bgr24 frames from a store on stdin. No JPEG directory."""
+        import subprocess
+
+        import numpy as np
+
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        cmd = [
+            _ffmpeg(),
+            "-y",
+            "-hide_banner",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "bgr24",
+            "-s",
+            f"{store.w}x{store.h}",
+            "-framerate",
+            fps_ratio,
+            "-i",
+            "pipe:0",
+        ]
+        if has_audio:
+            cmd += ["-i", str(src)]
+        cmd += ["-map", "0:v:0", "-frames:v", str(len(store)), "-pix_fmt", "yuv420p", "-movflags", "+faststart"]
+        cmd += encoder_argv(bool(nvenc))
+        if has_audio:
+            cmd += ["-map", "1:a:0", "-c:a", "aac", "-b:a", "192k"]
+        cmd += [str(dest)]
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(log_file, "ab") as log:
+            proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=log)
+            assert proc.stdin is not None
+            try:
+                for i in range(len(store)):
+                    proc.stdin.write(np.ascontiguousarray(store[i]).tobytes())
+            finally:
+                proc.stdin.close()
+                code = proc.wait()
+        if code != 0 or not dest.is_file():
+            raise PipelineError(f"ffmpeg encode failed (exit {code}); see {log_file}")
 
     def crop_clip(
         self,
@@ -220,16 +294,7 @@ class FFmpegMedia:
         cmd += ["-t", f"{trim_dur:.6f}"]
         if spatial:
             cmd += ["-vf", f"crop={out_w}:{out_h}:{left_i}:{top_i}"]
-        cmd += [
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "18",
-        ]
+        cmd += ["-pix_fmt", "yuv420p", *encoder_argv(nvenc_available())]
         if manifest.has_audio:
             cmd += ["-c:a", "aac", "-b:a", "128k"]
         else:
@@ -317,6 +382,69 @@ class FFmpegMedia:
                 segment_seconds=max(1, int(segment_seconds)),
             )
         raise PipelineError(f"no packager for {fmt}")
+
+
+_NVENC_OK: bool | None = None
+
+
+def encoder_argv(nvenc: bool) -> list[str]:
+    """Video codec flags. NVENC must not receive -crf."""
+    if nvenc:
+        return ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "18", "-b:v", "0"]
+    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18"]
+
+
+def nvenc_available() -> bool:
+    """Process-cached probe: encoder listed, then a 16x16 null encode."""
+    global _NVENC_OK
+    if _NVENC_OK is not None:
+        return _NVENC_OK
+    _NVENC_OK = _probe_nvenc()
+    return _NVENC_OK
+
+
+def _probe_nvenc() -> bool:
+    import subprocess
+
+    binary = _ffmpeg()
+    try:
+        listed = subprocess.run(
+            [binary, "-hide_banner", "-encoders"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return False
+    blob = (listed.stdout or "") + (listed.stderr or "")
+    if "h264_nvenc" not in blob:
+        return False
+    cmd = [
+        binary,
+        "-y",
+        "-hide_banner",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "bgr24",
+        "-s",
+        "16x16",
+        "-r",
+        "1",
+        "-i",
+        "pipe:0",
+        "-frames:v",
+        "1",
+        *encoder_argv(True),
+        "-f",
+        "null",
+        "-",
+    ]
+    try:
+        proc = subprocess.run(cmd, input=b"\x00" * (16 * 16 * 3), check=False, capture_output=True)
+    except OSError:
+        return False
+    return proc.returncode == 0
 
 
 def _frame_pattern(frames_dir: Path) -> Path:

@@ -34,11 +34,16 @@ def test_quality_profile_falls_back_on_cpu():
 
 
 def test_apply_profile_overwrites_owned_keys():
-    out = apply_profile(
-        {"profile": "fast", "device": "cpu", "inpainter": "propainter", "verify": True}
+    from videoclean.application.profiles import merge_run_config
+
+    out = merge_run_config(
+        {"profile": "custom", "device": "cpu", "inpainter": "lama", "mask_dilate_px": 3},
+        None,
+        "fast",
+        {"inpainter": "propainter"},
+        resolve_device=lambda name: name or "cpu",
     )
-    assert out["inpainter"] == "lama"
-    assert out["verify"] is False
+    assert out["inpainter"] == "propainter"
     assert out["profile"] == "fast"
 
 

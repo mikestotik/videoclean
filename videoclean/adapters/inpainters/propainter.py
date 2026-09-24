@@ -74,6 +74,58 @@ class ProPainterInpainter:
     def inpaint(self, frame: np.ndarray, mask: np.ndarray) -> np.ndarray:
         return self.inpaint_clip([frame], [mask])[0]
 
+    def inpaint_masked(self, frames: list[np.ndarray], masks: list[np.ndarray], plan) -> list[np.ndarray]:
+        """Temporal inpaint on the hole crop. RAFT stays fp32 inside _run."""
+        from videoclean.adapters.inpainters.lama import _extract_square, _paste
+
+        self._ensure()
+        side = int(plan.side)
+        feather = int(getattr(plan, "feather_px", 16) or 0)
+        out = [np.ascontiguousarray(frame) for frame in frames]
+        crops: list[np.ndarray] = []
+        cmasks: list[np.ndarray] = []
+        origins: list[tuple[int, int]] = []
+        active = False
+        for frame, mask in zip(frames, masks):
+            if mask.dtype != np.uint8:
+                mask = mask.astype(np.uint8)
+            crop, cmask, origin = _extract_square(frame, mask, side)
+            crops.append(crop)
+            cmasks.append(cmask)
+            origins.append(origin)
+            if np.any(mask):
+                active = True
+        if not active:
+            self.last_hole_stats = {"batch": 0, "limitedBy": "frames", "oomRetry": False, "lamaDtype": "fp32"}
+            return out
+        try:
+            painted = self._run(crops, cmasks)
+            oom = False
+        except RuntimeError as exc:
+            if "out of memory" not in str(exc).lower():
+                raise
+            smaller = max(64, (int(side * 0.75) // 8) * 8)
+            crops = []
+            cmasks = []
+            origins = []
+            for frame, mask in zip(frames, masks):
+                crop, cmask, origin = _extract_square(frame, mask, smaller)
+                crops.append(crop)
+                cmasks.append(cmask)
+                origins.append(origin)
+            painted = self._run(crops, cmasks)
+            oom = True
+        for frame, mask, origin, src in zip(out, masks, origins, painted):
+            if np.any(mask):
+                _paste(frame, src, _extract_square(frame, mask, src.shape[0])[1], origin, feather)
+        self.last_hole_stats = {
+            "batch": 1,
+            "limitedBy": "ceiling" if oom else getattr(plan, "limited_by", "frames"),
+            "oomRetry": oom,
+            "lamaDtype": "fp32",
+        }
+        return out
+
     def inpaint_clip(self, frames: list[np.ndarray], masks: list[np.ndarray]) -> list[np.ndarray]:
         if not frames:
             return []
@@ -117,6 +169,9 @@ class ProPainterInpainter:
             self._flow_complete.eval()
             self._model = InpaintGenerator(model_path=str(weights / "ProPainter.pth")).to(device)
             self._model.eval()
+            if self.device == "cuda":
+                self._flow_complete = self._flow_complete.half()
+                self._model = self._model.half()
             self._to_tensors = to_tensors
             self._loaded = True
             return True, ""
@@ -156,12 +211,13 @@ class ProPainterInpainter:
         with torch.no_grad():
             gt_flows_bi = self._raft_flows(frames, video_length)
             if use_half:
-                frames = frames.half()
-                flow_masks_t = flow_masks_t.half()
-                masks_dilated_t = masks_dilated_t.half()
-                gt_flows_bi = (gt_flows_bi[0].half(), gt_flows_bi[1].half())
-                self._flow_complete = self._flow_complete.half()
-                self._model = self._model.half()
+                frames = frames.to(dtype=torch.float16)
+                flow_masks_t = flow_masks_t.to(dtype=torch.float16)
+                masks_dilated_t = masks_dilated_t.to(dtype=torch.float16)
+                gt_flows_bi = (
+                    gt_flows_bi[0].to(dtype=torch.float16),
+                    gt_flows_bi[1].to(dtype=torch.float16),
+                )
             pred_flows_bi = self._complete_flow(gt_flows_bi, flow_masks_t)
             updated_frames, updated_masks = self._propagate(frames, pred_flows_bi, masks_dilated_t, h, w)
             comp = self._transformer(

@@ -1,9 +1,9 @@
 import { useRef, useState } from "react"
 import { Loader2, Upload } from "lucide-react"
-import { uploadSource } from "@/entities/source"
+import { uploadSource, type Source } from "@/entities/source"
 import { Button } from "@/shared/ui/button"
 
-type Props = { onUploaded: () => void }
+type Props = { onUploaded: (source: Source) => void }
 
 export function UploadButton({ onUploaded }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
@@ -16,8 +16,8 @@ export function UploadButton({ onUploaded }: Props) {
     setBusy(true)
     setError("")
     try {
-      await uploadSource(file)
-      onUploaded()
+      const created = await uploadSource(file)
+      onUploaded(created)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {

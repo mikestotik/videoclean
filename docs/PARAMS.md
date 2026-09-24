@@ -1,6 +1,8 @@
 # Параметры прогона — полный справочник
 
-Каждый параметр влияет на результат. Здесь: флаг CLI, поле в WebUI (панель «Дополнительно»), дефолт, что делает и когда крутить. Все параметры — независимые оси, никаких «профилей».
+Каждый параметр влияет на результат. Здесь: флаг CLI, поле формы, дефолт и что он делает.
+
+Сборка конфига: дефолты `PipelineConfig`, затем плоский пресет, затем ключи рецепта `fast` / `balanced` / `quality` (только если выбрано это имя), затем поля, которые форма или CLI реально прислали. `custom` слой рецепта пропускает. Пустой потолок (`max_vram_mb`, `cpu_threads`, `inpaint_max_side`) значит всю машину. `device=auto` (пустое поле тоже) выбирает cuda, иначе mps, иначе cpu, до рецепта. В `PipelineConfig.device` строка `auto` не попадает.
 
 Параметры живут в `PipelineConfig` (`videoclean/application/config.py`), валидация там же. Прокидка: CLI (`cli.py`) / WebUI (`adapters/web/fastapi_app.py` → `service.py` → `manage_jobs.py`) → `composition.py` → адаптеры.
 
@@ -8,7 +10,7 @@
 
 | Флаг CLI | WebUI | Дефолт | Что делает | Когда крутить |
 |---|---|---|---|---|
-| `--device` | Устройство | `cpu` (WebUI: авто) | Где крутятся нейросети: `cpu`/`cuda`/`mps` | На GPU-машине всегда `cuda` |
+| `--device` | Устройство | `auto` | `auto` / `cpu` / `cuda` / `mps`. Пусто и `auto` — cuda, иначе mps, иначе cpu | Явный пин, если карту надо занять другой работой |
 | `--detector` | Детектор | `grounding-dino` | Единственный детектор: grounding-dino |
 | `--detector-model` | Модель детектора | `IDEA-Research/grounding-dino-tiny` | HF id модели | См. docs/MODELS.md |
 | `--detector-threshold` | Порог детектора | `0.15` | Минимальный скор бокса | Ничего не находит → `0.10`–`0.12`; мусорные боксы → `0.20`+ |
@@ -20,7 +22,11 @@
 | `--verify-max-passes` | Verify: проходы | `1` | Сколько раз искать остатки и перезаливать (0 = без re-inpaint) | `2` в профиле quality |
 | `--inpaint-workers` | Потоки инпейнта | `0` (auto) | Параллель для LaMa; ProPainter всегда 1 | CPU: auto по ядрам; GPU: обычно 1 |
 | `--inpaint-chunk-overlap` | Overlap чанков | `8` | Перекрытие при нарезке video-inpaint / verify | Швы на стыках → поднять |
-| `--profile` | Профиль | `custom` | `fast` / `balanced` / `quality` — перебивает segmenter/inpainter/verify knobs | Качество на CUDA: sam2-video+ProPainter |
+| `--profile` | Рецепт картинки | `custom` | `fast` / `balanced` / `quality`. Не доля GPU: на CUDA quality — sam2-video и ProPainter, дырка кропом до потолка памяти | Явный dilate/segmenter после имени рецепта остаётся |
+| `--max-vram-mb` | Потолок VRAM | пусто | МБ, которые job может занять после резерва 1536 МиБ. 0 — ошибка | На хосте есть другие процессы |
+| `--cpu-threads` | Потоки CPU | пусто = все ядра | Потолок torch/OpenCV на время job | Делить машину |
+| `--inpaint-max-side` | Сторона кропа | пусто | Потолок стороны заливки, кратно 8. Пусто — максимум, который влезает | Не ускоритель: только cap |
+| `--verify-redetect` | Второй детект | выкл | Второй GroundingDINO+SAM только если включено. Рецепты его не включают | Пропущенный объект вне маски |
 
 ## Vision-парс промпта (LLM → queries)
 
@@ -139,6 +145,9 @@ WebUI: панель «Превью» на рабочей странице. Кн�
 | `webhook_url` | Callback URL: `POST` JSON при `COMPLETED`/`FAILED` (`kind=run`) | HTTPS/HTTP URL |
 | `webhook_secret` | HMAC-SHA256 тела; заголовок `X-VideoClean-Signature: sha256=<hex>` | строка |
 | `webm_crf` / `segment_seconds` | Параметры упаковки webm / HLS/DASH | int |
+| `preset` | Id (`p_` + 8 hex) или точное имя плоского пресета | нет — 404 `unknown preset`; два имени — 409 |
+| `max_vram_mb` / `cpu_threads` / `inpaint_max_side` | Потолки. Пустая строка = не прислано | int или пусто |
+| `verify_redetect` | Второй проход детектора в проверке | `1` / `0` |
 
 Интерактивная схема: `/api/docs` (Swagger), `/api/redoc`. Публичный happy path и auth — в описании OpenAPI и в `GET /api`.
 

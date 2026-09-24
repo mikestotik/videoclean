@@ -85,59 +85,53 @@ class Sam2VideoSegmenter:
         h, w = frames[0].shape[:2]
         n = len(frames)
         acc = [np.zeros((h, w), dtype=np.uint8) for _ in frames]
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            for i, frame in enumerate(frames):
-                if on_progress and i % 8 == 0:
-                    on_progress(i, n + len(tracks), f"{self.name} write {i + 1}/{n}")
-                cv2.imwrite(str(root / f"{i:05d}.jpg"), frame)
+        if on_progress:
+            on_progress(0, n + len(tracks), f"{self.name} init")
+        state = self._init_state_from_frames(frames)
+        obj_id = 1
+        for tr_i, tr in enumerate(tracks):
             if on_progress:
-                on_progress(n, n + len(tracks), f"{self.name} init")
-            state = self._predictor.init_state(video_path=str(root))
-            obj_id = 1
-            for tr_i, tr in enumerate(tracks):
+                on_progress(n + tr_i, n + len(tracks), f"{self.name} track {tr_i + 1}/{len(tracks)}")
+            anchors = _anchor_boxes(tr, w, h, max_anchors=8)
+            if not anchors:
+                continue
+            for frame_idx, box in anchors:
+                self._predictor.add_new_points_or_box(
+                    inference_state=state,
+                    frame_idx=frame_idx,
+                    obj_id=obj_id,
+                    box=np.array(box, dtype=np.float32),
+                )
+            obj_id += 1
+        if obj_id == 1:
+            return acc
+
+        prop_total = max(n, 1)
+
+        def _consume() -> None:
+            for frame_idx, _obj_ids, mask_logits in self._predictor.propagate_in_video(state):
                 if on_progress:
-                    on_progress(n + tr_i, n + len(tracks), f"{self.name} track {tr_i + 1}/{len(tracks)}")
-                anchors = _anchor_boxes(tr, w, h, max_anchors=8)
-                if not anchors:
-                    continue
-                for frame_idx, box in anchors:
-                    self._predictor.add_new_points_or_box(
-                        inference_state=state,
-                        frame_idx=frame_idx,
-                        obj_id=obj_id,
-                        box=np.array(box, dtype=np.float32),
+                    on_progress(
+                        frame_idx + 1,
+                        prop_total,
+                        f"{self.name} propagate {frame_idx + 1}/{n}",
                     )
-                obj_id += 1
-            if obj_id == 1:
-                return acc
+                if frame_idx >= len(acc):
+                    continue
+                for plane in mask_logits:
+                    sl = plane
+                    if hasattr(sl, "cpu"):
+                        sl = sl.cpu().numpy()
+                    while getattr(sl, "ndim", 0) > 2:
+                        sl = sl[0]
+                    acc[frame_idx][sl > 0] = 255
 
-            prop_total = max(n, 1)
-
-            def _consume() -> None:
-                for frame_idx, _obj_ids, mask_logits in self._predictor.propagate_in_video(state):
-                    if on_progress:
-                        on_progress(
-                            frame_idx + 1,
-                            prop_total,
-                            f"{self.name} propagate {frame_idx + 1}/{n}",
-                        )
-                    if frame_idx >= len(acc):
-                        continue
-                    for plane in mask_logits:
-                        sl = plane
-                        if hasattr(sl, "cpu"):
-                            sl = sl.cpu().numpy()
-                        while getattr(sl, "ndim", 0) > 2:
-                            sl = sl[0]
-                        acc[frame_idx][sl > 0] = 255
-
-            with torch.inference_mode():
-                if self.device == "cuda":
-                    with torch.autocast("cuda", dtype=torch.bfloat16):
-                        _consume()
-                else:
+        with torch.inference_mode():
+            if self.device == "cuda":
+                with torch.autocast("cuda", dtype=torch.bfloat16):
                     _consume()
+            else:
+                _consume()
         if self.dilate_px > 0:
             k = cv2.getStructuringElement(
                 cv2.MORPH_ELLIPSE, (self.dilate_px * 2 + 1, self.dilate_px * 2 + 1)
@@ -146,6 +140,81 @@ class Sam2VideoSegmenter:
         if on_progress:
             on_progress(1, 1, f"{self.name} done")
         return acc
+
+    def _init_state_from_frames(self, frames) -> dict:
+        """Copy of SAM2VideoPredictor.init_state at commit 2b90b9f5.
+
+        Only load_video_frames is replaced. reset_state is not used: on that
+        commit it clears keys that do not exist yet.
+        """
+        import torch
+        from collections import OrderedDict
+
+        predictor = self._predictor
+        image_size = int(getattr(predictor, "image_size", 1024) or 1024)
+        n = len(frames)
+        h, w = frames[0].shape[:2]
+        images = _image_tensor(frames, image_size, getattr(self, "tensor_path", None))
+        device = torch.device(getattr(predictor, "device", self.device))
+        state = {
+            "images": images,
+            "num_frames": n,
+            "offload_video_to_cpu": True,
+            "offload_state_to_cpu": True,
+            "video_height": h,
+            "video_width": w,
+            "device": device,
+            "storage_device": torch.device("cpu"),
+            "point_inputs_per_obj": {},
+            "mask_inputs_per_obj": {},
+            "cached_features": {},
+            "constants": {},
+            "obj_id_to_idx": OrderedDict(),
+            "obj_idx_to_id": OrderedDict(),
+            "obj_ids": [],
+            "output_dict_per_obj": {},
+            "temp_output_dict_per_obj": {},
+            "frames_tracked_per_obj": {},
+        }
+        warmup = getattr(predictor, "_get_image_feature", None)
+        if warmup is not None:
+            warmup(state, frame_idx=0, batch_size=1)
+        return state
+
+
+def _image_tensor(frames, image_size: int, tensor_path):
+    """Normalized NCHW tensor. File-backed when tensor_path is set."""
+    import torch
+
+    n = len(frames)
+    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+    if tensor_path:
+        path = Path(tensor_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        count = n * 3 * image_size * image_size
+        with open(path, "wb") as handle:
+            handle.truncate(count * 4)
+        storage = torch.from_file(str(path), shared=True, size=count, dtype=torch.float32)
+        images = storage.view(n, 3, image_size, image_size)
+        for i, frame in enumerate(frames):
+            images[i].copy_(torch.from_numpy(_normalize_frame(frame, image_size, mean, std)))
+        return images
+    packed = np.empty((n, 3, image_size, image_size), dtype=np.float32)
+    for i, frame in enumerate(frames):
+        packed[i] = _normalize_frame(frame, image_size, mean, std)
+    return torch.from_numpy(packed)
+
+
+def _normalize_frame(frame: np.ndarray, image_size: int, mean: np.ndarray, std: np.ndarray) -> np.ndarray:
+    import cv2
+
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    if rgb.shape[0] != image_size or rgb.shape[1] != image_size:
+        rgb = cv2.resize(rgb, (image_size, image_size), interpolation=cv2.INTER_LINEAR)
+    x = rgb.astype(np.float32) / 255.0
+    x = (x - mean) / std
+    return np.transpose(x, (2, 0, 1))
 
 
 def _clamp_box(

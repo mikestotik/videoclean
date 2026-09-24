@@ -117,7 +117,7 @@ build_env_json() {
       VIDEOCLEAN_UI_USER:$u,
       VIDEOCLEAN_UI_PASSWORD:$p,
       VIDEOCLEAN_PORT:"7860",
-      VIDEOCLEAN_DATA_DIR:"/workspace/.videoclean",
+      VIDEOCLEAN_DATA_DIR:"/root/.videoclean",
       HF_HOME:"/workspace/.cache/huggingface",
       SAM2_BUILD_CUDA:"0"}'
 }
