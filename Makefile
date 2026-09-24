@@ -3,13 +3,18 @@
 VIDEOCLEAN_UI_USER ?= admin
 VIDEOCLEAN_UI_PASSWORD ?= admin
 export VIDEOCLEAN_UI_USER VIDEOCLEAN_UI_PASSWORD
+# Official installers drop binaries here. Recipes see them even if the login shell does not.
+export PATH := $(HOME)/.local/bin:$(HOME)/.bun/bin:$(PATH)
 
 .PHONY: help setup dev serve web test lint doctor docker docker-monolith compose-up clean
 
 help: ## список команд
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-10s\033[0m %s\n", $$1, $$2}'
 
-setup: ## разовая установка: python-зависимости + bun install
+setup: ## разовая установка: uv, bun, python-зависимости, bun install
+	@command -v curl >/dev/null 2>&1 || { echo "нужен curl"; exit 1; }
+	@command -v uv >/dev/null 2>&1 || { echo "ставлю uv в $$HOME/.local/bin"; curl -LsSf https://astral.sh/uv/install.sh | sh; }
+	@command -v bun >/dev/null 2>&1 || { echo "ставлю bun в $$HOME/.bun/bin"; curl -fsSL https://bun.sh/install | bash; }
 	# web = FastAPI/uvicorn; lama = simple-lama-inpainting. Together — иначе один --extra снимает другой.
 	uv sync --extra web --extra lama
 	cd webui && bun install
