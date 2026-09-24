@@ -1,8 +1,13 @@
 #!/bin/bash
-# Boot script for a stock RunPod PyTorch template pod.
+# Boot script for the stock RunPod PyTorch 2.8 template
+# (runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404).
 # Runs INSIDE the pod as the container start command
 # (v2 API `args`: {"entrypoint":["/bin/bash","-lc"],"cmd":[<this file>]}).
 # Clone once, then serve. Idempotent: safe to re-run on restart.
+#
+# Torch, torchvision, torchaudio and numpy stay on the image interpreter.
+# A fresh venv does not see that torch, and `torch==2.8.0` does not match
+# `2.8.0+cu128`, so uv sync would replace the CUDA build.
 set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
@@ -16,18 +21,22 @@ export VIDEOCLEAN_DATA_DIR="${VIDEOCLEAN_DATA_DIR:-/root/.videoclean}"
 export HF_HOME="${HF_HOME:-/workspace/.cache/huggingface}"
 export HF_HUB_CACHE="${HF_HUB_CACHE:-$HF_HOME/hub}"
 export SAM2_BUILD_CUDA="${SAM2_BUILD_CUDA:-0}"
-export PATH="/root/.local/bin:/usr/local/bin:$PATH"
+export PATH="/usr/local/bin:/usr/bin:$PATH"
 # uv cache on container disk, not on /workspace: a 37G cache on a network
 # volume trips its quota and breaks git/pip with "Disk quota exceeded".
-export UV_CACHE_DIR="/root/.cache/uv"
+export UV_CACHE_DIR="${UV_CACHE_DIR:-/root/.cache/uv}"
+export UV_LINK_MODE="${UV_LINK_MODE:-copy}"
+
+PY="$(command -v python3)"
+"$PY" -c 'import torch; ok = torch.cuda.is_available(); print(torch.__version__, "cuda="+str(ok)); raise SystemExit(0 if ok else 1)'
 
 apt-get update
-apt-get install -y --no-install-recommends ffmpeg git curl ca-certificates zstd unzip python3.11 python3.11-venv || apt-get install -y --no-install-recommends ffmpeg git curl ca-certificates zstd unzip
+apt-get install -y --no-install-recommends ffmpeg git curl ca-certificates zstd unzip
 
 if ! command -v uv >/dev/null 2>&1; then
   curl -fsSL https://astral.sh/uv/install.sh | sh
+  export PATH="/root/.local/bin:$PATH"
 fi
-export PATH="/root/.local/bin:$PATH"
 
 # NOTE: ollama is NOT installed here on purpose. It is an on-demand
 # component: install + start it from the Config page in the WebUI
@@ -42,20 +51,28 @@ cd videoclean
 git fetch --depth 1 origin main
 git checkout -B main origin/main
 
-uv python pin 3.11 || true
-# --inexact: never prune pip-installed extras (sam2 from git is not in the
-# lockfile; a pruning sync deletes it and masks fail with "No module named
-# 'sam2'"). Locked packages are still synced to their pinned versions.
-uv sync --inexact --extra gpu --extra lama --extra web --no-dev --no-install-package torch --no-install-package torchvision
-uv pip install --python .venv/bin/python --index-url https://download.pytorch.org/whl/cu128 torch==2.8.0 torchvision==0.23.0
-uv pip install --python .venv/bin/python "git+https://github.com/facebookresearch/sam2.git@2b90b9f5ceec907a1c18123530e92e794ad901a4" hf-transfer matplotlib imageio
-# The lockfile pins torch==2.8.0 for local machines. The pod needs the cu128
-# build of the SAME version, so install torch from the CUDA index and keep
-# `uv run` from re-syncing the venv back (build tags always differ).
-export UV_NO_SYNC=1
-# uv cache and .venv live on different filesystems here; copy instead of
-# hardlinking to silence the warning on every install.
-export UV_LINK_MODE=copy
+# Pin the image copies so resolution cannot replace them. Local versions
+# (+cu128) are written as installed; overrides beat the pyproject pin
+# numpy<2, which would otherwise downgrade the image's numpy.
+"$PY" - <<'PY' > /tmp/image-pins.txt
+import importlib
+for name in ("torch", "torchvision", "torchaudio", "numpy"):
+    try:
+        mod = importlib.import_module(name)
+    except Exception:
+        continue
+    ver = getattr(mod, "__version__", None)
+    if ver:
+        print(f"{name}=={ver}")
+PY
+
+uv pip install --python "$PY" --system --break-system-packages \
+  --overrides /tmp/image-pins.txt \
+  --extra gpu --extra lama --extra web \
+  -e .
+uv pip install --python "$PY" --system --break-system-packages \
+  --overrides /tmp/image-pins.txt \
+  "git+https://github.com/facebookresearch/sam2.git"
 
 mkdir -p "$VIDEOCLEAN_DATA_DIR" "$HF_HOME"
 
@@ -72,5 +89,5 @@ if [ ! -f server/static_dist/index.html ] || [ -n "$(find webui -path webui/node
   fi
 fi
 
-uv run videoclean doctor --device cuda || true
-exec uv run videoclean serve --host 0.0.0.0 --port "$VIDEOCLEAN_PORT"
+"$PY" -m videoclean doctor --device cuda || true
+exec "$PY" -m videoclean serve --host 0.0.0.0 --port "$VIDEOCLEAN_PORT"

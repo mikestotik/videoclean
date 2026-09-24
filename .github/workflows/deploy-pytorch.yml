@@ -54,6 +54,7 @@ jobs:
           DATA_CENTERS: ${{ inputs.data_center_ids }}
           VIDEOCLEAN_UI_USER: ${{ vars.VIDEOCLEAN_UI_USER }}
           VIDEOCLEAN_UI_PASSWORD: ${{ secrets.VIDEOCLEAN_UI_PASSWORD }}
+          IMAGE: runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404
         run: |
           set -euo pipefail
           : "${RUNPOD_API_KEY:?RUNPOD_API_KEY is not set}"
@@ -96,12 +97,13 @@ jobs:
             --argjson cd "$CONTAINER_DISK_GB" \
             --argjson dc "$dc_json" \
             --argjson mounts "$mounts" \
+            --arg image "$IMAGE" \
             --arg u "$user" \
             --arg p "$VIDEOCLEAN_UI_PASSWORD" \
             --arg script "$(cat scripts/pytorch-start.sh)" \
             '{
               name:$name,
-              image:"runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
+              image:$image,
               cloud:$cloud,
               gpu:{id:$gpu, count:1},
               disk:$cd,
@@ -113,7 +115,7 @@ jobs:
                 VIDEOCLEAN_UI_USER:$u,
                 VIDEOCLEAN_UI_PASSWORD:$p,
                 VIDEOCLEAN_PORT:"7860",
-                VIDEOCLEAN_DATA_DIR:"/workspace/.videoclean",
+                VIDEOCLEAN_DATA_DIR:"/root/.videoclean",
                 HF_HOME:"/workspace/.cache/huggingface",
                 SAM2_BUILD_CUDA:"0"
               },
@@ -128,4 +130,4 @@ jobs:
           echo "created: id=$pod_id"
           echo
           echo "Proxy URL: https://${pod_id}-7860.proxy.runpod.net"
-          echo "First boot takes ~5 minutes (uv sync + torch + sam2); watch the pod logs in the console."
+          echo "First boot installs app deps and sam2 on top of the image torch; watch the pod logs in the console."

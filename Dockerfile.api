@@ -48,7 +48,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
         torch==2.8.0 torchvision==0.23.0
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --python /opt/videoclean/bin/python \
-        "git+https://github.com/facebookresearch/sam2.git@2b90b9f5ceec907a1c18123530e92e794ad901a4" \
+        "git+https://github.com/facebookresearch/sam2.git" \
     && chmod +x /app/scripts/start.sh \
     && rm -rf ./server/static_dist
 

@@ -142,11 +142,7 @@ class Sam2VideoSegmenter:
         return acc
 
     def _init_state_from_frames(self, frames) -> dict:
-        """Copy of SAM2VideoPredictor.init_state at commit 2b90b9f5.
-
-        Only load_video_frames is replaced. reset_state is not used: on that
-        commit it clears keys that do not exist yet.
-        """
+        """Build the video predictor state from frames already in memory."""
         import torch
         from collections import OrderedDict
 

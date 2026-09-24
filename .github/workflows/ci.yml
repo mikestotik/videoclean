@@ -15,7 +15,7 @@ jobs:
           enable-cache: true
       - name: Sync + test
         run: |
-          uv sync --extra web --extra lama --no-dev
+          uv sync --extra web --extra lama
           uv run pytest -q
 
   webui:

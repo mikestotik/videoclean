@@ -8,9 +8,11 @@ Auth is required: `VIDEOCLEAN_UI_USER` + `VIDEOCLEAN_UI_PASSWORD`. Serve refuses
 
 ## 0. Without publishing a Docker image (git clone + uv)
 
-Use a stock RunPod **PyTorch** template, Python **3.11 or 3.12** (not 3.13), CUDA 12.4+. Official image example:
+Use the stock RunPod **PyTorch 2.8** template. Image:
 
-`runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04`
+`runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404`
+
+That image is Ubuntu 24.04, CUDA 12.8.1, Python 3.12, and `torch 2.8.0+cu128` already on the system interpreter. The start script installs the app and sam2 into that interpreter. It does not create a venv and does not reinstall torch, torchvision, torchaudio, or numpy.
 
 Pod settings:
 
@@ -29,65 +31,8 @@ Pod settings:
 | `HF_HOME` | `/workspace/.cache/huggingface` |
 | `SAM2_BUILD_CUDA` | `0` |
 
-Start command (clone once, then serve). Repo is public: `https://github.com/mikestotik/videoclean.git`.
-Automated: workflow **Deploy PyTorch pod** (Actions → Run workflow) creates the pod
-with `scripts/pytorch-start.sh` as the start command — same script as below.
-
-```bash
-bash -lc '
-set -euo pipefail
-export DEBIAN_FRONTEND=noninteractive
-export VIDEOCLEAN_PORT="${VIDEOCLEAN_PORT:-7860}"
-export VIDEOCLEAN_DATA_DIR="${VIDEOCLEAN_DATA_DIR:-/root/.videoclean}"
-export HF_HOME="${HF_HOME:-/workspace/.cache/huggingface}"
-export HF_HUB_CACHE="${HF_HUB_CACHE:-$HF_HOME/hub}"
-export SAM2_BUILD_CUDA="${SAM2_BUILD_CUDA:-0}"
-export PATH="/root/.local/bin:/usr/local/bin:$PATH"
-
-apt-get update
-apt-get install -y --no-install-recommends ffmpeg git curl ca-certificates zstd unzip python3.11 python3.11-venv || apt-get install -y --no-install-recommends ffmpeg git curl ca-certificates zstd unzip
-
-curl -fsSL https://astral.sh/uv/install.sh | sh
-export PATH="/root/.local/bin:$PATH"
-
-mkdir -p /workspace
-cd /workspace
-if [ ! -d videoclean/.git ]; then
-  git clone https://github.com/mikestotik/videoclean.git videoclean
-fi
-cd videoclean
-git fetch --depth 1 origin main
-git checkout -B main origin/main
-
-uv python pin 3.11 || true
-# --inexact keeps pip-installed extras (sam2 from git) across syncs.
-uv sync --inexact --extra gpu --extra lama --extra web --no-dev --no-install-package torch --no-install-package torchvision
-uv pip install --python .venv/bin/python --index-url https://download.pytorch.org/whl/cu128 torch==2.8.0 torchvision==0.23.0
-uv pip install --python .venv/bin/python "git+https://github.com/facebookresearch/sam2.git" hf-transfer matplotlib imageio
-# Build tags (+cu128) always differ from the lockfile, so keep `uv run`
-# from re-syncing the venv back to the locked CPU build. Copy instead of
-# hardlinking (cache and .venv are on different filesystems).
-export UV_NO_SYNC=1
-export UV_LINK_MODE=copy
-
-mkdir -p "$VIDEOCLEAN_DATA_DIR" "$HF_HOME"
-
-# WebUI: build from source when missing (static_dist is NOT committed).
-# Never fatal: the API works without UI.
-if [ ! -f server/static_dist/index.html ]; then
-  if ! command -v bun >/dev/null 2>&1; then
-    curl -fsSL https://bun.sh/install | bash || echo "WARNING: bun install failed, UI will be unavailable"
-  fi
-  export PATH="/root/.bun/bin:$PATH"
-  if command -v bun >/dev/null 2>&1; then
-    (cd webui && bun install && bun run build) || echo "WARNING: webui build failed, serving API only"
-  fi
-fi
-
-uv run videoclean doctor --device cuda || true
-exec uv run videoclean serve --host 0.0.0.0 --port "$VIDEOCLEAN_PORT"
-'
-```
+Start command: `scripts/pytorch-start.sh` (the workflow inlines that file). Repo is public: `https://github.com/mikestotik/videoclean.git`.
+Automated: workflow **Deploy PyTorch pod** (Actions → Run workflow).
 
 > **Gate check (10 секунд, до долгой установки).** Стоковый torch образа должен видеть CUDA, иначе хост битый и всё остальное бессмысленно:
 > ```bash
@@ -97,7 +42,7 @@ exec uv run videoclean serve --host 0.0.0.0 --port "$VIDEOCLEAN_PORT"
 >
 > **Network volumes (mfs) + SQLite.** `jobs.sqlite` не работает на сетевых томах (`disk I/O error`): держи `VIDEOCLEAN_DATA_DIR` на локальном диске контейнера (`/root/.videoclean`), а `HF_HOME` — на томе. Pod volumes — локальный диск, там всё ок.
 
-First boot: several minutes (`uv sync` + CUDA torch + sam2). Weights are **not** downloaded here. After the UI is up, open `https://<POD_ID>-7860.proxy.runpod.net`, log in, **Конфиг**, download `grounding-dino`, `sam2-tiny`, then `propainter` for max quality. Ollama: if the process is up, models appear under LLM; pull a tag there (for example `llama3.2`).
+First boot: several minutes (app deps + sam2; torch stays the image build). Weights are **not** downloaded here. After the UI is up, open `https://<POD_ID>-7860.proxy.runpod.net`, log in, **Конфиг**, download `grounding-dino`, `sam2-tiny`, then `propainter` for max quality. Ollama: if the process is up, models appear under LLM; pull a tag there (for example `llama3.2`).
 
 Local LLM without Ollama will stay grey. Cloud LLM is disabled by default — everything runs locally.
 
@@ -224,6 +169,6 @@ Open `http://127.0.0.1:7860`. Compose mounts named volumes for `/root/.videoclea
 ## Notes
 
 - `videoclean serve` binds `0.0.0.0` and reads `VIDEOCLEAN_PORT` (RunPod `PORT` is also accepted by `scripts/start.sh`).
-- Image override: `torch==2.8.0` + `torchvision==0.23.0` from the cu128 wheel index (pyproject pins the same versions for CPU/Mac).
+- The GHCR image installs `torch==2.8.0` + `torchvision==0.23.0` from the cu128 wheel index (pyproject pins the same versions for CPU/Mac). The stock PyTorch pod does not: it keeps the template's `+cu128` build.
 - `sam2` Python package is installed with `SAM2_BUILD_CUDA=0` (no nvcc in the runtime image). Weights still come from the Models tab.
 - After a kill/restart, orphan RUNNING jobs are marked FAILED (`interrupted`).
