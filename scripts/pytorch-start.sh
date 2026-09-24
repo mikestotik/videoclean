@@ -17,6 +17,9 @@ export HF_HOME="${HF_HOME:-/workspace/.cache/huggingface}"
 export HF_HUB_CACHE="${HF_HUB_CACHE:-$HF_HOME/hub}"
 export SAM2_BUILD_CUDA="${SAM2_BUILD_CUDA:-0}"
 export PATH="/root/.local/bin:/usr/local/bin:$PATH"
+# uv cache on container disk, not on /workspace: a 37G cache on a network
+# volume trips its quota and breaks git/pip with "Disk quota exceeded".
+export UV_CACHE_DIR="/root/.cache/uv"
 
 apt-get update
 apt-get install -y --no-install-recommends ffmpeg git curl ca-certificates zstd unzip python3.11 python3.11-venv || apt-get install -y --no-install-recommends ffmpeg git curl ca-certificates zstd unzip
@@ -40,7 +43,10 @@ git fetch --depth 1 origin main
 git checkout -B main origin/main
 
 uv python pin 3.11 || true
-uv sync --extra gpu --extra lama --extra web --no-dev --no-install-package torch --no-install-package torchvision
+# --inexact: never prune pip-installed extras (sam2 from git is not in the
+# lockfile; a pruning sync deletes it and masks fail with "No module named
+# 'sam2'"). Locked packages are still synced to their pinned versions.
+uv sync --inexact --extra gpu --extra lama --extra web --no-dev --no-install-package torch --no-install-package torchvision
 uv pip install --python .venv/bin/python --index-url https://download.pytorch.org/whl/cu128 torch==2.8.0 torchvision==0.23.0
 uv pip install --python .venv/bin/python "git+https://github.com/facebookresearch/sam2.git" hf-transfer matplotlib imageio
 # The lockfile pins torch==2.8.0 for local machines. The pod needs the cu128

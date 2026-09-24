@@ -60,7 +60,8 @@ git fetch --depth 1 origin main
 git checkout -B main origin/main
 
 uv python pin 3.11 || true
-uv sync --extra gpu --extra lama --extra web --no-dev --no-install-package torch --no-install-package torchvision
+# --inexact keeps pip-installed extras (sam2 from git) across syncs.
+uv sync --inexact --extra gpu --extra lama --extra web --no-dev --no-install-package torch --no-install-package torchvision
 uv pip install --python .venv/bin/python --index-url https://download.pytorch.org/whl/cu128 torch==2.8.0 torchvision==0.23.0
 uv pip install --python .venv/bin/python "git+https://github.com/facebookresearch/sam2.git" hf-transfer matplotlib imageio
 # Build tags (+cu128) always differ from the lockfile, so keep `uv run`
