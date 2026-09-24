@@ -17,4 +17,4 @@ output/
 .idea
 .agents
 docs/superpowers.worktrees/
-temp/
+temp
