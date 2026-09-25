@@ -204,7 +204,7 @@ make test
 
 При `VIDEOCLEAN_AUTH=on` нужны Basic (`VIDEOCLEAN_UI_USER` / `VIDEOCLEAN_UI_PASSWORD`) или Bearer `VIDEOCLEAN_API_TOKEN`. Swagger: `/api/docs`.
 
-Структура — [AGENTS.md](AGENTS.md). Фронт: `webui/` → `server/static_dist/` (monolith) или `Dockerfile.web`. One-box: `docker compose --profile monolith up` / [docs/RUNPOD.md](docs/RUNPOD.md).
+Структура — [AGENTS.md](AGENTS.md). Фронт: `webui/` → `server/static_dist/` (monolith) или `Dockerfile.web`. One-box: `docker compose --profile monolith up`.
 
 API: `POST /api/jobs` (`video` + `prompt`), poll `GET /api/jobs/{id}`, download `GET /api/jobs/{id}/output`. Карта: `GET /api`.
 

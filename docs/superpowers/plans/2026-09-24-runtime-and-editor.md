@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** После семи задач на RunPod ставится один образ, который на тёплом 24 ГБ прогоне balanced минутного 1080p укладывается в 120 с и не оставляет карту на простое в единицы гигабайт, а редактор ведёт один прогон до MP4.
+**Goal:** После семи задач собирается один образ, который на тёплом 24 ГБ прогоне balanced минутного 1080p укладывается в 120 с и не оставляет карту на простое в единицы гигабайт, а редактор ведёт один прогон до MP4.
 
 **Architecture:** Один `PipelineConfig`. Сборка — `merge_run_config`: дефолты, затем пресет, затем ключи рецепта, затем только те поля, которые форма или CLI реально прислали. Движок дырки считает кроп под потолок VRAM. Пресет — плоский набор тех же полей. Редактор шлёт `profile` или `preset` и разошедшиеся ручки, не весь формуляр.
 
@@ -21,7 +21,7 @@
 - sam2 pin `2b90b9f5ceec907a1c18123530e92e794ad901a4`. State — копия `init_state` этого коммита. `reset_state` для сборки не вызывается.
 - Нет группы «Скорость». `fast` / `balanced` / `quality` — рецепты картинки. `balanced` не переводится на `sam2-video`.
 - `device=auto` включается в том же коммите, что и кроп. До этого отсутствующее устройство остаётся `cpu` и не записывается в explicit как строка `cpu`.
-- На RunPod едет только образ после задачи 7. `VIDEOCLEAN_DATA_DIR=/root/.videoclean`, `HF_HOME=/workspace/.cache/huggingface`.
+- Образ собирается после задачи 7. `VIDEOCLEAN_DATA_DIR=/root/.videoclean`, `HF_HOME=/workspace/.cache/huggingface`.
 - UI-тексты русские. `shared/ui/*` не менять. SSE остаётся. Тесты — контракт, не браузер.
 - Неизвестный пресет: HTTP 404, `detail` ровно `unknown preset`. Не 400.
 
@@ -262,7 +262,6 @@ git commit -m "feat: merge presets after explicit fields and before profile keys
 - Modify: `videoclean/application/use_cases/run_cleanup.py`
 - Modify: `Dockerfile`
 - Modify: `Dockerfile.api`
-- Modify: `scripts/pytorch-start.sh`
 - Test: `tests/test_hole_policy.py`
 - Create: `tests/fixtures/sla/generate.py`
 - Create: `tests/fixtures/sla/sla_1080p30_60s.sha256` (после первого запуска генератора)
@@ -299,7 +298,7 @@ Expected: FAIL.
 
 - [ ] **Step 3: Write minimal implementation**
 
-В том же коммите: серверный дефолт устройства становится `auto`, CLI `--device` становится `auto`, кроп включается. `resolve_budget` после резидентных весов. Пороги дырки — константы из Key Decision 8 спеки. Батч от 1 по аллокатору, кандидат `min(2×, range_len)`, середина при отказе. `re_inpaint_ranges` использует те же кропы. sam2 pin в обоих Dockerfile и в `pytorch-start.sh`. Верхний `inpaintWorkers` больше не пишется. `timings.detect`, `track`, `segment` заполняются раздельно. Docstring `profiles.py` больше не говорит speed. Запустить генератор один раз и закоммитить только sha256, не mp4.
+В том же коммите: серверный дефолт устройства становится `auto`, CLI `--device` становится `auto`, кроп включается. `resolve_budget` после резидентных весов. Пороги дырки — константы из Key Decision 8 спеки. Батч от 1 по аллокатору, кандидат `min(2×, range_len)`, середина при отказе. `re_inpaint_ranges` использует те же кропы. sam2 pin в обоих Dockerfile. Верхний `inpaintWorkers` больше не пишется. `timings.detect`, `track`, `segment` заполняются раздельно. Docstring `profiles.py` больше не говорит speed. Запустить генератор один раз и закоммитить только sha256, не mp4.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -309,7 +308,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add videoclean/application/hole_policy.py videoclean/application/ports/inpainter.py videoclean/application/inpaint_runtime.py videoclean/adapters/inpainters/lama.py videoclean/adapters/inpainters/propainter.py videoclean/adapters/segmenters/sam2.py videoclean/adapters/segmenters/sam2_video.py videoclean/adapters/detectors/grounding_dino.py videoclean/application/profiles.py videoclean/application/config.py videoclean/application/use_cases/run_cleanup.py Dockerfile Dockerfile.api scripts/pytorch-start.sh tests/test_hole_policy.py tests/fixtures/sla/generate.py tests/fixtures/sla/sla_1080p30_60s.sha256
+git add videoclean/application/hole_policy.py videoclean/application/ports/inpainter.py videoclean/application/inpaint_runtime.py videoclean/adapters/inpainters/lama.py videoclean/adapters/inpainters/propainter.py videoclean/adapters/segmenters/sam2.py videoclean/adapters/segmenters/sam2_video.py videoclean/adapters/detectors/grounding_dino.py videoclean/application/profiles.py videoclean/application/config.py videoclean/application/use_cases/run_cleanup.py Dockerfile Dockerfile.api tests/test_hole_policy.py tests/fixtures/sla/generate.py tests/fixtures/sla/sla_1080p30_60s.sha256
 git commit -m "feat: inpaint holes inside the VRAM budget"
 ```
 
@@ -374,8 +373,6 @@ git commit -m "feat: replace the pipeline rail with a scenario and an expert tog
 
 **Files:**
 - Modify: `docs/PARAMS.md`
-- Modify: `docs/RUNPOD.md`
-- Modify: `scripts/pytorch-start.sh`
 - Create: `scripts/check_sla_report.py`
 - Test: `tests/test_sla_checker.py`
 
@@ -412,7 +409,7 @@ Expected: FAIL.
 
 - [ ] **Step 3: Write minimal implementation**
 
-`PARAMS.md`: порядок merge, `device=auto`, потолки, `inpaint_max_side`, `verify_redetect`, политика дырки. Удалить фразы «никаких профилей» и «дефолт device cpu». `RUNPOD.md` и `pytorch-start.sh`: data dir `/root/.videoclean`, HF на `/workspace/.cache/huggingface`. Абзац, где data dir лежит на `/workspace/.videoclean`, удалить. В тексте нет группы «Скорость» и нет обещания 120 с для 4K, CPU и дырки на весь кадр.
+`PARAMS.md`: порядок merge, `device=auto`, потолки, `inpaint_max_side`, `verify_redetect`, политика дырки. Удалить фразы «никаких профилей» и «дефолт device cpu». data dir `/root/.videoclean`, HF на `/workspace/.cache/huggingface`. Абзац, где data dir лежит на `/workspace/.videoclean`, удалить. В тексте нет группы «Скорость» и нет обещания 120 с для 4K, CPU и дырки на весь кадр.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -422,12 +419,12 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add docs/PARAMS.md docs/RUNPOD.md scripts/pytorch-start.sh scripts/check_sla_report.py tests/test_sla_checker.py
-git commit -m "docs: pin the RunPod paths and the 120s checker"
+git add docs/PARAMS.md scripts/check_sla_report.py tests/test_sla_checker.py
+git commit -m "docs: pin paths and the 120s checker"
 ```
 
 ## Self-review
 
-Покрытие спеки: наблюдаемость — задача 1; потолки и кэш — 2; JPEG и энкод — 3; merge и пресет — 5; дырка, sam2, verify, `device=auto` — 4; редактор — 6; пути пода и чекер — 7. Ворота RunPod закрывает только задача 7 поверх уже влитых 1–6. Промежуточные задачи на под не ставятся.
+Покрытие спеки: наблюдаемость — задача 1; потолки и кэш — 2; JPEG и энкод — 3; merge и пресет — 5; дырка, sam2, verify, `device=auto` — 4; редактор — 6; пути пода и чекер — 7. Задача 7 закрывает пути и чекер поверх уже влитых 1–6. Промежуточные задачи на под не ставятся.
 
 Чекер не принимает пик, в который входят веса. Рецепт `quality` на CUDA не остаётся полным кадром. `balanced` не становится `sam2-video`.

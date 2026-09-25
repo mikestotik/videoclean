@@ -35,7 +35,7 @@ services:
       - api
     restart: unless-stopped
 
-  # One-box (RunPod-style): api + embedded static UI.
+  # One-box: api + embedded static UI.
   monolith:
     profiles: ["monolith"]
     build:

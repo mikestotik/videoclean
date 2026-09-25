@@ -61,7 +61,7 @@ def download_hint(model_id: str) -> str:
 
 
 def relax_hf_transfer_flag() -> None:
-    """RunPod images set HF_HUB_ENABLE_HF_TRANSFER=1 without installing hf_transfer."""
+    """Some images set HF_HUB_ENABLE_HF_TRANSFER=1 without installing hf_transfer."""
     raw = (os.environ.get("HF_HUB_ENABLE_HF_TRANSFER") or "").strip().lower()
     if raw not in {"1", "true", "yes", "on"}:
         return

@@ -1,4 +1,4 @@
-# Bug reports — 2026-09-22 (RunPod test deploys)
+# Bug reports — 2026-09-22
 
 ## #1 — Cancel не останавливает джобу (OPEN)
 - Симптом: `POST /api/jobs/20260922_144717_8fd5b520/cancel → 200 OK` ×4, работа продолжает висеть. Кнопка не дизейблится, шлёт повторы, бэк их «успешно» глотает.
@@ -9,7 +9,7 @@
 ## #2 — `no detector could run. grounding-dino: 0 tracks` на GPU (RESOLVED, причина — хост)
 - Симптом: «Найти маски» на `device=cuda` → красная ошибка; на `device=cpu` медленно едет (~10%/мин).
 - Расследование: исключены по очереди — версия torch (5 сборок: cu121, cu124, cu126, cu128, cu130 — одна и та же `CUDA unknown error`), device nodes (`/dev/nvidia0` symlink не помог), `nvidia-uvm` на месте, `nvidia-smi` живой (драйвер 580.178.04 / CUDA 13.0).
-- Root cause: битые хосты RunPod — драйвер не создаёт CUDA-контекст (`_cuda_getDeviceCount: CUDA unknown error`), два хоста подряд (GPU minor 2 и 3). Из контейнера не чинится.
+- Root cause: битый GPU-хост — драйвер не создаёт CUDA-контекст (`_cuda_getDeviceCount: CUDA unknown error`), два хоста подряд (GPU minor 2 и 3). Из контейнера не чинится.
 - Решение: другой хост/DC. На здоровом хосте `torch 2.8.0+cu128 cuda=yes`, детекция едет.
 - Связано: формулировка «0 tracks» врёт (см. #3).
 

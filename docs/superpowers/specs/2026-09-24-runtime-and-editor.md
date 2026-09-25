@@ -5,7 +5,7 @@
 | Author | — |
 | Date | 2026-09-24 |
 | Status | Draft |
-| Audience | инженеры, которые будут внедрять это в `videoclean/`, `server/`, `webui/` и катить на RunPod |
+| Audience | инженеры, которые будут внедрять это в `videoclean/`, `server/`, `webui/` |
 
 ## Overview
 
@@ -17,7 +17,7 @@
 
 ## Background & Motivation
 
-Продукт удаляет текст, логотип или предмет из видео по фразе и/или мазкам. Один и тот же контракт у CLI, `POST /api/jobs` и WebUI. Деплой, под который пишется спецификация, — RunPod: HTTP `7860`, auth обязателен, веса не вшиты в образ, SQLite нельзя класть на network volume, первый запрос процесса платит загрузкой моделей один раз (`docs/RUNPOD.md`). Минимум GPU — 16 ГБ (`grounding-dino-tiny` + `sam2-hiera-tiny` + LaMa). 24 ГБ — класс, на котором временная заливка не должна падать по OOM.
+Продукт удаляет текст, логотип или предмет из видео по фразе и/или мазкам. Один и тот же контракт у CLI, `POST /api/jobs` и WebUI. Ограничения окружения: HTTP `7860`, auth обязателен, веса не вшиты в образ, SQLite нельзя класть на network volume, первый запрос процесса платит загрузкой моделей один раз. Минимум GPU — 16 ГБ (`grounding-dino-tiny` + `sam2-hiera-tiny` + LaMa). 24 ГБ — класс, на котором временная заливка не должна падать по OOM.
 
 Боль, которую нельзя оставить «на потом»:
 
@@ -79,8 +79,8 @@
 18. **`keep_workdir` в редакторе по умолчанию выключен.** Совпадает с сервером. Включение — только эксперт, станция «Устройство».
 19. **Тестов мало и они про контракт.** Порядок merge, в том числе на payload сегодняшнего `toRunParams(DEFAULT_PARAMS)` без ключа `device`: при включённом `auto` и видимой CUDA устройство `cuda`, ключи `balanced` остаются рецептом, а не `cpu`. Плюс 404, миграция старого payload, пустой потолок = максимум, кроп/батч не выше потолка, ключи `inference_state` sam2. `tests/test_profiles_verify_inpaint.py::test_apply_profile_overwrites_owned_keys` переписывается под merge: явный `inpainter` побеждает `fast`, а не наоборот. Без браузера.
 20. **Публичный контракт.** Поле `preset` живёт на уже публичном `POST /api/jobs`. CRUD пресетов переводится в Public. Остальные новые ручки job — поля той же формы, не новые URL.
-21. **sam2-video питается копией `init_state`, а не пятиключевым словарём.** В `facebookresearch/sam2` на `main` нет `init_state_from_frames`. `reset_state` только чистит уже существующие ключи. Образ пинит коммит `2b90b9f5ceec907a1c18123530e92e794ad901a4` (HEAD `main` на 2026-09-24) в `Dockerfile`, `Dockerfile.api` и `scripts/pytorch-start.sh`. Приватный метод повторяет тело `SAM2VideoPredictor.init_state` этого коммита и подменяет только `load_video_frames`.
-22. **На RunPod едет один образ-кандидат.** В нём одновременно движок кропа, merge с клиентом, который не шлёт полный формуляр, редактор и числовой чекер SLA. Более ранний PR — не выкладка движка и не повод смотреть, «заполнился ли GPU».
+21. **sam2-video питается копией `init_state`, а не пятиключевым словарём.** В `facebookresearch/sam2` на `main` нет `init_state_from_frames`. `reset_state` только чистит уже существующие ключи. Образ пинит коммит `2b90b9f5ceec907a1c18123530e92e794ad901a4` (HEAD `main` на 2026-09-24) в `Dockerfile`, `Dockerfile.api`. Приватный метод повторяет тело `SAM2VideoPredictor.init_state` этого коммита и подменяет только `load_video_frames`.
+22. **Кандидат — один образ.** В нём одновременно движок кропа, merge с клиентом, который не шлёт полный формуляр, редактор и числовой чекер SLA. Более ранний PR — не выкладка движка и не повод смотреть, «заполнился ли GPU».
 
 ## Proposed Design
 
@@ -158,7 +158,7 @@ def resolve_budget(cfg: PipelineConfig, *, probe: MachineProbe) -> Budget:
 
 `inpaint_max_side` в бюджет только кладётся. Режет сторону кропа политика дырки. Это cap, не ускоритель: пустое поле не уменьшает сторону относительно того, что влезает в VRAM.
 
-Пробник NVENC (`videoclean/adapters/media/ffmpeg.py`): разбор `ffmpeg -hide_banner -encoders` на `h264_nvenc`, затем пробный энкод 16×16 в `-f null` с аргументами nvenc из раздела кадров (без `-crf`). Кэш на процесс. Образ PyTorch на RunPod часто без NVENC — ожидаемый путь `libx264`. Отсутствие NVENC не warning уровня ошибки doctor.
+Пробник NVENC (`videoclean/adapters/media/ffmpeg.py`): разбор `ffmpeg -hide_banner -encoders` на `h264_nvenc`, затем пробный энкод 16×16 в `-f null` с аргументами nvenc из раздела кадров (без `-crf`). Кэш на процесс. Образ часто без NVENC — ожидаемый путь `libx264`. Отсутствие NVENC не warning уровня ошибки doctor.
 
 `doctor` печатает снимок машины без job. Секция, которая сегодня называется `This command (independent flags, not a profile)`, переименовывается в `This command (resolved config)` в PR рецептов: профили существуют, осью скорости они не являются. До PR движка doctor не пишет `device=auto` как будто дефолт уже переключён.
 
@@ -180,7 +180,7 @@ def get_or_load(key: WeightKey, loader: Callable[[], object]) -> tuple[object, b
 
 Замок только вокруг загрузки. Адаптеры держат ссылку. Поля job, которые не входят в ключ (`threshold`, `dilate_px`, `raft_iter`, `neighbor_length`), остаются на обёртке.
 
-`budget.warm` в отчёте — истина, только если каждый `WeightKey`, нужный этому job, уже был в кэше до первой стадии. SLA смотрит на это поле. Холодный старт в 120 с не обещается: это как раз «первый запрос после старта процесса» из `docs/RUNPOD.md`.
+`budget.warm` в отчёте — истина, только если каждый `WeightKey`, нужный этому job, уже был в кэше до первой стадии. SLA смотрит на это поле. Холодный старт в 120 с не обещается: это как раз «первый запрос после старта процесса».
 
 Грузить в кэш заранее на старте `serve` не надо. Прогрев — первый реальный job или явный прогон. Иначе процесс без нужных весов упадёт на boot.
 
@@ -307,7 +307,7 @@ RAFT считается в fp32 на уже уменьшенных кадрах.
 
 ### Сегментация
 
-Пин: `git+https://github.com/facebookresearch/sam2.git@2b90b9f5ceec907a1c18123530e92e794ad901a4` в `Dockerfile`, `Dockerfile.api` и строке `uv pip install` в `scripts/pytorch-start.sh`. Плавающий `main` больше не ставится. Тело приватного инициализатора сверяется с `SAM2VideoPredictor.init_state` этого коммита. Обновление пина — отдельное изменение вместе с повторной сверкой тела, не тихий rebase.
+Пин: `git+https://github.com/facebookresearch/sam2.git@2b90b9f5ceec907a1c18123530e92e794ad901a4` в `Dockerfile` и `Dockerfile.api`. Плавающий `main` больше не ставится. Тело приватного инициализатора сверяется с `SAM2VideoPredictor.init_state` этого коммита. Обновление пина — отдельное изменение вместе с повторной сверкой тела, не тихий rebase.
 
 `Sam2VideoSegmenter._propagate` больше не создаёт `TemporaryDirectory` и не вызывает `init_state(video_path=...)`. Приватный `_init_state_from_store` копирует тело `init_state` и заменяет только вызов `load_video_frames`. `reset_state` для сборки словаря не используется: на этом коммите он делает `inference_state["point_inputs_per_obj"].clear()` и упадёт с `KeyError`, если ключей ещё нет.
 
@@ -635,7 +635,7 @@ def inpaint_masked(
 
 ## Data Model Changes
 
-`data_dir/presets.json` — по-прежнему JSON-массив. SQLite не трогаем. Для этого пода пара путей одна: `VIDEOCLEAN_DATA_DIR=/root/.videoclean` (диск контейнера, рядом `jobs.sqlite`, `presets.json` и mmap `frames.bgr`) и `HF_HOME=/workspace/.cache/huggingface` (том на `/workspace`). Сегодняшние дефолты `docs/RUNPOD.md` и `scripts/pytorch-start.sh` ставят data dir на `/workspace/.videoclean` — это как раз сетевой том, на котором SQLite ловит `disk I/O error`. PR документов меняет оба дефолта на пару выше, не только дописывает чеклист. mmap следует за `data_dir`. Data dir на томе — отказ job и doctor до создания `frames.bgr`, не сноска.
+`data_dir/presets.json` — по-прежнему JSON-массив. SQLite не трогаем. Для этого пода пара путей одна: `VIDEOCLEAN_DATA_DIR=/root/.videoclean` (диск контейнера, рядом `jobs.sqlite`, `presets.json` и mmap `frames.bgr`) и `HF_HOME=/workspace/.cache/huggingface` (том на `/workspace`). Прежние дефолты ставят data dir на `/workspace/.videoclean` — это как раз сетевой том, на котором SQLite ловит `disk I/O error`. PR документов меняет оба дефолта на пару выше, не только дописывает чеклист. mmap следует за `data_dir`. Data dir на томе — отказ job и doctor до создания `frames.bgr`, не сноска.
 
 Старая запись:
 
@@ -715,7 +715,7 @@ Docstring `apply_profile` обещает обратное: явные поля �
 
 Угрозы те же, что у текущего `POST /api/jobs`: чужое видео в ffmpeg, чужой JSON треков, webhook. Новых исходящих каналов нет. SSE не заменяется.
 
-- Auth RunPod не ослабляется. `VIDEOCLEAN_AUTH=off` по-прежнему только внутренний контур.
+- Auth не ослабляется. `VIDEOCLEAN_AUTH=off` по-прежнему только внутренний контур.
 - `preset` не становится путём на диске. Id генерирует сервер. Имя не участвует в пути файлов. В 404 нет списка существующих имён.
 - Потолки могут только сузить машину. Поднять бюджет выше `free - reserve` нельзя. Безумные числа режет `validate`: `max_vram_mb` 256…262144, `cpu_threads` 1…256, `inpaint_workers` 0…32, `inpaint_max_side` 64…8192 и кратно 8.
 - `llm_api_key` не попадает в пресет и не копируется в отчёт. Отчёт не содержит заголовок webhook.
@@ -746,11 +746,11 @@ Docstring `apply_profile` обещает обратное: явные поля �
 
 ## Rollout Plan
 
-На под ставится один образ: tip, в котором уже есть движок кропа, merge, клиент без полного `toRunParams`, редактор и `scripts/check_sla_report.py`. PR 4 сам по себе выкладкой движка не называется. PR 1–3 и PR 5 можно мержить в `main` для разработки; их образы на RunPod не катят. PR 4 не ложится на сегодняшний `main` без PR 2, PR 3 и PR 5. PR 6 не ложится на сегодняшний `main` без PR 5.
+На под ставится один образ: tip, в котором уже есть движок кропа, merge, клиент без полного `toRunParams`, редактор и `scripts/check_sla_report.py`. PR 4 сам по себе выкладкой движка не называется. PR 1–3 и PR 5 можно мержить в `main` для разработки; PR 4 не ложится на сегодняшний `main` без PR 2, PR 3 и PR 5. PR 6 не ложится на сегодняшний `main` без PR 5.
 
 До коммита, который включает `device=auto`, отсутствующее устройство остаётся `cpu`. В этом коммите одновременно включается кроп: `quality` на CUDA не становится полным кадром ProPainter ни на одном образе пода.
 
-Пути пода, их же пишет PR 7 в таблицу `docs/RUNPOD.md` и в дефолты `scripts/pytorch-start.sh`:
+Пути:
 
 | Переменная | Значение |
 |---|---|
@@ -759,7 +759,7 @@ Docstring `apply_profile` обещает обратное: явные поля �
 
 `/workspace/.videoclean` как data dir больше не дефолт. Doctor и job отказываются, если `data_dir` на сетевой ФС: mmap туда не уезжает «потому что места много».
 
-Контейнерный диск 40 ГБ из `docs/RUNPOD.md` вмещает SLA-рецепт `balanced` (тензора sam2-video нет): raw ~10.4 ГиБ и маски ~3.7 ГиБ, заливка уходит в stdin энкода, если второй полный mmap не проходит ворота. `quality` с `sam2-video` добавляет float32-тензор ~21 ГиБ при `image_size=1024`. Не влезло в половину свободного места на `/root` — job падает с числами байт, а не молча пишет тензор на том. Для регулярного `quality` диск контейнера стоит поднять; это не меняет дефолт data dir.
+Контейнерный диск 40 ГБ вмещает SLA-рецепт `balanced` (тензора sam2-video нет): raw ~10.4 ГиБ и маски ~3.7 ГиБ, заливка уходит в stdin энкода, если второй полный mmap не проходит ворота. `quality` с `sam2-video` добавляет float32-тензор ~21 ГиБ при `image_size=1024`. Не влезло в половину свободного места на `/root` — job падает с числами байт, а не молча пишет тензор на том. Для регулярного `quality` диск контейнера стоит поднять; это не меняет дефолт data dir.
 
 Откат кандидата — предыдущий образ. Схемы SQLite нет. Старый `presets.json` новый код читает. Очередь перед рестартом пустая. Первый прогон после рестарта холодный; чекер гоняется на втором. Флага «включить движок» нет. Сузить машину — потолок в форме, не откат.
 
@@ -859,11 +859,11 @@ python scripts/check_sla_report.py \
 - `webui/src/widgets/timeline/index.tsx` — подписи кадров 0-based.
 - `webui/src/features/interpret/index.ts` и `use_cases/build_prompt.py` — английский `out_prompt` в `report.prompt`, оригинал в `userPrompt`.
 - `tests/test_api_presets.py` — CRUD без merge и без 404 на job.
-- `docs/PARAMS.md`, `docs/RUNPOD.md`.
+- `docs/PARAMS.md`.
 
 ## PR Plan
 
-PR 1, PR 2, PR 3 и PR 5 можно мержить в `main` по отдельности: прогон остаётся работоспособным, дефолт устройства не уезжает на CUDA, полный кадр ProPainter не становится новым дефолтом `quality`. PR 4 на сегодняшний `main` не ложится: ему нужны PR 2, PR 3 и PR 5. PR 6 на сегодняшний `main` не ложится: ему нужен PR 5. На RunPod ставится только образ после PR 7, когда в нём уже есть кроп, редактор и чекер. Ни один более ранний PR выкладкой движка не называется. Рецепт `profile_defaults` не меняет числа до PR 4.
+PR 1, PR 2, PR 3 и PR 5 можно мержить в `main` по отдельности: прогон остаётся работоспособным, дефолт устройства не уезжает на CUDA, полный кадр ProPainter не становится новым дефолтом `quality`. PR 4 на сегодняшний `main` не ложится: ему нужны PR 2, PR 3 и PR 5. PR 6 на сегодняшний `main` не ложится: ему нужен PR 5. Кандидат — образ после PR 7, когда в нём уже есть кроп, редактор и чекер. Ни один более ранний PR выкладкой движка не называется. Рецепт `profile_defaults` не меняет числа до PR 4.
 
 ### PR 1 — Отчёт: тайминги стадий и снимок машины
 
@@ -875,7 +875,7 @@ PR 1, PR 2, PR 3 и PR 5 можно мержить в `main` по отдельн
 
 **Приёмка.** Существующие тесты прогона зелёные. Новый тест: у завершённого job `timings.decode` и `timings.encode` — числа, `timings.segment` — `null`, в прогрессе есть `stageTitle` из `STAGES`. `doctor` печатает VRAM, если CUDA виден моком, и не падает без CUDA. Картинка кадра не меняется.
 
-**Перед RunPod.** Этот PR на под не катится.
+Этот PR на под не катится.
 
 ### PR 2 — Потолок ресурсов и кэш весов
 
@@ -887,7 +887,7 @@ PR 1, PR 2, PR 3 и PR 5 можно мержить в `main` по отдельн
 
 **Приёмка.** Тест: пустой потолок при моке `mem_get_info`, снятом после фиктивной резидентности весов, даёт бюджет `free - 1.5 GiB`; заданный `max_vram_mb` берётся как минимум; `cpu_threads=None` равен `cpu_count`. Тест: второй `get_or_load` не вызывает loader. Тест: исходник `_run` ProPainter не содержит `.half()`, а загрузка кастует только два модуля. Явный `--device cpu` не уезжает на CUDA. Прогон без `device` остаётся на cpu.
 
-**Перед RunPod.** Не катить. Образ с этим PR и без кропа не кандидат.
+Не катить. Образ с этим PR и без кропа не кандидат.
 
 ### PR 3 — Горячий IO: raw кадры и pipe-энкод
 
@@ -899,13 +899,13 @@ PR 1, PR 2, PR 3 и PR 5 можно мержить в `main` по отдельн
 
 **Приёмка.** Тест: мок энкодеров без `h264_nvenc` выбирает `libx264` и не подставляет `-crf` в nvenc-ветку. Тест `FrameStore`: запись и чтение кадра совпадают. Прогон с `keep_workdir=false` не оставляет `frame_*.jpg`. MP4 имеет те же кадры и аудио. Заливка всё ещё полный кадр: кропа в этом PR нет.
 
-**Перед RunPod.** Не катить.
+Не катить.
 
 ### PR 4 — Движок дырки, память sam2-video, остаток verify
 
 **Зависимости:** PR 2, PR 3 и PR 5 уже в ветке. На чистый `main` этот PR не мержится. JPEG-путь политикой дырки не обвешивается.
 
-**Файлы:** `videoclean/application/hole_policy.py`, `videoclean/application/inpaint_runtime.py`, `videoclean/application/budget.py` (вызов после резидентных весов), `videoclean/application/profiles.py` (workers рецептов → 0, подписи, docstring без оси скорости), `videoclean/composition.py` (заголовок doctor), `videoclean/application/use_cases/run_cleanup.py`, `videoclean/application/config.py` (`verify_redetect` и дефолт устройства `auto`), `videoclean/cli.py` (дефолт `--device auto`), `Dockerfile`, `Dockerfile.api`, `scripts/pytorch-start.sh` (пин sam2), `videoclean/adapters/inpainters/lama.py`, `propainter.py`, `videoclean/adapters/segmenters/sam2.py`, `sam2_video.py`, `videoclean/adapters/detectors/grounding_dino.py`, `server/service.py` (allow-list `verify_redetect` в том же PR), `webui/src/widgets/stage-rail/params.ts` (зеркало рецепта), `tests/test_hole_policy.py`, `tests/fixtures/sla/generate.py`, `tests/fixtures/sla/sla_1080p30_60s.sha256`.
+**Файлы:** `videoclean/application/hole_policy.py`, `videoclean/application/inpaint_runtime.py`, `videoclean/application/budget.py` (вызов после резидентных весов), `videoclean/application/profiles.py` (workers рецептов → 0, подписи, docstring без оси скорости), `videoclean/composition.py` (заголовок doctor), `videoclean/application/use_cases/run_cleanup.py`, `videoclean/application/config.py` (`verify_redetect` и дефолт устройства `auto`), `videoclean/cli.py` (дефолт `--device auto`), `Dockerfile`, `Dockerfile.api`, `videoclean/adapters/inpainters/lama.py`, `propainter.py`, `videoclean/adapters/segmenters/sam2.py`, `sam2_video.py`, `videoclean/adapters/detectors/grounding_dino.py`, `server/service.py` (allow-list `verify_redetect` в том же PR), `webui/src/widgets/stage-rail/params.ts` (зеркало рецепта), `tests/test_hole_policy.py`, `tests/fixtures/sla/generate.py`, `tests/fixtures/sla/sla_1080p30_60s.sha256`.
 
 **Смысл.** В том же коммите, где отсутствующий `device` становится `auto` и на CUDA выбирается ветка `quality`, включается кроп. Полного кадра ProPainter этот образ не содержит. LaMa: проба 64×64, fp16 только если она прошла, иначе процесс на fp32; батч от 1 по аллокатору; OOM — один повтор. `inpaint_masked` обязателен, иначе job падает. `re_inpaint_ranges` ходит в те же кропы. `plan_holes` возвращает список диапазонов; доля — пиксели маски. sam2 пинится на `2b90b9f5ceec907a1c18123530e92e794ad901a4`. Приватный инициализатор — копия `init_state` этого коммита с подменой только `load_video_frames`, `offload_video_to_cpu=True`, `offload_state_to_cpu=True`, прогрев кадра 0. `verify_redetect` попадает на `PipelineConfig`, в пресет и в цикл одновременно. Верхний `inpaintWorkers` больше не пишется. `timings.detect/track/segment` заполняются раздельно. `balanced` не переводится на `sam2-video`. Docstring `profiles.py` больше не говорит speed.
 
@@ -921,7 +921,7 @@ PR 1, PR 2, PR 3 и PR 5 можно мержить в `main` по отдельн
 - `quality` на CUDA: `inpaint_workers` рецепта равен 0.
 - `tests/test_profiles_verify_inpaint.py::test_apply_profile_overwrites_owned_keys` больше не закрепляет затирание явного поля. Явный `inpainter` побеждает `fast`.
 
-**Перед RunPod.** Ещё не кандидат. Кропа без редактора и без чекера на под нет.
+Ещё не кандидат. Кропа без редактора и без чекера на под нет.
 
 ### PR 5 — Пресет: плоская схема, merge, 404, обновление
 
@@ -945,7 +945,7 @@ PR 1, PR 2, PR 3 и PR 5 можно мержить в `main` по отдельн
 - Дубликат имени без `replace` → 409. С `replace` id сохранён. Переименование id не меняет.
 - Непереданный CLI `--detector-max-box-area` даёт `0.45`.
 
-**Перед RunPod.** Не катить. Merge без кропа и без редактора кандидатом не является.
+Не катить. Merge без кропа и без редактора кандидатом не является.
 
 ### PR 6 — Редактор: обычный режим, эксперт, MP4, библиотека
 
@@ -970,15 +970,15 @@ PR 1, PR 2, PR 3 и PR 5 можно мержить в `main` по отдельн
 - Сохранить сценарий, переименовать, id тот же. «Без имени» после правки ручки встроенного профиля, бейдж разошедшегося поля.
 - В запросе «Убрать» нет `stride`.
 
-**Перед RunPod.** Сам по себе не катится. В кандидате фронт собран (`server/static_dist` или nginx). На поде путь «загрузить → фраза → Убрать → Скачать MP4» идёт уже на образе с кропом и чекером, не на этом PR отдельно.
+Сам по себе не катится. В кандидате фронт собран (`server/static_dist` или nginx). На поде путь «загрузить → фраза → Убрать → Скачать MP4» идёт уже на образе с кропом и чекером, не на этом PR отдельно.
 
 ### PR 7 — Документы и чеклист замера
 
 **Зависимости:** PR 1–6, иначе документ опишет невлитый код.
 
-**Файлы:** `docs/PARAMS.md`, `docs/RUNPOD.md`, `scripts/pytorch-start.sh` (дефолт `VIDEOCLEAN_DATA_DIR=/root/.videoclean`, `HF_HOME` остаётся на `/workspace/.cache/huggingface`), `scripts/check_sla_report.py`.
+**Файлы:** `docs/PARAMS.md`, `scripts/check_sla_report.py`. Дефолт `VIDEOCLEAN_DATA_DIR=/root/.videoclean`, `HF_HOME` остаётся на `/workspace/.cache/huggingface`.
 
-**Смысл.** `PARAMS.md` описывает порядок merge, реальный дефолт `device=auto` после PR 4, потолки, `inpaint_max_side`, `verify_redetect`, политику дырки и то, что шаг осмотра — не `detector_keyframes`. Фразы «никаких профилей» и «дефолт device cpu / WebUI авто» удаляются. `RUNPOD.md` и стартовый скрипт получают одну пару путей; абзац про `/workspace/.videoclean` как data dir удаляется, не соседствует с предупреждением про SQLite. Чекер — единственная команда из раздела SLA.
+**Смысл.** `PARAMS.md` описывает порядок merge, реальный дефолт `device=auto` после PR 4, потолки, `inpaint_max_side`, `verify_redetect`, политику дырки и то, что шаг осмотра — не `detector_keyframes`. Фразы «никаких профилей» и «дефолт device cpu / WebUI авто» удаляются. Пара путей одна; абзац про `/workspace/.videoclean` как data dir удаляется, не соседствует с предупреждением про SQLite. Чекер — единственная команда из раздела SLA.
 
 Прогон кандидата на 24 ГБ, второй запуск того же клипа:
 
@@ -989,6 +989,6 @@ PR 1, PR 2, PR 3 и PR 5 можно мержить в `main` по отдельн
 5. Короткий `quality` с крупной движущейся дыркой: `propainter-crop`, сторона меньше ширины кадра, если бюджет того требует, job жив. Полного кадра в отчёте нет.
 6. `doctor` печатает тот же класс устройства и nvenc, что отчёт, и отказывается, если data dir на сетевом томе.
 
-**Приёмка.** Доки, скрипт и форма называют одни и те же поля. В тексте нет группы «Скорость» и нет обещания 120 с для 4K, CPU и дырки на весь кадр. Дефолт `pytorch-start.sh` больше не `/workspace/.videoclean`.
+**Приёмка.** Доки, скрипт и форма называют одни и те же поля. В тексте нет группы «Скорость» и нет обещания 120 с для 4K, CPU и дырки на весь кадр. Дефолт data dir больше не `/workspace/.videoclean`.
 
-**Перед RunPod.** Это и есть кандидат. Образ содержит PR 1–6. Чекер на живом поде вернул 0, три кадра посмотрены. Без нулевого кода чекера образ не катится, даже если MP4 скачивается.
+Это и есть кандидат. Образ содержит PR 1–6. Чекер на живом поде вернул 0, три кадра посмотрены. Без нулевого кода чекера образ не катится, даже если MP4 скачивается.

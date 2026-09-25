@@ -60,7 +60,7 @@ def auth_from_env(env: Mapping[str, str] | None = None) -> tuple[str, str]:
     if not password:
         raise RuntimeError(
             "VIDEOCLEAN_UI_PASSWORD is required when VIDEOCLEAN_AUTH is on "
-            "(safer default for RunPod). Set VIDEOCLEAN_UI_USER and "
+            "(auth stays on unless turned off). Set VIDEOCLEAN_UI_USER and "
             "VIDEOCLEAN_UI_PASSWORD, or VIDEOCLEAN_AUTH=off for internal."
         )
     return (user, password)
