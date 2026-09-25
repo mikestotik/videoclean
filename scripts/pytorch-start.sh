@@ -6,9 +6,8 @@
 # Clone once, then serve. Idempotent: a restart with the same git revision
 # skips apt, pip, and the WebUI build.
 #
-# Every distribution already on the image interpreter is pinned with
-# --overrides. uv must not replace torch/torchvision/torchaudio/numpy
-# (or anything else the image shipped) with the pyproject pins.
+# Image distributions are excluded from uv resolution. The venv uses
+# --system-site-packages, so torch stays the image build (2.8.0+cu128).
 set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
@@ -66,30 +65,27 @@ else
   if [ ! -x "$VENV/bin/python" ]; then
     uv venv --python "$PY" --system-site-packages "$VENV"
   fi
-  # Pin every installed distribution. Local versions (+cu128) are written
-  # as installed so resolution cannot swap them for the pyproject pins
-  # (torch==2.8.0, numpy<2, …).
-  "$PY" - <<'PY' > /tmp/image-pins.txt
+  # Drop every image distribution from resolution. A pin like
+  # torch==2.8.0+cu128 is not on PyPI, and a venv would try to fetch it.
+  # system-site-packages still imports the image copies.
+  "$PY" - <<'PY' > /tmp/image-excludes.txt
 from importlib.metadata import distributions
 seen = set()
 for dist in distributions():
     name = dist.metadata.get("Name")
-    ver = dist.version
-    if not name or not ver or name.lower() in seen:
+    if not name or name.lower() in seen:
         continue
     seen.add(name.lower())
-    print(f"{name}=={ver}")
+    print(name)
 PY
 
-  # `--extra` is rejected unless a project file is named first.
-  # The image uv wants `.[extras]` instead.
   uv pip install --python "$VENV/bin/python" \
-    --overrides /tmp/image-pins.txt \
+    --excludes /tmp/image-excludes.txt \
     -e ".[gpu,lama,web]"
   # sam2 is not on the image. Pin matches the init_state copy in sam2_video.py.
   if ! "$VENV/bin/python" -c 'import sam2' >/dev/null 2>&1 || [ "${VIDEOCLEAN_REINSTALL:-0}" = "1" ]; then
     uv pip install --python "$VENV/bin/python" \
-      --overrides /tmp/image-pins.txt \
+      --excludes /tmp/image-excludes.txt \
       "git+https://github.com/facebookresearch/sam2.git@2b90b9f5ceec907a1c18123530e92e794ad901a4"
   fi
 

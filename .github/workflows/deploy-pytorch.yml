@@ -118,7 +118,7 @@ jobs:
             --arg image "$IMAGE" \
             --arg u "$user" \
             --arg p "$VIDEOCLEAN_UI_PASSWORD" \
-            --arg script "$(cat scripts/pytorch-start.sh)" \
+            --arg script "$(cat scripts/pytorch-bootstrap.sh)" \
             '{
               name:$name,
               image:$image,
