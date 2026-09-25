@@ -50,7 +50,8 @@ purge_venv_torch() {
     echo "purging venv CUDA/torch packages (use image builds):"
     echo "${pkgs}"
     # shellcheck disable=SC2086
-    uv pip uninstall --python "${UV_PROJECT_ENVIRONMENT}/bin/python" -y ${pkgs} || true
+    # uv pip uninstall has no -y flag (unlike pip).
+    uv pip uninstall --python "${UV_PROJECT_ENVIRONMENT}/bin/python" ${pkgs} || true
   fi
 }
 
