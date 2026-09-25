@@ -10,11 +10,11 @@ export type ParamMeta = {
 
 export const INPAINTER_META: Record<string, { label: string; hint: string }> = {
   lama: {
-    label: "LaMa (нейросеть)",
+    label: "LaMa",
     hint: "Покадровая нейросеть. Работает на CPU и GPU. Нет учёта соседних кадров — на видео возможен flicker.",
   },
   propainter: {
-    label: "ProPainter (видео)",
+    label: "ProPainter",
     hint: "Учитывает движение между кадрами. Лучшее качество, нужен CUDA.",
   },
 }
