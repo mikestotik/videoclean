@@ -24,6 +24,12 @@ export type CropSourceParams = {
   name?: string
 }
 
+export const downscaleSource = (sourceId: string, shortSide: 720 | 480) =>
+  api<Source>(`/api/sources/${sourceId}/downscale`, {
+    method: "POST",
+    body: JSON.stringify({ short_side: shortSide }),
+  })
+
 export const cropSource = (sourceId: string, params: CropSourceParams) =>
   api<Source>(`/api/sources/${sourceId}/crop`, {
     method: "POST",

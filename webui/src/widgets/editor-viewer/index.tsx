@@ -15,7 +15,6 @@ import { MaskOverlay } from "./mask-overlay"
 
 export type EditorMode = "annotate" | "detect" | "result"
 
-const SCRUB_PX_PER_FRAME = 4
 const ZOOM_MIN = 1
 const ZOOM_MAX = 8
 const ZOOM_STEP = 1.25
@@ -62,7 +61,6 @@ export function EditorViewer({
   const stageRef = useRef<HTMLDivElement>(null)
   const playingRef = useRef(false)
   const [playing, setPlaying] = useState(false)
-  const scrubRef = useRef<{ x: number; frame: number } | null>(null)
   const panRef = useRef<{ x: number; y: number; sl: number; st: number } | null>(null)
   const { setActiveFrame, setTool, setSize, undo, clearFrame, isDirty } = annotate
   const [zoom, setZoom] = useState(1)
@@ -146,7 +144,6 @@ export function EditorViewer({
     })
   }
 
-  const scrubbing = mode !== "annotate" && zoom <= 1
   const panning = zoom > 1
 
   return (
@@ -164,8 +161,9 @@ export function EditorViewer({
             onFrameChange={onFrameChange}
           />
         ) : (
-          <div className="flex min-h-48 flex-1 items-center justify-center rounded-lg border border-dashed border-border/80 text-sm text-muted-foreground">
-            Результат ещё не готов
+          <div className="flex min-h-48 flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border/80 px-6 text-center text-sm text-muted-foreground">
+            <p>Готового ролика ещё нет.</p>
+            <p className="max-w-sm text-xs">Напишите справа, что убрать, и нажмите «Обработать».</p>
           </div>
         )
       ) : (
@@ -182,33 +180,22 @@ export function EditorViewer({
             zoomAt(clampZoom(zoom * factor), e.clientX, e.clientY)
           }}
           onPointerDown={(e) => {
-            if (e.button === 1 || (panning && e.button === 0)) {
-              const stage = stageRef.current
-              if (!stage) return
-              panRef.current = { x: e.clientX, y: e.clientY, sl: stage.scrollLeft, st: stage.scrollTop }
-              e.currentTarget.setPointerCapture(e.pointerId)
-              return
-            }
-            if (!scrubbing || e.button !== 0) return
-            scrubRef.current = { x: e.clientX, frame: currentFrame }
+            const panGesture = e.button === 1 || (panning && e.button === 0 && e.altKey)
+            if (!panGesture) return
+            const stage = stageRef.current
+            if (!stage) return
+            panRef.current = { x: e.clientX, y: e.clientY, sl: stage.scrollLeft, st: stage.scrollTop }
             e.currentTarget.setPointerCapture(e.pointerId)
           }}
           onPointerMove={(e) => {
             const pan = panRef.current
-            if (pan) {
-              const stage = stageRef.current
-              if (!stage) return
-              stage.scrollLeft = pan.sl - (e.clientX - pan.x)
-              stage.scrollTop = pan.st - (e.clientY - pan.y)
-              return
-            }
-            const s = scrubRef.current
-            if (!scrubbing || !s) return
-            const next = clamp(s.frame + Math.round((e.clientX - s.x) / SCRUB_PX_PER_FRAME))
-            if (next !== currentFrame) onFrameChange(next)
+            if (!pan) return
+            const stage = stageRef.current
+            if (!stage) return
+            stage.scrollLeft = pan.sl - (e.clientX - pan.x)
+            stage.scrollTop = pan.st - (e.clientY - pan.y)
           }}
           onPointerUp={() => {
-            scrubRef.current = null
             panRef.current = null
           }}
         >
@@ -254,6 +241,16 @@ export function EditorViewer({
             )}
             {mode === "detect" && <MaskOverlay url={detectMaskUrl} opacity={maskOpacity} />}
             {mode === "detect" &&
+              !detectMaskUrl &&
+              (detectTracks?.length ?? 0) === 0 &&
+              detectBoxes.every((box) => !box) && (
+                <div className="pointer-events-none absolute inset-0 flex items-end justify-center p-4">
+                  <p className="max-w-sm rounded-md bg-background/90 px-3 py-2 text-center text-xs text-muted-foreground">
+                    Рамок ещё нет. Опишите объект справа и запустите поиск — здесь появятся рамки.
+                  </p>
+                </div>
+              )}
+            {mode === "detect" &&
               (detectTracks && detectTracks.length > 0 ? (
                 <DetectBoxes
                   tracks={detectTracks}
@@ -282,6 +279,15 @@ export function EditorViewer({
           </div>
         </div>
         <div
+          className="absolute bottom-2 left-2 z-20"
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <Button size="sm" variant="secondary" aria-label={playing ? "Пауза" : "Смотреть"} onClick={togglePlay}>
+            {playing ? <Pause /> : <Play />}
+            {playing ? "Пауза" : "Смотреть"}
+          </Button>
+        </div>
+        <div
           className="absolute right-2 bottom-2 z-20 flex items-center gap-0.5 rounded-md bg-background/85 p-0.5"
           onPointerDown={(e) => e.stopPropagation()}
         >
@@ -296,6 +302,8 @@ export function EditorViewer({
           </Button>
           <button
             type="button"
+            title="Сбросить масштаб"
+            aria-label="Сбросить масштаб"
             className="min-w-10 px-1 text-center text-[11px] tabular-nums text-muted-foreground"
             onClick={() => setZoom(1)}
           >
@@ -316,9 +324,6 @@ export function EditorViewer({
 
       {mode === "annotate" && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-card/60 px-2.5 py-2 text-xs">
-          <Button size="icon-sm" variant="outline" aria-label={playing ? "Пауза" : "Пуск"} onClick={togglePlay}>
-            {playing ? <Pause /> : <Play />}
-          </Button>
           <ToggleGroup
             variant="outline"
             size="sm"
@@ -330,9 +335,11 @@ export function EditorViewer({
           >
             <ToggleGroupItem value="brush" aria-label="Кисть">
               <Brush />
+              Кисть
             </ToggleGroupItem>
             <ToggleGroupItem value="eraser" aria-label="Ластик">
               <Eraser />
+              Ластик
             </ToggleGroupItem>
           </ToggleGroup>
           <div className="flex items-center gap-2">
@@ -348,25 +355,30 @@ export function EditorViewer({
             />
             <span className="w-8 tabular-nums text-muted-foreground">{annotate.size}</span>
           </div>
-          <Button variant="outline" size="icon-sm" aria-label="Отменить" onClick={undo}>
+          <Button variant="outline" size="sm" aria-label="Отменить штрих" onClick={undo}>
             <Undo2 />
+            Отменить
           </Button>
-          <Button variant="outline" size="icon-sm" aria-label="Очистить кадр" onClick={clearFrame}>
+          <Button variant="outline" size="sm" aria-label="Очистить кадр" onClick={clearFrame}>
             <Trash />
+            Очистить кадр
           </Button>
           {(isDirty || (annotate.strokesByFrame[currentFrame]?.length ?? 0) > 0) && (
             <span className="ml-auto text-muted-foreground">
-              {isDirty ? "Сохранение…" : "Маска сохранена"}
+              {isDirty ? "Сохранение…" : "Область на кадре сохранена"}
             </span>
           )}
         </div>
       )}
+      {mode === "annotate" && (
+        <p className="px-1 text-[11px] text-muted-foreground">
+          Фразу пишут справа. Кисть нужна, только если хотите отметить область сами. Пробел — пуск,
+          стрелки — кадр, Shift — десять кадров, колёсико с Ctrl — масштаб, Alt и перетаскивание — сдвиг.
+        </p>
+      )}
 
       {mode === "detect" && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-card/60 px-2.5 py-2 text-xs">
-          <Button size="icon-sm" variant="outline" aria-label={playing ? "Пауза" : "Пуск"} onClick={togglePlay}>
-            {playing ? <Pause /> : <Play />}
-          </Button>
           {onMaskOpacityChange && (
             <>
               <span className="text-muted-foreground">Прозрачность маски</span>
@@ -382,7 +394,7 @@ export function EditorViewer({
               />
             </>
           )}
-          <span className="ml-auto text-muted-foreground">Кадр {currentFrame + 1}</span>
+          <span className="ml-auto text-muted-foreground">Тяните рамку, чтобы поправить</span>
         </div>
       )}
     </div>

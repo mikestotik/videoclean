@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Film, Upload } from "lucide-react"
+import { Crop, Film, Upload } from "lucide-react"
+import { Button } from "@/shared/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/shared/ui/dialog"
 import { EditorViewer, type EditorMode } from "@widgets/editor-viewer"
-import { Library } from "@widgets/library"
+import { CropDialog, Library } from "@widgets/library"
 import {
   DEFAULT_PARAMS,
   StageRail,
@@ -24,7 +33,12 @@ import { Timecode } from "@/shared/ui/timecode"
 import { ToggleGroup, ToggleGroupItem } from "@/shared/ui/toggle-group"
 import { cn } from "@/shared/lib/utils"
 
-const MODE_LABEL = { annotate: "Разметка", detect: "Рамки", result: "Результат" } as const
+const MODE_LABEL = { annotate: "Кисть", detect: "Рамки", result: "Результат" } as const
+const MODE_HINT = {
+  annotate: "Закрасить область вручную. Обычно хватает фразы справа.",
+  detect: "Найденные объекты. Появятся после запуска рамок.",
+  result: "Сравнение: слева готовое, справа исходное.",
+} as const
 
 function stageTargetsFromReport(value: unknown): StageTarget[] {
   if (!Array.isArray(value)) return []
@@ -75,6 +89,9 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
   const [restoreError, setRestoreError] = useState("")
   const [failedError, setFailedError] = useState("")
   const [holdFailed, setHoldFailed] = useState(false)
+  const [switchAsk, setSwitchAsk] = useState(false)
+  const [cropOpen, setCropOpen] = useState(false)
+  const switchResolve = useRef<((ok: boolean) => void) | null>(null)
   const { jobs: liveJobs } = useEvents()
 
   const sourceId = source?.id ?? null
@@ -143,8 +160,11 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
 
   const allowSourceChange = useCallback(() => {
     const dirty = params.prompt.trim().length > 0 || detect.tracksDirty
-    if (!dirty) return true
-    return window.confirm("Сменить видео? Промпт и несохранённые рамки будут сброшены.")
+    if (!dirty) return Promise.resolve(true)
+    return new Promise<boolean>((resolve) => {
+      switchResolve.current = resolve
+      setSwitchAsk(true)
+    })
   }, [detect.tracksDirty, params.prompt])
 
   const selectJob = useCallback(
@@ -152,7 +172,7 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
       if (job.state === "FAILED") {
         setRestoreError("")
         if (job.source_id && job.source_id !== source?.id) {
-          if (!allowSourceChange()) return
+          if (!(await allowSourceChange())) return
           try {
             const row = await getSource(job.source_id)
             setHoldFailed(true)
@@ -350,13 +370,20 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
           <div className="col-start-2 row-start-1 flex min-h-0 min-w-0 flex-col gap-0 overflow-hidden">
             <div className="flex h-11 shrink-0 items-center gap-3 border-b border-border/60 px-4">
               <Timecode>{formatTimecode(currentFrame, probe.fps)}</Timecode>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{source.name}</p>
-                <p className="text-[11px] text-muted-foreground">
-                  {probe.width}×{probe.height} · {probe.fps.toFixed(2)} fps · кадр {currentFrame + 1} /{" "}
-                  {probe.frame_count}
-                </p>
-              </div>
+              <p className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
+                кадр {currentFrame + 1} / {probe.frame_count}
+                {" · "}
+                {probe.width}×{probe.height}
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                title="Сохранить кусок отдельным роликом. Исходный файл останется."
+                onClick={() => setCropOpen(true)}
+              >
+                <Crop />
+                Фрагмент
+              </Button>
               <ToggleGroup
                 variant="outline"
                 size="sm"
@@ -367,7 +394,12 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
                 }}
               >
                 {(["annotate", "detect", "result"] as const).map((m) => (
-                  <ToggleGroupItem key={m} value={m} className={cn(viewerMode === m && "bg-muted")}>
+                  <ToggleGroupItem
+                    key={m}
+                    value={m}
+                    title={MODE_HINT[m]}
+                    className={cn(viewerMode === m && "bg-muted")}
+                  >
                     {MODE_LABEL[m]}
                   </ToggleGroupItem>
                 ))}
@@ -414,7 +446,7 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
               keyframeFrames={viewerMode === "detect" ? keyframeFrames : []}
               trackLabel={
                 viewerMode === "detect" && selectedTrack
-                  ? selectedTrack.label || `трек ${selectedTrack.id}`
+                  ? selectedTrack.label || `объект ${selectedTrack.id}`
                   : null
               }
               onClearKey={
@@ -441,13 +473,16 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
             </span>
             <h2 className="text-lg font-semibold tracking-tight">Выберите видео</h2>
             <p className="mt-2 text-sm text-muted-foreground">
-              Загрузите ролик слева или выберите уже загруженный источник. Дальше опишите, что
-              удалить, и запустите конвейер.
+              Загрузите ролик или откройте его в библиотеке слева. Затем справа напишите, что убрать.
             </p>
-            <p className="mt-4 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Upload className="size-3.5" />
-              Поддерживаются обычные видеофайлы
-            </p>
+            <Button
+              className="mt-4"
+              onClick={() => window.dispatchEvent(new CustomEvent("videoclean:pick-upload"))}
+            >
+              <Upload />
+              Загрузить видео
+            </Button>
+            <p className="mt-3 text-xs text-muted-foreground">mp4, mov, webm, mkv</p>
           </div>
         </div>
       )}
@@ -470,6 +505,60 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
           phrase={interpret}
         />
       </aside>
+      <CropDialog
+        source={source}
+        open={cropOpen}
+        onOpenChange={setCropOpen}
+        onDone={(created) => {
+          setCropOpen(false)
+          void (async () => {
+            if (!(await allowSourceChange())) return
+            setSource(created)
+          })()
+        }}
+      />
+      <Dialog
+        open={switchAsk}
+        onOpenChange={(open) => {
+          if (open) return
+          const resolve = switchResolve.current
+          switchResolve.current = null
+          setSwitchAsk(false)
+          resolve?.(false)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Сменить видео?</DialogTitle>
+            <DialogDescription>
+              Фраза и несохранённые рамки на текущем ролике сбросятся.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                const resolve = switchResolve.current
+                switchResolve.current = null
+                setSwitchAsk(false)
+                resolve?.(false)
+              }}
+            >
+              Остаться
+            </Button>
+            <Button
+              onClick={() => {
+                const resolve = switchResolve.current
+                switchResolve.current = null
+                setSwitchAsk(false)
+                resolve?.(true)
+              }}
+            >
+              Сменить
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

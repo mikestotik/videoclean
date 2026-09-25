@@ -126,29 +126,35 @@ export function Timeline({
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between gap-2 px-0.5">
-        <p className="text-[11px] font-medium text-muted-foreground">Таймлайн</p>
+        <p className="text-[11px] font-medium text-muted-foreground">Кадры</p>
         <div className="flex flex-wrap items-center justify-end gap-3 text-[10px] text-muted-foreground">
-          <span className="inline-flex items-center gap-1">
-            <span className="size-1.5 rounded-full bg-primary" /> разметка
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <span className="size-1.5 rounded-full bg-destructive" /> маска
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <span className="size-1.5 rotate-45 bg-amber-400" /> ключ рамки
-          </span>
+          {annotatedFrames.length > 0 && (
+            <span className="inline-flex items-center gap-1">
+              <span className="size-1.5 rounded-full bg-primary" /> кисть
+            </span>
+          )}
+          {maskedFrames.length > 0 && (
+            <span className="inline-flex items-center gap-1">
+              <span className="size-1.5 rounded-full bg-destructive" /> найденная маска
+            </span>
+          )}
+          {keyframeFrames.length > 0 && (
+            <span className="inline-flex items-center gap-1">
+              <span className="size-1.5 rotate-45 bg-amber-400" /> правка рамки
+            </span>
+          )}
         </div>
       </div>
 
       {(keyframeFrames.length > 0 || trackLabel) && (
         <div className="flex items-center gap-2 px-0.5">
           <p className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
-            {trackLabel ? `Ключи: ${trackLabel}` : "Ключи выбранного трека"}
+            {trackLabel ? `Правки рамки: ${trackLabel}` : "Правки выбранной рамки"}
             {keyframeFrames.length > 0 ? ` · ${keyframeFrames.length}` : ""}
           </p>
           {atKey && onClearKey && (
             <Button size="xs" variant="ghost" onClick={() => onClearKey(currentFrame)}>
-              Сбросить ключ
+              Сбросить правку
             </Button>
           )}
         </div>
@@ -157,7 +163,7 @@ export function Timeline({
       <div
         ref={stripRef}
         role="slider"
-        aria-label="Прокрутка по кадрам"
+        aria-label="Точная перемотка по кадрам"
         aria-valuemin={frameCount > 0 ? 1 : 0}
         aria-valuemax={Math.max(0, frameCount)}
         aria-valuenow={frameCount > 0 ? currentFrame + 1 : 0}
@@ -178,7 +184,7 @@ export function Timeline({
             <button
               key={f}
               type="button"
-              title={`Ключ · кадр ${f + 1}`}
+              title={`Правка рамки · кадр ${f + 1}`}
               className={cn(
                 "absolute top-1/2 z-10 size-2.5 -translate-x-1/2 -translate-y-1/2 rotate-45 border border-amber-600 bg-amber-400",
                 f === currentFrame && "ring-2 ring-amber-300",
@@ -202,11 +208,7 @@ export function Timeline({
 
       <div
         ref={thumbsRef}
-        className="relative flex cursor-ew-resize touch-none gap-1 overflow-x-auto rounded-lg border border-border/70 bg-background/40 p-1.5 select-none"
-        onPointerDown={(e) => startScrub(e, thumbsRef.current)}
-        onPointerMove={(e) => moveScrub(e, thumbsRef.current)}
-        onPointerUp={(e) => endScrub(e, thumbsRef.current)}
-        onPointerCancel={(e) => endScrub(e, thumbsRef.current)}
+        className="relative flex gap-1 overflow-x-auto rounded-lg border border-border/70 bg-background/40 p-1.5"
       >
         {indexes.map((idx) => (
           <button
@@ -219,13 +221,7 @@ export function Timeline({
                 ? "border-primary ring-2 ring-primary/40"
                 : "border-transparent hover:border-border",
             )}
-            onPointerDown={(e) => {
-              e.stopPropagation()
-              draggingRef.current = true
-              const root = thumbsRef.current
-              if (root) root.setPointerCapture(e.pointerId)
-              onFrameChange(idx)
-            }}
+            title={`Обзорный кадр ${idx + 1}. Точная перемотка — полосой выше.`}
             onClick={() => onFrameChange(idx)}
           >
             <img src={thumbs[idx]} alt={`кадр ${idx + 1}`} className="pointer-events-none h-full w-full object-cover" />

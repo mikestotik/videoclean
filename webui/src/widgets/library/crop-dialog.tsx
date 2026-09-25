@@ -5,6 +5,7 @@ import { Button } from "@/shared/ui/button"
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -122,7 +123,10 @@ export function CropDialog({ source, open, onOpenChange, onDone }: Props) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Обрезать · {source?.name ?? ""}</DialogTitle>
+          <DialogTitle>Новый ролик из фрагмента · {source?.name ?? ""}</DialogTitle>
+          <DialogDescription>
+            Исходный файл останется в библиотеке. Сохранится только выбранный кусок.
+          </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4">
           {source && preview && (

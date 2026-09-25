@@ -118,8 +118,9 @@ export function Compare({
 
   if (!outputUrl) {
     return (
-      <div className="flex h-64 items-center justify-center rounded-md border text-sm text-muted-foreground">
-        Результат ещё не готов
+      <div className="flex h-64 flex-col items-center justify-center gap-2 rounded-md border px-6 text-center text-sm text-muted-foreground">
+        <p>Файл результата ещё скачивается.</p>
+        <p className="text-xs">Когда он появится, границу можно будет тянуть: слева готовое, справа исходное.</p>
       </div>
     )
   }
@@ -183,10 +184,11 @@ export function Compare({
       </div>
 
       <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-card/60 px-2.5 py-2">
-        <Button size="sm" variant="outline" onClick={togglePlay} aria-label={playing ? "Пауза" : "Пуск"}>
+        <Button size="sm" variant="outline" onClick={togglePlay} aria-label={playing ? "Пауза" : "Смотреть"}>
           {playing ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}
-          {playing ? "Пауза" : "Пуск"}
+          {playing ? "Пауза" : "Смотреть"}
         </Button>
+        <span className="text-xs text-muted-foreground">Потяните границу: слева готовое, справа исходное.</span>
       </div>
     </div>
   )

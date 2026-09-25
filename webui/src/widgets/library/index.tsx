@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react"
 import {
-  Check,
-  Crop,
+  ChevronDown,
   Download,
   Eraser,
   Film,
@@ -23,10 +22,19 @@ import {
   type JobKind,
   type JobState,
 } from "@/entities/job"
-import { deleteSource, type Source } from "@/entities/source"
+import { deleteSource, videoUrl, type Source } from "@/entities/source"
 import { useEvents } from "@/shared/events"
 import { formatTimecode } from "@/shared/lib/format"
 import { Button } from "@/shared/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/shared/ui/dialog"
+import { Input } from "@/shared/ui/input"
 import { ScrollArea } from "@/shared/ui/scroll-area"
 import { cn } from "@/shared/lib/utils"
 import { CropDialog } from "./crop-dialog"
@@ -34,7 +42,7 @@ import { UploadButton } from "./upload"
 import type { DetectTrack } from "@features/detect-run"
 
 const KIND_META: Record<JobKind, { label: string; Icon: typeof Sparkles }> = {
-  prompt: { label: "Промпт", Icon: Sparkles },
+  prompt: { label: "Фраза", Icon: Sparkles },
   preview: { label: "Рамки", Icon: ScanSearch },
   run: { label: "Результат", Icon: Eraser },
   package: { label: "Пакет", Icon: Package },
@@ -56,6 +64,22 @@ function stateTone(state: JobState): string {
   return "text-primary"
 }
 
+function jobWhen(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ""
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+  if (d.toDateString() === new Date().toDateString()) return time
+  return `${d.toLocaleDateString([], { day: "numeric", month: "short" })} ${time}`
+}
+
+function stageLine(job: Job): string {
+  const title = (job.stageTitle ?? "").trim()
+  if (title) return title
+  const raw = job.stage.trim()
+  if (!raw) return "Обработка"
+  return raw
+}
+
 export type ActivePipelineJobs = {
   prompt: string | null
   preview: string | null
@@ -70,18 +94,17 @@ function JobRow({
   onAct,
   onSelect,
   onDownload,
+  onAskDelete,
 }: {
   job: Job
   active: boolean
   onAct: ActFn
   onSelect?: (job: Job) => void
   onDownload?: (job: Job) => void
+  onAskDelete: (job: Job) => void
 }) {
   const selectable = (job.state === "COMPLETED" || job.state === "FAILED") && Boolean(onSelect)
-  const time = new Date(job.created_at).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  })
+  const time = jobWhen(job.created_at)
   const summary =
     job.state === "FAILED" && job.error.trim()
       ? job.error.trim()
@@ -93,8 +116,8 @@ function JobRow({
       tabIndex={selectable ? 0 : undefined}
       aria-pressed={selectable ? active : undefined}
       className={cn(
-        "grid grid-cols-[14px_minmax(0,1fr)_auto] items-start gap-x-2 rounded-md px-2 py-1.5 text-xs",
-        active && "bg-primary/10",
+        "grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 rounded-md px-2 py-1.5 text-xs",
+        active && "border-l-2 border-primary bg-primary/10",
         selectable && "cursor-pointer hover:bg-muted/50",
       )}
       onClick={selectable ? () => onSelect?.(job) : undefined}
@@ -109,36 +132,20 @@ function JobRow({
           : undefined
       }
     >
-      <span className="mt-0.5 flex size-3.5 items-center justify-center" aria-hidden>
-        {selectable ? (
-          <span
-            className={cn(
-              "flex size-3.5 items-center justify-center rounded-full border",
-              active
-                ? "border-primary bg-primary text-primary-foreground"
-                : "border-muted-foreground/40 bg-transparent",
-            )}
-          >
-            {active ? <Check className="size-2.5" /> : null}
-          </span>
-        ) : (
-          <span className="size-3.5" />
-        )}
-      </span>
-
       <div className="min-w-0">
         <div className="flex h-4 items-center gap-2">
           <span className={cn("shrink-0 font-medium", stateTone(job.state))}>
             {STATE_LABEL[job.state]}
           </span>
           <span className="shrink-0 tabular-nums text-muted-foreground">{time}</span>
+          {active && <span className="truncate text-[10px] text-primary">на экране</span>}
         </div>
         <p className="mt-0.5 h-4 truncate text-[11px] leading-4 text-muted-foreground" title={summary}>
           {summary}
         </p>
-        {job.state === "RUNNING" && job.stage ? (
+        {job.state === "RUNNING" ? (
           <div className="mt-1 flex h-3 items-center gap-2 text-[10px] text-muted-foreground">
-            <span className="min-w-0 truncate">{job.stage}</span>
+            <span className="min-w-0 truncate">{stageLine(job)}</span>
             <span className="shrink-0 tabular-nums">{Math.round(job.fraction * 100)}%</span>
           </div>
         ) : null}
@@ -169,11 +176,7 @@ function JobRow({
           variant="ghost"
           aria-label="Удалить"
           className="text-muted-foreground hover:text-destructive"
-          onClick={() => {
-            const label = job.prompt.trim() || KIND_META[job.kind].label
-            if (!window.confirm(`Удалить «${label}» и связанные данные?`)) return
-            onAct(deleteJob, job.id)
-          }}
+          onClick={() => onAskDelete(job)}
         >
           <Trash2 className="size-3" />
         </Button>
@@ -194,6 +197,7 @@ function StageGroup({
   selectedTrackId,
   onToggleTrack,
   onSelectTrack,
+  onAskDelete,
 }: {
   kind: JobKind
   jobs: Job[]
@@ -206,6 +210,7 @@ function StageGroup({
   selectedTrackId?: number | null
   onToggleTrack?: (id: number) => void
   onSelectTrack?: (id: number) => void
+  onAskDelete: (job: Job) => void
 }) {
   const meta = KIND_META[kind]
   const Icon = meta.Icon
@@ -224,8 +229,13 @@ function StageGroup({
             onAct={onAct}
             onSelect={onSelectJob}
             onDownload={onDownload}
+            onAskDelete={onAskDelete}
           />
           {kind === "preview" && job.id === activeId && (maskTracks?.length ?? 0) > 0 && (
+            <>
+            <p className="ml-3.5 mt-1 text-[10px] text-muted-foreground">
+              Галочка — удалять объект. Число — на скольких кадрах он найден.
+            </p>
             <ul className="ml-3.5 mt-0.5 space-y-0.5 border-l border-border/60 pl-2">
               {maskTracks!.map((t) => {
                 const on = !excludedIds?.includes(t.id)
@@ -248,17 +258,23 @@ function StageGroup({
                         checked={on}
                         onChange={() => onToggleTrack?.(t.id)}
                         onClick={(e) => e.stopPropagation()}
-                        aria-label={on ? "Исключить" : "Включить"}
+                        aria-label={on ? "Не удалять этот объект" : "Удалять этот объект"}
                       />
                       <span className="min-w-0 flex-1 truncate">
-                        {t.label || `рамка ${t.id}`}
+                        {t.label || `объект ${t.id}`}
                       </span>
-                      <span className="shrink-0 tabular-nums text-muted-foreground">{hits}</span>
+                      <span
+                        className="shrink-0 tabular-nums text-muted-foreground"
+                        title="Кадров, где объект найден"
+                      >
+                        {hits}
+                      </span>
                     </button>
                   </li>
                 )
               })}
             </ul>
+            </>
           )}
         </div>
       ))}
@@ -273,7 +289,7 @@ type Props = {
   activeJobs?: ActivePipelineJobs
   onSelectJob?: (job: Job) => void
   onUploaded?: (source: Source) => void
-  beforeSourceChange?: () => boolean
+  beforeSourceChange?: () => boolean | Promise<boolean>
   maskTracks?: DetectTrack[]
   excludedIds?: number[]
   selectedTrackId?: number | null
@@ -282,6 +298,8 @@ type Props = {
 }
 
 const EMPTY_ACTIVE: ActivePipelineJobs = { prompt: null, preview: null, run: null }
+
+export { CropDialog }
 
 export function Library({
   selectedId,
@@ -300,8 +318,17 @@ export function Library({
   const { jobs, sources, status } = useEvents()
   const [error, setError] = useState("")
   const [deletingId, setDeletingId] = useState("")
-  const [cropTarget, setCropTarget] = useState<Source | null>(null)
+  const [query, setQuery] = useState("")
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const [confirm, setConfirm] = useState<
+    { title: string; body: string; confirm: string; run: () => void } | null
+  >(null)
   const loading = status === "connecting" && sources.length === 0
+
+  const gate = async () => {
+    if (!beforeSourceChange) return true
+    return await beforeSourceChange()
+  }
 
   const act: ActFn = async (fn, id) => {
     try {
@@ -323,8 +350,6 @@ export function Library({
 
   const removeSource = async (source: Source) => {
     if (deletingId) return
-    const ok = window.confirm(`Удалить «${source.name}» и связанные данные?`)
-    if (!ok) return
     setDeletingId(source.id)
     setError("")
     try {
@@ -342,7 +367,32 @@ export function Library({
     }
   }
 
+  const askDeleteJob = (job: Job) => {
+    const label = job.prompt.trim() || KIND_META[job.kind].label
+    setConfirm({
+      title: "Удалить задачу",
+      body: `«${label}» и связанные данные пропадут из библиотеки.`,
+      confirm: "Удалить",
+      run: () => act(deleteJob, job.id),
+    })
+  }
+
+  const askDeleteSource = (source: Source) => {
+    setConfirm({
+      title: "Удалить ролик",
+      body: `«${source.name}» и связанные задачи пропадут из библиотеки.`,
+      confirm: "Удалить",
+      run: () => void removeSource(source),
+    })
+  }
+
   const freeJobs = jobs.filter((j) => j.source_id === null)
+  const visibleSources = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    const rows = [...sources].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    if (!q) return rows
+    return rows.filter((s) => s.name.toLowerCase().includes(q))
+  }, [query, sources])
   const sourceJobs = useMemo(
     () => (selectedId ? jobs.filter((j) => j.source_id === selectedId) : []),
     [jobs, selectedId],
@@ -369,15 +419,26 @@ export function Library({
       <div className="shrink-0 space-y-3 border-b border-border/70 p-3">
         <div>
           <h2 className="text-sm font-semibold">Библиотека</h2>
-          <p className="text-[11px] text-muted-foreground">Видео и прогоны</p>
+          <p className="text-[11px] text-muted-foreground">Ролики и прошлые запуски</p>
         </div>
         <UploadButton
           onUploaded={(created) => {
-            if (beforeSourceChange && !beforeSourceChange()) return
-            onSelect(created)
-            onUploaded?.(created)
+            void (async () => {
+              if (!(await gate())) return
+              onSelect(created)
+              onUploaded?.(created)
+            })()
           }}
         />
+        {sources.length > 3 && (
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Найти ролик"
+            aria-label="Найти ролик"
+            className="h-8"
+          />
+        )}
         {error && <p className="text-xs text-destructive">{error}</p>}
       </div>
 
@@ -396,13 +457,14 @@ export function Library({
             </div>
           )}
 
-          {sources.map((s) => {
+          {visibleSources.map((s) => {
             const selected = s.id === selectedId
+            const folded = Boolean(collapsed[s.id])
             return (
               <div key={s.id}>
                 <div
                   className={cn(
-                    "group flex items-center gap-1 rounded-md",
+                    "flex items-center gap-1 rounded-md",
                     selected ? "bg-primary/10" : "hover:bg-muted/40",
                   )}
                 >
@@ -410,19 +472,28 @@ export function Library({
                     type="button"
                     className="flex min-w-0 flex-1 items-center gap-2.5 px-2 py-2 text-left"
                     onClick={() => {
-                      if (s.id === selectedId) return
-                      if (beforeSourceChange && !beforeSourceChange()) return
-                      onSelect(s)
+                      void (async () => {
+                        if (s.id === selectedId) {
+                          setCollapsed((prev) => ({ ...prev, [s.id]: !prev[s.id] }))
+                          return
+                        }
+                        if (!(await gate())) return
+                        onSelect(s)
+                      })()
                     }}
                   >
-                    <Film
-                      className={cn(
-                        "size-4 shrink-0",
-                        selected ? "text-primary" : "text-muted-foreground",
-                      )}
+                    <video
+                      src={`${videoUrl(s)}#t=0.1`}
+                      muted
+                      playsInline
+                      preload="metadata"
+                      aria-hidden
+                      className="size-10 shrink-0 rounded bg-black object-cover"
                     />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium leading-5">{s.name}</span>
+                      <span className="block truncate text-sm font-medium leading-5" title={s.name}>
+                        {s.name}
+                      </span>
                       <span className="block h-4 truncate text-[11px] leading-4 tabular-nums text-muted-foreground">
                         {formatTimecode(Math.round(s.probe.duration_s * s.probe.fps), s.probe.fps)}
                         {" · "}
@@ -430,15 +501,26 @@ export function Library({
                       </span>
                     </span>
                   </button>
+                  {selected && (
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      className="shrink-0 text-muted-foreground"
+                      aria-label={folded ? "Показать запуски" : "Скрыть запуски"}
+                      onClick={() => setCollapsed((prev) => ({ ...prev, [s.id]: !prev[s.id] }))}
+                    >
+                      <ChevronDown className={cn("size-3.5 transition-transform", folded && "-rotate-90")} />
+                    </Button>
+                  )}
                   <Button
                     size="icon-xs"
                     variant="ghost"
-                    className="mr-1 shrink-0 text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100"
+                    className="mr-1 shrink-0 text-muted-foreground hover:text-destructive"
                     aria-label={`Удалить ${s.name}`}
                     disabled={deletingId === s.id}
                     onClick={(e) => {
                       e.stopPropagation()
-                      void removeSource(s)
+                      askDeleteSource(s)
                     }}
                   >
                     {deletingId === s.id ? (
@@ -449,19 +531,9 @@ export function Library({
                   </Button>
                 </div>
 
-                {selected && (
+                {selected && !folded && sourceJobs.length > 0 && (
                   <div className="ml-3 mt-1 space-y-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 w-full justify-start gap-1.5"
-                      onClick={() => setCropTarget(s)}
-                    >
-                      <Crop className="size-3.5" />
-                      Обрезать
-                    </Button>
-                    {sourceJobs.length > 0 &&
-                      KIND_ORDER.map((kind) =>
+                    {KIND_ORDER.map((kind) =>
                         jobsByKind[kind].length > 0 ? (
                           <StageGroup
                             key={kind}
@@ -476,18 +548,24 @@ export function Library({
                             selectedTrackId={selectedTrackId}
                             onToggleTrack={onToggleTrack}
                             onSelectTrack={onSelectTrack}
+                            onAskDelete={askDeleteJob}
                           />
-                        ) : null,
-                      )}
+                        ) : null
+                    )}
                   </div>
                 )}
               </div>
             )
           })}
 
+          {query.trim() && visibleSources.length === 0 && sources.length > 0 && (
+            <p className="px-2 py-4 text-center text-xs text-muted-foreground">Ничего не найдено</p>
+          )}
+
           {freeJobs.length > 0 && (
             <div className="mt-3 space-y-0.5">
-              <p className="px-2 text-[11px] font-medium text-muted-foreground">Без видео</p>
+              <p className="px-2 text-[11px] font-medium text-muted-foreground">Задачи без ролика</p>
+              <p className="px-2 pb-1 text-[10px] text-muted-foreground">Их не к чему открыть в плеере.</p>
               {freeJobs.map((j) => (
                 <JobRow
                   key={j.id}
@@ -496,6 +574,7 @@ export function Library({
                   onAct={act}
                   onSelect={onSelectJob}
                   onDownload={downloadOutput}
+                  onAskDelete={askDeleteJob}
                 />
               ))}
             </div>
@@ -503,18 +582,34 @@ export function Library({
         </div>
       </ScrollArea>
 
-      <CropDialog
-        source={cropTarget}
-        open={Boolean(cropTarget)}
+      <Dialog
+        open={confirm !== null}
         onOpenChange={(open) => {
-          if (!open) setCropTarget(null)
+          if (!open) setConfirm(null)
         }}
-        onDone={(created) => {
-          setCropTarget(null)
-          if (beforeSourceChange && !beforeSourceChange()) return
-          onSelect(created)
-        }}
-      />
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{confirm?.title}</DialogTitle>
+            <DialogDescription>{confirm?.body}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirm(null)}>
+              Отмена
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                const run = confirm?.run
+                setConfirm(null)
+                run?.()
+              }}
+            >
+              {confirm?.confirm ?? "Удалить"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

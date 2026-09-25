@@ -40,6 +40,7 @@ from server.service import (
     auth_from_env,
     cancel_downloads,
     crop_source,
+    downscale_source,
     default_device,
     delete_mask,
     delete_preset,
@@ -349,6 +350,20 @@ def create_app(state: AppState) -> FastAPI:
                 bottom=_int("bottom"),
                 name=name,
             )
+        except PipelineError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return JSONResponse(source_dict(st.sources.get(sid)), status_code=201)
+
+    @app.post("/api/sources/{source_id}/downscale")
+    def downscale_source_endpoint(source_id: str, body: dict[str, Any], st: AppState = Depends(get_state)):
+        """Prep: smaller working copy (720p or 480p on the short side). Original stays."""
+        row = _source_or_404(st, source_id)
+        try:
+            short_side = int(body.get("short_side"))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(400, "short_side must be 720 or 480") from exc
+        try:
+            sid = downscale_source(st, row, short_side=short_side)
         except PipelineError as exc:
             raise HTTPException(400, str(exc)) from exc
         return JSONResponse(source_dict(st.sources.get(sid)), status_code=201)

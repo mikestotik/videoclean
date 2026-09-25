@@ -674,6 +674,52 @@ def register_source(state: AppState, tmp: Path, original_name: str) -> str:
     return source_id
 
 
+def fit_short_side(width: int, height: int, short_side: int) -> tuple[int, int]:
+    """Even frame size whose shorter side is `short_side`. Refuses upscales."""
+    if short_side not in {480, 720}:
+        raise PipelineError("short_side must be 720 or 480")
+    if width < 2 or height < 2:
+        raise PipelineError("source frame is too small")
+    short = min(width, height)
+    if short <= short_side:
+        raise PipelineError(f"source is already {width}×{height}, not larger than {short_side}p")
+    scale = short_side / float(short)
+    out_w = max(2, int(width * scale) // 2 * 2)
+    out_h = max(2, int(height * scale) // 2 * 2)
+    return out_w, out_h
+
+
+def downscale_source(state: AppState, source_row, *, short_side: int) -> str:
+    """Store a smaller copy of a library source. The original stays."""
+    from videoclean.adapters.media.ffmpeg import FFmpegMedia
+
+    src = Path(source_row["path"])
+    if not src.is_file():
+        raise PipelineError("source file missing")
+    probe = _as_dict(source_row["probe_json"])
+    out_w, out_h = fit_short_side(int(probe.get("width") or 0), int(probe.get("height") or 0), short_side)
+    source_id = new_source_id()
+    dest_dir = Path(state.data_dir) / "sources" / source_id
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / "input.mp4"
+    try:
+        m = FFmpegMedia().scale_clip(src, dest, width=out_w, height=out_h, log_file=dest_dir / "ffmpeg_scale.log")
+    except Exception:  # noqa: BLE001
+        shutil.rmtree(dest_dir, ignore_errors=True)
+        raise
+    stored = {
+        "fps": m.fps,
+        "duration_s": m.duration_s,
+        "width": m.width,
+        "height": m.height,
+        "frame_count": m.frame_count,
+        "has_audio": m.has_audio,
+    }
+    base = Path(str(source_row["name"] or "video")).stem
+    state.sources.register(source_id, f"{base} · {short_side}p", str(dest), probe=stored)
+    return source_id
+
+
 def crop_source(
     state: AppState,
     source_row,

@@ -236,6 +236,39 @@ class FFmpegMedia:
         if code != 0 or not dest.is_file():
             raise PipelineError(f"ffmpeg encode failed (exit {code}); see {log_file}")
 
+    def scale_clip(
+        self,
+        src: Path,
+        dest: Path,
+        *,
+        width: int,
+        height: int,
+        log_file: Path | None = None,
+    ) -> MediaManifest:
+        """Re-encode a library source at a smaller even frame size."""
+        manifest = self.probe(src)
+        if width < 2 or height < 2 or width % 2 or height % 2:
+            raise PipelineError(f"scale size must be even and >= 2, got {width}x{height}")
+        if width > manifest.width or height > manifest.height:
+            raise PipelineError("scale cannot enlarge the source")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        log = log_file or (dest.parent / "ffmpeg_scale.log")
+        cmd = [
+            _ffmpeg(), "-y", "-hide_banner", "-i", str(src),
+            "-vf", f"scale={width}:{height}",
+            "-pix_fmt", "yuv420p",
+            *encoder_argv(nvenc_available()),
+        ]
+        if manifest.has_audio:
+            cmd += ["-c:a", "aac", "-b:a", "128k"]
+        else:
+            cmd += ["-an"]
+        cmd += ["-movflags", "+faststart", str(dest)]
+        _run(cmd, log)
+        if not dest.is_file():
+            raise PipelineError("scale produced no output")
+        return self.probe(dest)
+
     def crop_clip(
         self,
         src: Path,
