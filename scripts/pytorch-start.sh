@@ -8,7 +8,12 @@
 #
 # Image distributions are excluded from uv resolution. The venv uses
 # --system-site-packages, so torch stays the image build (2.8.0+cu128).
+# The template's uv is older than 0.9.8 and rejects --excludes. This script
+# installs uv 0.12.19, which accepts that flag.
 set -euo pipefail
+
+# A fast exit makes RunPod restart the container immediately and bill another boot.
+trap 'status=$?; echo "boot failed (exit ${status}); sleeping 120s so the pod does not restart in a loop"; sleep 120; exit "$status"' ERR
 
 export DEBIAN_FRONTEND=noninteractive
 export VIDEOCLEAN_PORT="${VIDEOCLEAN_PORT:-7860}"
@@ -53,10 +58,12 @@ if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1; then
   apt-get install -y --no-install-recommends ffmpeg git curl ca-certificates zstd unzip
 fi
 
-if ! command -v uv >/dev/null 2>&1; then
-  curl -fsSL https://astral.sh/uv/install.sh | sh
-  export PATH="/root/.local/bin:$PATH"
+# Pin a uv that has `uv pip install --excludes`. The image binary does not.
+if ! /root/.local/bin/uv pip install --help 2>/dev/null | grep -q -- '--excludes'; then
+  curl -LsSf https://astral.sh/uv/0.12.19/install.sh | env UV_INSTALL_DIR=/root/.local/bin UV_NO_MODIFY_PATH=1 sh
 fi
+export PATH="/root/.local/bin:${PATH}"
+uv --version
 
 # NOTE: ollama is NOT installed here on purpose. It is an on-demand
 # component: install + start it from the Config page in the WebUI
