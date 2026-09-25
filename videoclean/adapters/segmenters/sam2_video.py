@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -8,6 +8,34 @@ import numpy as np
 from videoclean.adapters.hf_cache import download_hint, hf_cached
 from videoclean.application.errors import AdapterUnavailable
 from videoclean.domain.tracks import Track, apply_part
+
+# Extra VRAM kept free for the image encoder / activations while frames stay on GPU.
+_SAM2_ACTIVATION_HEADROOM = 3 * 1024**3
+
+
+@dataclass(frozen=True)
+class Sam2StorageDecision:
+    offload_video_to_cpu: bool
+    offload_state_to_cpu: bool
+    storage_device: str
+
+
+def choose_sam2_storage(
+    *,
+    n_frames: int,
+    image_size: int,
+    device: str,
+    vram_budget_bytes: int,
+    headroom_bytes: int = _SAM2_ACTIVATION_HEADROOM,
+) -> Sam2StorageDecision:
+    """Keep the normalized video tensor on CUDA only when the budget covers it."""
+    dev = (device or "cpu").strip().lower()
+    if dev != "cuda" or int(vram_budget_bytes) <= 0 or int(n_frames) <= 0:
+        return Sam2StorageDecision(True, True, "cpu")
+    images_bytes = int(n_frames) * 3 * int(image_size) * int(image_size) * 4
+    if images_bytes + int(headroom_bytes) <= int(vram_budget_bytes):
+        return Sam2StorageDecision(False, False, "cuda")
+    return Sam2StorageDecision(True, True, "cpu")
 
 
 class Sam2VideoSegmenter:
@@ -26,6 +54,8 @@ class Sam2VideoSegmenter:
         self.device = device
         self.allow_download = allow_download
         self.dilate_px = dilate_px
+        self.vram_budget_bytes: int = 0
+        self.last_storage: Sam2StorageDecision | None = None
         self._predictor = None
         self._load_error: str | None = None
 
@@ -150,17 +180,27 @@ class Sam2VideoSegmenter:
         image_size = int(getattr(predictor, "image_size", 1024) or 1024)
         n = len(frames)
         h, w = frames[0].shape[:2]
+        decision = choose_sam2_storage(
+            n_frames=n,
+            image_size=image_size,
+            device=self.device,
+            vram_budget_bytes=int(getattr(self, "vram_budget_bytes", 0) or 0),
+        )
+        self.last_storage = decision
         images = _image_tensor(frames, image_size, getattr(self, "tensor_path", None))
         device = torch.device(getattr(predictor, "device", self.device))
+        storage = torch.device(decision.storage_device)
+        if not decision.offload_video_to_cpu and storage.type == "cuda":
+            images = images.to(storage, non_blocking=True)
         state = {
             "images": images,
             "num_frames": n,
-            "offload_video_to_cpu": True,
-            "offload_state_to_cpu": True,
+            "offload_video_to_cpu": decision.offload_video_to_cpu,
+            "offload_state_to_cpu": decision.offload_state_to_cpu,
             "video_height": h,
             "video_width": w,
             "device": device,
-            "storage_device": torch.device("cpu"),
+            "storage_device": storage,
             "point_inputs_per_obj": {},
             "mask_inputs_per_obj": {},
             "cached_features": {},

@@ -241,18 +241,6 @@ class ProPainterInpainter:
             torch.cuda.empty_cache()
         return out[:keep]
 
-
-def _pad_pair(
-    frames: list[np.ndarray], masks: list[np.ndarray]
-) -> tuple[list[np.ndarray], list[np.ndarray], int]:
-    """RAFT needs two frames. A one-frame hole repeats the frame as its pair."""
-    n = len(frames)
-    if n >= 2:
-        return frames, masks, n
-    if n == 0:
-        return frames, masks, 0
-    return [frames[0], frames[0]], [masks[0], masks[0]], 1
-
     def _raft_flows(self, frames, video_length):
         import torch
 
@@ -379,6 +367,19 @@ def _pad_pair(
                         comp_frames[idx] = comp_frames[idx].astype(np.float32) * 0.5 + img.astype(np.float32) * 0.5
                     comp_frames[idx] = comp_frames[idx].astype(np.uint8)
         return comp_frames
+
+
+def _pad_pair(
+    frames: list[np.ndarray], masks: list[np.ndarray]
+) -> tuple[list[np.ndarray], list[np.ndarray], int]:
+    """RAFT needs two frames. A one-frame hole repeats the frame as its pair."""
+    n = len(frames)
+    if n >= 2:
+        return frames, masks, n
+    if n == 0:
+        return frames, masks, 0
+    return [frames[0], frames[0]], [masks[0], masks[0]], 1
+
 
 
 def find_vendor() -> Path | None:

@@ -562,7 +562,8 @@ class RunCleanup:
 
         t0 = time.monotonic()
         loaded_now = False
-        for owner in (*self.detectors, self.segmenter, self.inpainter):
+        # Inpainter stays lazy: ProPainter on GPU before segment steals VRAM from sam2-video.
+        for owner in (*self.detectors, self.segmenter):
             ensure = getattr(owner, "_ensure", None) or getattr(owner, "_try_load", None)
             if ensure is None:
                 continue
@@ -582,10 +583,8 @@ class RunCleanup:
 
                 if torch.cuda.is_available():
                     torch.cuda.reset_peak_memory_stats()
-                    self.inpainter.activation_baseline_bytes = int(torch.cuda.memory_allocated())
             except Exception:  # noqa: BLE001
                 pass
-        self.inpainter.vram_budget_bytes = self._budget.vram_budget_bytes
         self.inpainter.inpaint_max_side = self._budget.inpaint_max_side
         if getattr(self.segmenter, "name", "") == "sam2-video":
             image_size = 1024
@@ -593,15 +592,45 @@ class RunCleanup:
             tensor_bytes = n * 3 * image_size * image_size * 4
             self._assert_disk(paths.root, tensor_bytes)
             self.segmenter.tensor_path = paths.root / "sam2.f32"
+            self.segmenter.vram_budget_bytes = int(self._budget.vram_budget_bytes)
         if self._budget.nvenc:
             self._encoder = ("h264_nvenc", "p4", 18)
         else:
             self._encoder = ("libx264", "veryfast", 18)
 
+    def _ready_inpainter(self, cfg: PipelineConfig) -> None:
+        """Load fill weights after segment and refresh the VRAM budget they leave."""
+        from videoclean.application.budget import TorchProbe, resolve_budget
+
+        if cfg.device == "cuda":
+            try:
+                import torch
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:  # noqa: BLE001
+                pass
+        ensure = getattr(self.inpainter, "_ensure", None) or getattr(self.inpainter, "_try_load", None)
+        if ensure is not None:
+            ensure()
+        self._budget = resolve_budget(cfg, probe=TorchProbe())
+        self.inpainter.vram_budget_bytes = self._budget.vram_budget_bytes
+        self.inpainter.inpaint_max_side = self._budget.inpaint_max_side
+        if cfg.device == "cuda":
+            try:
+                import torch
+
+                if torch.cuda.is_available():
+                    torch.cuda.reset_peak_memory_stats()
+                    self.inpainter.activation_baseline_bytes = int(torch.cuda.memory_allocated())
+            except Exception:  # noqa: BLE001
+                pass
+
     def _paint_holes(self, cfg, images, masks, tracks, paths):
         from videoclean.adapters.media.raw_store import FrameStore
         from videoclean.application.hole_policy import mask_box, mask_coverage, plan_holes
 
+        self._ready_inpainter(cfg)
         n = len(images)
         h, w = images[0].shape[:2]
         if hasattr(images, "frame_bytes"):
@@ -736,7 +765,8 @@ class RunCleanup:
         def mb(n: int) -> int:
             return int(n / (1024 * 1024))
 
-        return {
+        storage = getattr(self.segmenter, "last_storage", None)
+        out = {
             "deviceRequested": budget.device_requested,
             "device": budget.device,
             "vramTotalMb": mb(budget.vram_total_bytes),
@@ -756,6 +786,10 @@ class RunCleanup:
             "crf": crf,
             "warm": bool(getattr(self, "_warm", False)),
         }
+        if storage is not None:
+            out["sam2OffloadVideo"] = bool(storage.offload_video_to_cpu)
+            out["sam2StorageDevice"] = str(storage.storage_device)
+        return out
 
     def _intent_for_masks(self, req: RunCleanupRequest, images, frames, cfg: PipelineConfig) -> Intent:
         """Labels for mask anchors: targets_override, else parse prompt, else empty (entry B)."""

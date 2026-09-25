@@ -1,6 +1,13 @@
 import numpy as np
 
-from videoclean.adapters.inpainters.propainter import _pad_pair
+from videoclean.adapters.inpainters.propainter import ProPainterInpainter, _pad_pair
+
+
+def test_propainter_keeps_raft_helpers_on_the_class():
+    """_pad_pair must not swallow class methods (b24b1c3 indentation bug)."""
+    for name in ("_raft_flows", "_complete_flow", "_propagate", "_transformer"):
+        assert hasattr(ProPainterInpainter, name), name
+        assert callable(getattr(ProPainterInpainter, name))
 
 
 def test_one_frame_is_repeated_so_raft_has_a_pair():
