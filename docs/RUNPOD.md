@@ -31,7 +31,7 @@ Pod settings:
 | `HF_HOME` | `/workspace/.cache/huggingface` |
 | `SAM2_BUILD_CUDA` | `0` |
 
-Start command: `scripts/pytorch-start.sh` (the workflow inlines that file). Repo is public: `https://github.com/mikestotik/videoclean.git`.
+Start command: `scripts/pytorch-start.sh` (the workflow inlines that file as container CMD and leaves the image entrypoint alone). Repo is public: `https://github.com/mikestotik/videoclean.git`. No custom image: packages already in the template stay at those versions.
 Automated: workflow **Deploy PyTorch pod** (Actions → Run workflow).
 
 > **Gate check (10 секунд, до долгой установки).** Стоковый torch образа должен видеть CUDA, иначе хост битый и всё остальное бессмысленно:

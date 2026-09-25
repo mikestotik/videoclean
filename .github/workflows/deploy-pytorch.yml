@@ -1,8 +1,8 @@
 name: Deploy PyTorch pod
 
-# Test-loop deploy: stock RunPod PyTorch template + repo clone on boot.
-# No image build — pod is up in ~5 minutes. Code updates are `git pull`
-# + restart inside the pod, not a rebuild.
+# Stock RunPod PyTorch image only. No image build.
+# CMD is scripts/pytorch-start.sh; the image entrypoint is left intact.
+# A new git revision reinstalls app deps without replacing image packages.
 on:
   workflow_dispatch:
     inputs:
@@ -90,6 +90,10 @@ jobs:
           fi
 
           user="${VIDEOCLEAN_UI_USER:-admin}"
+          # CMD only. Do not set entrypoint: the image ENTRYPOINT is
+          # /opt/nvidia/nvidia_entrypoint.sh and must run so CUDA libs resolve.
+          # A bare args string is whitespace-split, so the script is one argv
+          # element of cmd: {"cmd":["bash","-lc", <script>]} encoded as args.
           body="$(jq -c -n \
             --arg name "$POD_NAME" \
             --arg gpu "$GPU" \
@@ -119,7 +123,7 @@ jobs:
                 HF_HOME:"/workspace/.cache/huggingface",
                 SAM2_BUILD_CUDA:"0"
               },
-              args:{entrypoint:["/bin/bash","-lc"], cmd:[$script]} | tostring
+              args:({cmd:["bash","-lc",$script]} | tostring)
             }')"
 
           resp="$(api -X POST -H 'Content-Type: application/json' --data "$body" "https://api.runpod.io/v2/pods")" \
