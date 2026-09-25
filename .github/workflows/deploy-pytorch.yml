@@ -77,13 +77,48 @@ jobs:
           fi
           if [[ "$match_count" -eq 1 ]]; then
             pod_id="$(printf '%s' "$matches" | jq -r '.[0].id')"
-            echo "pod '$POD_NAME' exists ($pod_id) — restarting"
-            api -X POST -H 'Content-Type: application/json' --data '{"action":"restart"}' \
-              "https://api.runpod.io/v2/pods/${pod_id}/action" >/dev/null
-            echo "restarted: id=$pod_id"
+            status="$(printf '%s' "$matches" | jq -r '.[0].status // "?"')"
+            echo "pod '$POD_NAME' exists ($pod_id, status=$status)"
+            # restart is valid only while RUNNING. STARTING/ERROR/EXITED return 409.
+            # Use the actions list from this response, then refresh after a stop.
+            pod_action() {
+              local act="$1" resp
+              resp="$(api -X POST -H 'Content-Type: application/json' --data "{\"action\":\"$act\"}" \
+                "https://api.runpod.io/v2/pods/${pod_id}/action")" || {
+                echo "RunPod API error ($act): $resp" >&2
+                return 1
+              }
+              echo "$resp"
+            }
+            actions="$(printf '%s' "$matches" | jq -r '.[0].actions // [] | .[]')"
+            if printf '%s\n' "$actions" | grep -qx restart; then
+              pod_action restart >/dev/null
+              echo "restarted: id=$pod_id"
+            elif printf '%s\n' "$actions" | grep -qx start; then
+              pod_action start >/dev/null
+              echo "started: id=$pod_id"
+            elif printf '%s\n' "$actions" | grep -qx stop; then
+              pod_action stop >/dev/null
+              echo "stopped: id=$pod_id — waiting until start is allowed"
+              started=0
+              for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+                sleep 5
+                one="$(api "https://api.runpod.io/v2/pods/${pod_id}")"
+                if printf '%s' "$one" | jq -e '.actions // [] | index("start")' >/dev/null; then
+                  pod_action start >/dev/null
+                  echo "started: id=$pod_id"
+                  started=1
+                  break
+                fi
+              done
+              [[ "$started" -eq 1 ]] || { echo "pod $pod_id did not become startable" >&2; exit 1; }
+            else
+              echo "no start/stop/restart in actions: $(printf '%s' "$matches" | jq -c '.[0].actions')" >&2
+              exit 1
+            fi
             echo
             echo "Proxy URL: https://${pod_id}-7860.proxy.runpod.net"
-            echo "Restart keeps /workspace (venv, weights, clone) and pulls main."
+            echo "The volume at /workspace is kept. The boot script pulls main."
             exit 0
           fi
 
