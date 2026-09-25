@@ -116,8 +116,6 @@ stop_serve() {
 
 start_serve_background() {
   cd "${APP_DIR}"
-  echo "=== videoclean doctor --device cuda ==="
-  videoclean doctor --device cuda || true
   echo "=== videoclean serve (background) port=${VIDEOCLEAN_PORT} ==="
   nohup videoclean serve --host 0.0.0.0 --port "${VIDEOCLEAN_PORT}" \
     >"${RUN_DIR}/serve.log" 2>&1 &
