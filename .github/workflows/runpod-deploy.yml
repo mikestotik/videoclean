@@ -63,16 +63,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup SSH
+      - name: Setup SSH + runpodctl
         env:
           RUNPOD_SSH_PRIVATE_KEY: ${{ secrets.RUNPOD_SSH_PRIVATE_KEY }}
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq jq openssh-client
           test -n "${RUNPOD_SSH_PRIVATE_KEY}" || { echo "missing secret RUNPOD_SSH_PRIVATE_KEY"; exit 1; }
+          test -n "${RUNPOD_API_KEY}" || { echo "missing secret RUNPOD_API_KEY"; exit 1; }
           mkdir -p ~/.ssh
           printf '%s\n' "${RUNPOD_SSH_PRIVATE_KEY}" > ~/.ssh/runpod_key
           chmod 600 ~/.ssh/runpod_key
           echo "RUNPOD_SSH_KEY_PATH=${HOME}/.ssh/runpod_key" >> "${GITHUB_ENV}"
+          curl -fsSL -o /usr/local/bin/runpodctl \
+            "https://github.com/runpod/runpodctl/releases/download/v2.14.0/runpodctl-linux-amd64"
+          chmod +x /usr/local/bin/runpodctl
+          runpodctl config --apiKey "${RUNPOD_API_KEY}"
           chmod +x scripts/runpod-api.sh scripts/runpod_ssh_exec.py \
             scripts/runpod-remote-deploy.sh scripts/runpod-env.sh \
             scripts/runpod-restart.sh scripts/runpod-start.sh scripts/runpod-bootstrap.sh

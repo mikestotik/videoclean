@@ -150,8 +150,61 @@ def resolve_tcp(pod_json: str) -> Optional[list[str]]:
     ]
 
 
+def _extract_proxy_user(text: str) -> str:
+    m = re.search(r"([\w-]+)@ssh\.runpod\.io", text)
+    if m:
+        return m.group(1)
+    m = re.search(r'"username"\s*:\s*"([\w-]+)"', text)
+    if m and "ssh" in text.lower():
+        return m.group(1)
+    return ""
+
+
+def fetch_proxy_user_runpodctl(pod_id: str) -> str:
+    api_key = os.environ.get("RUNPOD_API_KEY", "").strip()
+    env = os.environ.copy()
+    if api_key:
+        env["RUNPOD_API_KEY"] = api_key
+    try:
+        out = subprocess.check_output(
+            ["runpodctl", "ssh", "info", pod_id, "-o", "json"],
+            text=True,
+            stderr=subprocess.STDOUT,
+            timeout=45,
+            env=env,
+        )
+    except FileNotFoundError:
+        print("runpodctl not on PATH", file=sys.stderr)
+        return ""
+    except subprocess.SubprocessError as exc:
+        print(f"runpodctl ssh info failed: {exc}", file=sys.stderr)
+        return ""
+    user = _extract_proxy_user(out)
+    if not user:
+        try:
+            import json
+
+            data = json.loads(out)
+            # Tolerant to shape changes.
+            if isinstance(data, dict):
+                user = (
+                    (data.get("proxy") or {}).get("username")
+                    or data.get("username")
+                    or data.get("user")
+                    or ""
+                )
+                if not user:
+                    cmd = data.get("command") or data.get("ssh") or ""
+                    user = _extract_proxy_user(str(cmd))
+        except Exception:
+            user = _extract_proxy_user(out)
+    if user:
+        print(f"resolved proxy user from runpodctl: {user}", file=sys.stderr)
+    return (user or "").strip()
+
+
 def fetch_proxy_user_from_api(pod_id: str) -> str:
-    """Resolve ssh.runpod.io username via REST v2 (no manual suffix needed)."""
+    """Try REST v2, then GraphQL — some API keys only work on one surface."""
     import json
     import urllib.error
     import urllib.request
@@ -159,6 +212,8 @@ def fetch_proxy_user_from_api(pod_id: str) -> str:
     api_key = os.environ.get("RUNPOD_API_KEY", "").strip()
     if not api_key:
         return ""
+
+    # REST v2
     req = urllib.request.Request(
         f"https://api.runpod.io/v2/pods/{pod_id}",
         headers={"Authorization": f"Bearer {api_key}"},
@@ -166,15 +221,44 @@ def fetch_proxy_user_from_api(pod_id: str) -> str:
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             pod = json.loads(resp.read().decode())
+        user = ((pod.get("ssh") or {}).get("proxy") or {}).get("username") or ""
+        if user:
+            print(f"resolved proxy user from API v2: {user}", file=sys.stderr)
+            return user.strip()
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
         print(f"v2 pod lookup failed: {exc}", file=sys.stderr)
-        return ""
-    ssh = pod.get("ssh") or {}
-    proxy = ssh.get("proxy") or {}
-    user = (proxy.get("username") or "").strip()
-    if user:
-        print(f"resolved proxy user from API: {user}", file=sys.stderr)
-    return user
+
+    # GraphQL (legacy key style as query param — still widely used)
+    query = (
+        "query Pod($id: String!) { pod(input: { podId: $id }) { id "
+        "desiredStatus machine { podHostId } } }"
+    )
+    body = json.dumps({"query": query, "variables": {"id": pod_id}}).encode()
+    gql_url = f"https://api.runpod.io/graphql?api_key={api_key}"
+    req = urllib.request.Request(
+        gql_url,
+        data=body,
+        headers={"content-type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            payload = json.loads(resp.read().decode())
+        # GraphQL does not always expose proxy username; host id is sometimes used.
+        pod = ((payload.get("data") or {}).get("pod")) or {}
+        host = ((pod.get("machine") or {}).get("podHostId") or "").strip()
+        # Historical Connect format: <podId>-<hostSuffix>@ssh.runpod.io
+        if host:
+            # host looks like "xxxx-6441174d" or similar; keep last 8 hex if present.
+            m = re.search(r"([0-9a-f]{8})$", host, re.I)
+            if m:
+                user = f"{pod_id}-{m.group(1)}"
+                print(f"resolved proxy user from GraphQL host id: {user}", file=sys.stderr)
+                return user
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        print(f"graphql pod lookup failed: {exc}", file=sys.stderr)
+
+    return ""
 
 
 def resolve_proxy(pod_id: str) -> list[str]:
@@ -184,32 +268,17 @@ def resolve_proxy(pod_id: str) -> list[str]:
         suffix = os.environ.get("RUNPOD_SSH_PROXY_SUFFIX", "").strip()
         if suffix:
             user = f"{pod_id}-{suffix}"
+            print(f"using RUNPOD_SSH_PROXY_SUFFIX → {user}", file=sys.stderr)
+    if not user:
+        user = fetch_proxy_user_runpodctl(pod_id)
     if not user:
         user = fetch_proxy_user_from_api(pod_id)
-    if not user:
-        # Optional fallback if runpodctl is on PATH.
-        try:
-            out = subprocess.check_output(
-                ["runpodctl", "ssh", "info", pod_id],
-                text=True,
-                stderr=subprocess.STDOUT,
-                timeout=30,
-            )
-            m = re.search(r"([\w-]+@ssh\.runpod\.io)", out)
-            if m:
-                user = m.group(1).split("@", 1)[0]
-            else:
-                m2 = re.search(r"ssh\s+([\w-]+)@ssh\.runpod\.io", out)
-                if m2:
-                    user = m2.group(1)
-        except (subprocess.SubprocessError, FileNotFoundError) as exc:
-            print(f"runpodctl ssh info failed: {exc}", file=sys.stderr)
 
     if not user:
         raise SystemExit(
-            "Cannot resolve SSH proxy user from RunPod API. "
-            "Check RUNPOD_API_KEY, or set vars.RUNPOD_SSH_PROXY_SUFFIX "
-            f"(from Connect: {pod_id}-XXXXXXXX@ssh.runpod.io)."
+            "Cannot resolve SSH proxy user. Install/run runpodctl, or set "
+            "GitHub Actions variable RUNPOD_SSH_PROXY_SUFFIX to XXXXXXXX from "
+            f"Connect tab command: ssh {pod_id}-XXXXXXXX@ssh.runpod.io"
         )
 
     if "@" in user:
