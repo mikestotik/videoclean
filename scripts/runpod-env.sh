@@ -11,6 +11,8 @@ export VIDEOCLEAN_DATA_DIR="${VIDEOCLEAN_DATA_DIR:-${WORKSPACE}/data}"
 export VIDEOCLEAN_PORT="${VIDEOCLEAN_PORT:-7860}"
 export VIDEOCLEAN_AUTH="${VIDEOCLEAN_AUTH:-off}"
 export VIDEOCLEAN_REF="${VIDEOCLEAN_REF:-main}"
+# Network Volume + SQLite WAL often breaks with "unable to open database file".
+export VIDEOCLEAN_SQLITE_JOURNAL="${VIDEOCLEAN_SQLITE_JOURNAL:-DELETE}"
 export SAM2_BUILD_CUDA="${SAM2_BUILD_CUDA:-0}"
 export SAM2_GIT_REF="${SAM2_GIT_REF:-2b90b9f5ceec907a1c18123530e92e794ad901a4}"
 export RUN_DIR="${RUN_DIR:-${WORKSPACE}/run}"
@@ -96,22 +98,19 @@ uv_sync_app() {
 }
 
 stop_serve() {
+  # SIGKILL quickly: uvicorn waits a long time for open SSE (/api/events) on SIGTERM.
   if [[ -f "${PID_FILE}" ]]; then
     local old
     old="$(cat "${PID_FILE}" || true)"
     if [[ -n "${old}" ]] && kill -0 "${old}" 2>/dev/null; then
       echo "stopping serve pid=${old}"
-      kill "${old}" 2>/dev/null || true
-      for _ in 1 2 3 4 5; do
-        kill -0 "${old}" 2>/dev/null || break
-        sleep 1
-      done
       kill -9 "${old}" 2>/dev/null || true
+      sleep 0.5
     fi
     rm -f "${PID_FILE}"
   fi
-  # Fallback if pid file was lost
-  pkill -f "videoclean serve" 2>/dev/null || true
+  pkill -9 -f "videoclean serve" 2>/dev/null || true
+  pkill -9 -f "uvicorn .*7860" 2>/dev/null || true
 }
 
 start_serve_background() {

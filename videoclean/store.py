@@ -13,6 +13,32 @@ from typing import Any
 SQLITE_TIMEOUT_S = 30.0
 
 
+def _sqlite_journal_mode() -> str:
+    """Journal mode for jobs.sqlite.
+
+    WAL is fine on local disks; network volumes (e.g. RunPod) often fail with
+    ``unable to open database file`` when creating -wal/-shm. Override via
+    VIDEOCLEAN_SQLITE_JOURNAL=WAL|DELETE|TRUNCATE|MEMORY.
+    """
+    raw = str(os.environ.get("VIDEOCLEAN_SQLITE_JOURNAL") or "WAL").strip().upper()
+    if raw in {"WAL", "DELETE", "TRUNCATE", "PERSIST", "MEMORY", "OFF"}:
+        return raw
+    return "WAL"
+
+
+def _open_sqlite(db_path: Path) -> sqlite3.Connection:
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(str(db_path), timeout=SQLITE_TIMEOUT_S)
+    con.row_factory = sqlite3.Row
+    mode = _sqlite_journal_mode()
+    try:
+        con.execute(f"PRAGMA journal_mode={mode}")
+    except sqlite3.OperationalError:
+        # Network FS / locked WAL remnant — fall back to DELETE.
+        con.execute("PRAGMA journal_mode=DELETE")
+    return con
+
+
 def resolve_data_dir(env: Mapping[str, str] | None = None) -> Path:
     env_map = os.environ if env is None else env
     raw = str(env_map.get("VIDEOCLEAN_DATA_DIR") or "").strip()
@@ -129,10 +155,7 @@ class JobIndex:
                     raise
 
     def _connect(self) -> sqlite3.Connection:
-        con = sqlite3.connect(self.db_path, timeout=SQLITE_TIMEOUT_S)
-        con.row_factory = sqlite3.Row
-        con.execute("PRAGMA journal_mode=WAL")
-        return con
+        return _open_sqlite(self.db_path)
 
     def _notify(self, kind: str) -> None:
         cb = self.on_change
@@ -444,10 +467,7 @@ class SourceIndex:
             )
 
     def _connect(self) -> sqlite3.Connection:
-        con = sqlite3.connect(self.db_path, timeout=SQLITE_TIMEOUT_S)
-        con.row_factory = sqlite3.Row
-        con.execute("PRAGMA journal_mode=WAL")
-        return con
+        return _open_sqlite(self.db_path)
 
     def _notify(self, kind: str) -> None:
         cb = self.on_change
