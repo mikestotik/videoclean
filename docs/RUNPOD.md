@@ -36,11 +36,7 @@ Start command: `scripts/pytorch-start.sh` (the workflow inlines that file as con
 Code updates: push `main`, then run **Deploy PyTorch pod** again with the same pod name. The workflow restarts that pod. It does not terminate it. Restart wipes the container disk and keeps `/workspace` (clone and Hugging Face cache). The boot script pulls `main` and installs the app into the system Python. Packages that shipped with the image, including torch, stay. Terminate only when the GPU, image, or disk size must change.
 Automated: workflow **Deploy PyTorch pod** (Actions → Run workflow).
 
-> **Gate check (10 секунд, до долгой установки).** Стоковый torch образа должен видеть CUDA, иначе хост битый и всё остальное бессмысленно:
-> ```bash
-> /usr/bin/python3 -c "import torch; print(torch.__version__, torch.cuda.is_available())" 2>&1 | tail -1
-> ```
-> `True` — едем дальше. `False` — terminate под и бери другой дата-центр, скрипт тут не поможет.
+The image banner prints the toolkit baked into the image, CUDA 12.8.1. `nvidia-smi` prints the host driver and the newest CUDA that driver can run (here 580 / 13.0). Those numbers are different on purpose. A 12.8 image runs on a newer driver. The start script does not exit when `torch.cuda.is_available()` is false.
 >
 > **Network volumes (mfs) + SQLite.** `jobs.sqlite` не работает на сетевых томах (`disk I/O error`): держи `VIDEOCLEAN_DATA_DIR` на локальном диске контейнера (`/root/.videoclean`), а `HF_HOME` — на томе. Pod volumes — локальный диск, там всё ок.
 
