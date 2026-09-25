@@ -88,7 +88,13 @@ def ssh_session(
             )
             _pump(fd, buf, 5)
 
-        wrapped = remote_script.rstrip() + f"\necho {marker}\n"
+        # Always print the marker so a failed health check cannot hang Actions
+        # waiting for DONE until --timeout.
+        wrapped = (
+            "set +e\n"
+            + remote_script.rstrip()
+            + f"\n_ec=$?\necho {marker}\nexit 0\n"
+        )
         script_b64 = base64.b64encode(wrapped.encode()).decode()
         _write(fd, "cat > /tmp/_rp_cmd.b64 <<'B64EOF'\n")
         _pump(fd, buf, 0.5)

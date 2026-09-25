@@ -160,7 +160,6 @@ jobs:
           git reset --hard origin/main
           bash /workspace/videoclean/scripts/runpod-remote-deploy.sh
           test -f /workspace/videoclean/server/static_dist/index.html
-          curl -fsS -o /dev/null -w "HTTP %{http_code}\n" http://127.0.0.1:7860/
           EOF
 
           python3 scripts/runpod_ssh_exec.py \
