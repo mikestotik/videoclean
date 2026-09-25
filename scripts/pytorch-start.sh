@@ -28,7 +28,24 @@ export UV_CACHE_DIR="${UV_CACHE_DIR:-/root/.cache/uv}"
 export UV_LINK_MODE="${UV_LINK_MODE:-copy}"
 
 PY="$(command -v python3)"
-"$PY" -c 'import torch; ok = torch.cuda.is_available(); print(torch.__version__, "cuda="+str(ok)); raise SystemExit(0 if ok else 1)'
+# A failed check exits the container. RunPod restarts it at once, and the
+# driver then answers "CUDA unknown error" on every attempt. Wait it out.
+cuda_ok=0
+for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  if "$PY" -c 'import torch; ok = torch.cuda.is_available(); print(torch.__version__, "cuda="+str(ok)); raise SystemExit(0 if ok else 1)'; then
+    cuda_ok=1
+    break
+  fi
+  echo "CUDA not ready (attempt ${attempt}/12); nvidia-smi:"
+  nvidia-smi || true
+  echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES-<unset>}"
+  sleep 5
+done
+if [ "$cuda_ok" != 1 ]; then
+  echo "CUDA still unavailable after 60s. Sleeping so the pod does not tight-loop."
+  sleep 60
+  exit 1
+fi
 
 # The base image already ships ffmpeg, git, curl, zstd, unzip.
 if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1; then
