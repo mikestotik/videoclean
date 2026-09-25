@@ -31,7 +31,7 @@ env:
   RUNPOD_POD_NAME: ${{ vars.RUNPOD_POD_NAME || 'videoclean-dev' }}
   RUNPOD_DATA_CENTER: ${{ vars.RUNPOD_DATA_CENTER || 'EU-RO-1' }}
   RUNPOD_IMAGE: runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404
-  # Connect tab: ssh <podId>-XXXXXXXX@ssh.runpod.io → set this to XXXXXXXX
+  # Optional override; normally resolved from RunPod API v2 ssh.proxy.username
   RUNPOD_SSH_PROXY_SUFFIX: ${{ vars.RUNPOD_SSH_PROXY_SUFFIX }}
 
 jobs:
@@ -69,10 +69,6 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq jq openssh-client
           test -n "${RUNPOD_SSH_PRIVATE_KEY}" || { echo "missing secret RUNPOD_SSH_PRIVATE_KEY"; exit 1; }
-          test -n "${RUNPOD_SSH_PROXY_SUFFIX}" || {
-            echo "missing vars.RUNPOD_SSH_PROXY_SUFFIX (from ssh <podId>-SUFFIX@ssh.runpod.io)" >&2
-            exit 1
-          }
           mkdir -p ~/.ssh
           printf '%s\n' "${RUNPOD_SSH_PRIVATE_KEY}" > ~/.ssh/runpod_key
           chmod 600 ~/.ssh/runpod_key
@@ -135,6 +131,7 @@ jobs:
         if: steps.ensure.outputs.offline != 'true'
         env:
           POD_ID: ${{ steps.ensure.outputs.pod_id }}
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
         run: |
           set -euo pipefail
           cat > /tmp/remote_deploy.sh <<EOF

@@ -17,12 +17,12 @@
    | `RUNPOD_API_KEY` | API key из RunPod |
    | `RUNPOD_NETWORK_VOLUME_ID` | id volume (как в S3/API) |
    | `RUNPOD_SSH_PRIVATE_KEY` | весь файл `~/.ssh/runpod_github_actions` включая `BEGIN/END` |
-4. **Variables** (Settings → Secrets → Actions → Variables):
+4. **Variables** (опционально):
    | Variable | Значение |
    |---|---|
-   | `RUNPOD_SSH_PROXY_SUFFIX` | **обязательно**: хвост из Connect → SSH, команда вида `ssh <podId>-XXXXXXXX@ssh.runpod.io` → `XXXXXXXX` (на аккаунт стабилен) |
-   | `RUNPOD_POD_NAME` | опционально, дефолт `videoclean-dev` |
-   | `RUNPOD_DATA_CENTER` | опционально, дефолт `EU-RO-1` |
+   | `RUNPOD_POD_NAME` | дефолт `videoclean-dev` |
+   | `RUNPOD_DATA_CENTER` | дефолт `EU-RO-1` |
+   | `RUNPOD_SSH_PROXY_SUFFIX` | обычно не нужен — username берётся из RunPod API v2 |
 
 ## Автообновление после коммита
 

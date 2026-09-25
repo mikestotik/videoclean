@@ -150,6 +150,33 @@ def resolve_tcp(pod_json: str) -> Optional[list[str]]:
     ]
 
 
+def fetch_proxy_user_from_api(pod_id: str) -> str:
+    """Resolve ssh.runpod.io username via REST v2 (no manual suffix needed)."""
+    import json
+    import urllib.error
+    import urllib.request
+
+    api_key = os.environ.get("RUNPOD_API_KEY", "").strip()
+    if not api_key:
+        return ""
+    req = urllib.request.Request(
+        f"https://api.runpod.io/v2/pods/{pod_id}",
+        headers={"Authorization": f"Bearer {api_key}"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            pod = json.loads(resp.read().decode())
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        print(f"v2 pod lookup failed: {exc}", file=sys.stderr)
+        return ""
+    ssh = pod.get("ssh") or {}
+    proxy = ssh.get("proxy") or {}
+    user = (proxy.get("username") or "").strip()
+    if user:
+        print(f"resolved proxy user from API: {user}", file=sys.stderr)
+    return user
+
+
 def resolve_proxy(pod_id: str) -> list[str]:
     key = os.environ["RUNPOD_SSH_KEY_PATH"]
     user = os.environ.get("RUNPOD_SSH_PROXY_USER", "").strip()
@@ -158,7 +185,9 @@ def resolve_proxy(pod_id: str) -> list[str]:
         if suffix:
             user = f"{pod_id}-{suffix}"
     if not user:
-        # Try runpodctl if configured.
+        user = fetch_proxy_user_from_api(pod_id)
+    if not user:
+        # Optional fallback if runpodctl is on PATH.
         try:
             out = subprocess.check_output(
                 ["runpodctl", "ssh", "info", pod_id],
@@ -178,8 +207,9 @@ def resolve_proxy(pod_id: str) -> list[str]:
 
     if not user:
         raise SystemExit(
-            "Cannot resolve SSH proxy user. Set secret/var RUNPOD_SSH_PROXY_SUFFIX "
-            f"(from Connect tab: {pod_id}-XXXXXXXX@ssh.runpod.io) or install runpodctl."
+            "Cannot resolve SSH proxy user from RunPod API. "
+            "Check RUNPOD_API_KEY, or set vars.RUNPOD_SSH_PROXY_SUFFIX "
+            f"(from Connect: {pod_id}-XXXXXXXX@ssh.runpod.io)."
         )
 
     if "@" in user:
