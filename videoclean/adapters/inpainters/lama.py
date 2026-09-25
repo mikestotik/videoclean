@@ -278,20 +278,22 @@ class LamaInpainter:
 
         try:
             from videoclean.adapters.models.weights_cache import WeightKey, get_or_load
-            from videoclean.application.hole_policy import probe_lama_dtype
 
             device = torch.device(self.device)
 
             def _load():
                 # map_location is required: the public big-lama.pt was saved on CUDA.
+                # The JIT FFC uses cuFFT. Half precision only accepts power-of-two
+                # sizes, so a 64×64 probe would pass and a real crop would die
+                # inside the TorchScript interpreter. Stay on fp32.
                 model = torch.jit.load(str(weights), map_location=device)
                 model.eval()
+                model.float()
                 model.to(device)
-                dtype = probe_lama_dtype(model, self.device)
-                return model, dtype
+                return model, "fp32"
 
             (model, dtype), loaded_now = get_or_load(
-                WeightKey("lama", "big-lama", self.device, "fp16" if self.device == "cuda" else "fp32"),
+                WeightKey("lama", "big-lama", self.device, "fp32"),
                 _load,
             )
             self._model = model
