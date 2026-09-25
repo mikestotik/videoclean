@@ -58,5 +58,11 @@ Torch **не** переустанавливается (`uv sync --no-install-pac
 - **SSH просит пароль** — в Settings попал не тот ключ (нужна строка `ssh-ed25519 AAAA...`, не fingerprint). Ключ, добавленный после старта пода, на живой pod сам не попадёт — нужен новый pod.
 - **Volume не монтируется** — DC volume ≠ DC GPU. Для volume в `eu-ro-1` стартуй pod в `EU-RO-1`.
 - **Нет UI / пустой static** — один раз прогони `deploy` или `start` из Actions (CI кладёт `server/static_dist`).
-- **CUDA doctor ругается** — веса ещё не скачаны: открой Config в UI и догрузи модели; кэш останется на volume.
+- **CUDA doctor: модели unavailable** — нормально на первом старте. Веса качай из Config в UI; кэш на volume (`/workspace/hf`, `/workspace/data/weights`).
+- **torch 2.14 / cu130 вместо 2.8+cu128** — в venv попал чужой torch (обычно через `sam2` deps). На поде:
+  ```bash
+  rm -rf /workspace/.venv
+  bash /workspace/videoclean/scripts/runpod-restart.sh
+  ```
+  Скрипты теперь ставят sam2 с `--no-deps` и чистят venv от torch/nvidia-*.
 - **Pod сразу умер после deploy** — смотри `/workspace/run/serve.log` по SSH.
