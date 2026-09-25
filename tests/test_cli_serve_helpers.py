@@ -134,7 +134,8 @@ def test_models_list_prints_component_ids(monkeypatch, tmp_path: Path):
     result = runner.invoke(app, ["models", "list"])
     assert result.exit_code == 0, result.output
     assert "detector:grounding-dino" in result.output
-    assert "segmenter:sam2-tiny" in result.output
+    assert "segmenter:sam21-tiny" in result.output
+    assert "segmenter:sam2-tiny" not in result.output
 
 
 def test_models_download_invokes_component(monkeypatch, tmp_path: Path):

@@ -54,7 +54,7 @@ export const FORMAT_META: Record<
 export const RUN_PARAM_META = {
   mask_dilate_px: {
     label: "Расширение маски",
-    hint: "На сколько пикселей расширить вырез. Если остаются края текста — увеличьте; если «съедает» фон — уменьшите.",
+    hint: "На сколько пикселей расширить маску сегментации до заливки. Края текста остаются — увеличьте; фон пропадает — уменьшите. У ProPainter есть отдельный запас маски в «Заливке».",
     min: 0,
     max: 15,
     step: 1,
@@ -67,8 +67,8 @@ export const RUN_PARAM_META = {
     step: 0.0001,
   },
   verify_max_coverage: {
-    label: "Потолок leftover",
-    hint: "При проверке leftover: если остаток больше — повторная заливка пропускается.",
+    label: "Потолок остатка",
+    hint: "Если остаток занимает больше этой доли кадра, повторная заливка пропускается.",
     min: 0.01,
     max: 0.5,
     step: 0.01,
@@ -100,15 +100,15 @@ export const ADVANCED_META: Record<string, ParamMeta> = {
     step: 1,
   },
   detector_nms_iou: {
-    label: "NMS IoU",
-    hint: "Схлопывание почти одинаковых боксов. Много дублей — ниже; разные объекты слиплись — выше.",
+    label: "Схлопывание рамок",
+    hint: "Почти одинаковые рамки схлопываются по пересечению (IoU). Много дублей одной цели — ниже; разные объекты слиплись — выше.",
     min: 0.1,
     max: 0.7,
     step: 0.05,
   },
   detector_max_box_area: {
-    label: "Макс. площадь бокса",
-    hint: "Боксы больше этой доли кадра отбрасываются. Дефолт 0.45; для широких титров/lower-third — 0.5–0.55.",
+    label: "Макс. размер рамки",
+    hint: "Рамки больше этой доли кадра отбрасываются. Обычно 45%. Для широких титров — 50–55%.",
     min: 0.05,
     max: 0.7,
     step: 0.01,
@@ -125,92 +125,92 @@ export const ADVANCED_META: Record<string, ParamMeta> = {
     step: 0.05,
   },
   tracker_max_template_area: {
-    label: "Макс. шаблон трекинга",
+    label: "Макс. размер шаблона",
     hint: "Слишком крупные кропы не трекаются (цепляются за фон). Обычно не трогать.",
     min: 0.02,
     max: 0.4,
     step: 0.01,
   },
   prompt_frame_stride: {
-    label: "Шаг кадров для LLM",
-    hint: "Каждый N-й кадр уходит в vision-модель при разборе промпта. 0 — только текст, без картинок.",
+    label: "Шаг кадров разбора",
+    hint: "Каждый N-й кадр уходит в модель при разборе фразы. 0 — только текст, без картинок.",
     min: 0,
     max: 20,
     step: 1,
   },
   prompt_frame_max: {
-    label: "Макс. кадров для LLM",
-    hint: "Сколько кадров максимум отправить в vision. Больше — тяжелее для Ollama.",
+    label: "Макс. кадров разбора",
+    hint: "Сколько кадров максимум отправить в модель. Больше — тяжелее запрос.",
     min: 1,
     max: 24,
     step: 1,
   },
   parse_chunk_frames: {
-    label: "Чанк парсера",
-    hint: "0 — один разбор на весь ролик. N>0 — разбор кусками по N кадров (когда объекты появляются и исчезают).",
+    label: "Кусок разбора",
+    hint: "0 — один разбор на весь ролик. Больше нуля — разбор кусками по столько кадров, когда объекты появляются и исчезают.",
     min: 0,
     max: 300,
     step: 10,
   },
   vision_batch: {
-    label: "Пакет vision",
-    hint: "Сколько кадров в одном запросе к vision-LLM. Для llava-phi3 держите 2.",
+    label: "Кадров в запросе",
+    hint: "Сколько кадров уходит в одном запросе к модели. Для llava-phi3 держите 2.",
     min: 1,
     max: 8,
     step: 1,
   },
   propainter_mask_dilation: {
-    label: "ProPainter: dilate",
-    hint: "Расширение маски перед заливкой ProPainter.",
+    label: "Запас маски ProPainter",
+    hint: "На сколько пикселей расширить маску уже внутри ProPainter. Это отдельно от «Расширения маски» в сегментации.",
     min: 0,
     max: 20,
     step: 1,
   },
   propainter_ref_stride: {
-    label: "ProPainter: ref stride",
-    hint: "Шаг глобальных опорных кадров.",
+    label: "Шаг опорных кадров",
+    hint: "Как часто ProPainter берёт кадр-опору на весь ролик.",
     min: 1,
     max: 30,
     step: 1,
   },
   propainter_neighbor_length: {
-    label: "ProPainter: neighbors",
-    hint: "Сколько соседних кадров учитывать по времени.",
+    label: "Соседние кадры",
+    hint: "Сколько соседних кадров ProPainter смотрит по времени.",
     min: 1,
     max: 30,
     step: 1,
   },
   propainter_subvideo_length: {
-    label: "ProPainter: subvideo",
-    hint: "Длина чанка для расчёта optical flow.",
+    label: "Длина фрагмента",
+    hint: "На сколько кадров режется расчёт движения.",
     min: 20,
     max: 160,
     step: 10,
   },
   propainter_raft_iter: {
-    label: "ProPainter: RAFT",
-    hint: "Итерации оценки движения. Больше — точнее и дольше.",
+    label: "Точность движения",
+    hint: "Итерации оценки движения в ProPainter. Больше — точнее и дольше.",
     min: 5,
     max: 40,
     step: 1,
   },
   verify_max_passes: {
-    label: "Verify: проходы",
-    hint: "Сколько раз искать остатки и локально перезаливать. 0 — не перезаливать. 2 — максимум для профиля «Качество».",
+    label: "Повторные проходы",
+    hint: "Сколько раз искать остатки и заливать их снова. 0 — не перезаливать. 2 — максимум для сценария «Качество».",
     min: 0,
     max: 3,
     step: 1,
   },
   inpaint_workers: {
-    label: "Потоки инпейнта",
-    hint: "Параллельные кадры для LaMa. 0 — авто (на CPU по ядрам, на GPU обычно 1). ProPainter всегда 1.",
+    label: "Параллель заливки",
+    hint: "Сколько кадров LaMa считает сразу. 0 — авто (на CPU по ядрам, на GPU обычно 1). ProPainter всегда один.",
     min: 0,
     max: 16,
     step: 1,
   },
   inpaint_chunk_overlap: {
-    label: "Overlap чанков",
-    hint: "Перекрытие кадров при нарезке видео-инпейнта и локальном verify — чтобы не было швов.",
+    label: "Перекрытие фрагментов",
+    hint: "Сколько кадров соседние куски заливки делят между собой, чтобы на стыке не было шва.",
     min: 0,
     max: 32,
     step: 1,
@@ -231,8 +231,8 @@ export const PARAM_LABELS: Record<string, string> = {
   cpu_threads: "Потоки CPU",
   inpaint_max_side: "Сторона заливки",
   verify_redetect: "Повторный поиск",
-  llm_model: "Модель LLM",
-  llm_base_url: "LLM URL",
+  llm_model: "Модель разбора",
+  llm_base_url: "Адрес модели разбора",
   webm_crf: "WebM CRF",
   segment_seconds: "Сегмент",
 }
@@ -244,6 +244,67 @@ export function paramLabel(key: string): string {
   return ADVANCED_META[key]?.label ?? key
 }
 
+/** Which expert station owns a saved field. `mask_policy` lives above the stations. */
+export const PARAM_STATION: Record<string, string> = {
+  llm_model: "phrase",
+  llm_base_url: "phrase",
+  prompt_frame_stride: "phrase",
+  prompt_frame_max: "phrase",
+  vision_batch: "phrase",
+  parse_chunk_frames: "phrase",
+  detector: "detect",
+  detector_model: "detect",
+  detector_threshold: "detect",
+  detector_keyframes: "detect",
+  detector_nms_iou: "detect",
+  detector_max_box_area: "detect",
+  tracker_min_score: "detect",
+  tracker_max_template_area: "detect",
+  select_relax: "detect",
+  segmenter: "segment",
+  segmenter_model: "segment",
+  mask_dilate_px: "segment",
+  inpainter: "fill",
+  inpainter_model: "fill",
+  propainter_mask_dilation: "fill",
+  propainter_ref_stride: "fill",
+  propainter_neighbor_length: "fill",
+  propainter_subvideo_length: "fill",
+  propainter_raft_iter: "fill",
+  inpaint_chunk_overlap: "fill",
+  inpaint_max_side: "fill",
+  verify: "verify",
+  verify_max_passes: "verify",
+  verify_max_coverage: "verify",
+  min_mask_coverage: "verify",
+  verify_redetect: "verify",
+  device: "device",
+  max_vram_mb: "device",
+  cpu_threads: "device",
+  inpaint_workers: "fill",
+  keep_workdir: "device",
+  formats: "output",
+  webm_crf: "output",
+  segment_seconds: "output",
+  mask_policy: "masks",
+}
+
+export function stationForParam(key: string): string | null {
+  return PARAM_STATION[key] ?? null
+}
+
+/** DOM anchor when two saved keys share one control. */
+export function paramAnchor(key: string): string {
+  if (key === "llm_base_url") return "llm_model"
+  return key
+}
+
+export function formatShare(value: number): string {
+  const pct = value * 100
+  const digits = pct >= 10 ? 0 : pct >= 1 ? 1 : 2
+  return `${pct.toFixed(digits)}%`
+}
+
 export const MODE_HINTS = {
   inpaintTracks: "Заливка по найденным трекам (после «Маски»). Обычно лучший путь.",
   inpaintMasks: "Заливка по нарисованным вручную маскам на источнике.",
@@ -251,7 +312,7 @@ export const MODE_HINTS = {
   maskStatic: "Одна и та же маска на все кадры (плитка).",
   maskPropagate: "Рамки-якоря → протянуть по времени → сегментация.",
   detectAll: "Детекция по всему ролику — нужно для удаления по трекам.",
-  detectStride: "Только каждый N-й кадр — быстрее, для осмотра, не для удаления.",
+  detectStride: "Только для кнопки «Найти рамки». На «Обработать» и сохранённый сценарий не влияет.",
   boxHold: "Правка рамки копируется вперёд до следующего ключа.",
   boxFrame: "Правка только на текущем кадре.",
 } as const

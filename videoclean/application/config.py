@@ -21,7 +21,7 @@ READY_ADAPTERS = {
 }
 
 DEFAULT_GROUNDING_DINO_MODEL = "IDEA-Research/grounding-dino-tiny"
-DEFAULT_SEGMENTER_MODEL = "facebook/sam2-hiera-tiny"
+DEFAULT_SEGMENTER_MODEL = "facebook/sam2.1-hiera-tiny"
 DEFAULT_INPAINTER_MODEL = "camenduru/ProPainter"
 DEFAULT_DETECTORS = ["grounding-dino"]
 

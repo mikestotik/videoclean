@@ -29,34 +29,6 @@ _ollama_neg_until = 0.0
 # Segmenter weights: driver is sam2 | sam2-video; these are the HF checkpoints.
 SEGMENTER_COMPONENTS: tuple[ComponentInfo, ...] = (
     ComponentInfo(
-        id="segmenter:sam2-tiny",
-        title="SAM2 tiny",
-        kind="segmenter",
-        model_ref="facebook/sam2-hiera-tiny",
-        size_hint="~160 MB",
-    ),
-    ComponentInfo(
-        id="segmenter:sam2-small",
-        title="SAM2 small",
-        kind="segmenter",
-        model_ref="facebook/sam2-hiera-small",
-        size_hint="~180 MB",
-    ),
-    ComponentInfo(
-        id="segmenter:sam2-base-plus",
-        title="SAM2 base+",
-        kind="segmenter",
-        model_ref="facebook/sam2-hiera-base-plus",
-        size_hint="~320 MB",
-    ),
-    ComponentInfo(
-        id="segmenter:sam2-large",
-        title="SAM2 large",
-        kind="segmenter",
-        model_ref="facebook/sam2-hiera-large",
-        size_hint="~900 MB",
-    ),
-    ComponentInfo(
         id="segmenter:sam21-tiny",
         title="SAM2.1 tiny",
         kind="segmenter",
@@ -133,9 +105,9 @@ FAMILIES: dict[str, list[dict[str, object]]] = {
     "segmenter": [
         {
             "id": "sam2",
-            "label": "SAM2 / SAM2.1",
+            "label": "SAM2.1",
             "ref_kind": "hf",
-            "hints": ("sam2", "sam2.1", "sam21"),
+            "hints": ("sam2.1", "sam21"),
             "example": "facebook/sam2.1-hiera-small",
         }
     ],
@@ -183,26 +155,17 @@ def component_id_for(kind: str, name: str, segmenter_model: str = "") -> str | N
 
 
 def segmenter_component_id(segmenter_model: str = "") -> str:
-    """Resolve HF segmenter checkpoint → catalog id (default tiny)."""
+    """Resolve HF segmenter checkpoint → catalog id (default SAM2.1 tiny)."""
     model = (segmenter_model or "").strip().casefold()
     if model in _SEGMENTER_REF_TO_ID:
         return _SEGMENTER_REF_TO_ID[model]
-    # Fuzzy match for custom / abbreviated refs.
-    if "2.1" in model or "sam21" in model or "sam2.1" in model:
-        if "large" in model:
-            return "segmenter:sam21-large"
-        if "base" in model:
-            return "segmenter:sam21-base-plus"
-        if "small" in model:
-            return "segmenter:sam21-small"
-        return "segmenter:sam21-tiny"
     if "large" in model:
-        return "segmenter:sam2-large"
+        return "segmenter:sam21-large"
     if "base" in model:
-        return "segmenter:sam2-base-plus"
+        return "segmenter:sam21-base-plus"
     if "small" in model:
-        return "segmenter:sam2-small"
-    return "segmenter:sam2-tiny"
+        return "segmenter:sam21-small"
+    return "segmenter:sam21-tiny"
 
 
 def backend_ready(

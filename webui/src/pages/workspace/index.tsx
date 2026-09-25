@@ -47,13 +47,15 @@ function stageTargetsFromReport(value: unknown): StageTarget[] {
 
 function applyReportToParams(
   prev: EditorParams,
-  report: { userPrompt?: unknown; targets?: unknown },
+  report: { userPrompt?: unknown; prompt?: unknown; targets?: unknown },
 ): EditorParams {
   const targets = stageTargetsFromReport(report.targets)
   const userPrompt = typeof report.userPrompt === "string" ? report.userPrompt.trim() : ""
+  const parsedPrompt = typeof report.prompt === "string" ? report.prompt.trim() : ""
   return {
     ...prev,
     ...(userPrompt ? { prompt: userPrompt } : {}),
+    ...(parsedPrompt ? { parsedPrompt } : {}),
     ...(targets.length > 0 ? { targets } : {}),
   }
 }
@@ -174,14 +176,18 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
             return
           }
           setParams((prev) =>
-            applyReportToParams(prev, { userPrompt: loaded.userPrompt, targets: loaded.targets }),
+            applyReportToParams(prev, {
+              userPrompt: loaded.userPrompt,
+              prompt: loaded.prompt,
+              targets: loaded.targets,
+            }),
           )
           setViewerMode("annotate")
           return
         }
         if (job.kind === "preview") {
           const report = (await fetchJobReport(job.id).catch(() => null)) as
-            | { userPrompt?: unknown; targets?: unknown }
+            | { userPrompt?: unknown; prompt?: unknown; targets?: unknown }
             | null
           if (report) setParams((prev) => applyReportToParams(prev, report))
           await detect.loadFromJob(job.id)
@@ -190,12 +196,14 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
         }
         if (job.kind === "run") {
           const report = (await fetchJobReport(job.id).catch(() => null)) as
-            | { userPrompt?: unknown; targets?: unknown }
+            | { userPrompt?: unknown; prompt?: unknown; targets?: unknown }
             | null
           if (report) {
             setParams((prev) => {
               const next = applyReportToParams(prev, report)
-              if (prev.targets.some((t) => t.source === "manual")) return { ...next, targets: prev.targets }
+              if (prev.targets.some((t) => t.source === "manual")) {
+                return { ...next, targets: prev.targets, parsedPrompt: prev.parsedPrompt }
+              }
               return next
             })
           }
@@ -294,8 +302,10 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
     void fetchJobReport(liveResult.id)
       .then((report) => {
         setParams((prev) => {
-          const next = applyReportToParams(prev, report as { userPrompt?: unknown; targets?: unknown })
-          if (prev.targets.some((t) => t.source === "manual")) return { ...next, targets: prev.targets }
+          const next = applyReportToParams(prev, report as { userPrompt?: unknown; prompt?: unknown; targets?: unknown })
+          if (prev.targets.some((t) => t.source === "manual")) {
+            return { ...next, targets: prev.targets, parsedPrompt: prev.parsedPrompt }
+          }
           return next
         })
       })
@@ -457,6 +467,7 @@ export function WorkspacePage({ routeSourceId, onRouteSourceIdChange }: Props) {
           onOpenConfig={openConfig}
           onOpenResult={() => setViewerMode("result")}
           onResultJobChange={setResultJob}
+          phrase={interpret}
         />
       </aside>
     </div>

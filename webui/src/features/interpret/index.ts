@@ -73,7 +73,7 @@ export function useInterpret(source: Source | null) {
   }
 
   const run = useCallback(
-    async (prompt: string, llmModel = ""): Promise<InterpretResult | null> => {
+    async (prompt: string, jobParams: Record<string, string | number | boolean> = {}): Promise<InterpretResult | null> => {
       if (!source || running) return null
       const runId = ++runIdRef.current
       setRunning(true)
@@ -84,7 +84,7 @@ export function useInterpret(source: Source | null) {
           kind: "prompt",
           source_id: source.id,
           prompt,
-          params: { llm_model: llmModel },
+          params: jobParams,
         })
         await waitJobToCompletion(job.id, undefined, { maxSeconds: 600, seed: job })
         if (runId !== runIdRef.current) return null

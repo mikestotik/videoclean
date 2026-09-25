@@ -12,6 +12,8 @@ export type MaskPolicy = "static" | "propagate"
 
 export type EditorParams = {
   prompt: string
+  /** English phrase produced by the parser. Targets are rebuilt from edits of this text. */
+  parsedPrompt: string
   targets: StageTarget[]
   detect: { mode: "targets" | "prompt"; all: boolean; stride: number }
   maskPolicy: MaskPolicy
@@ -243,8 +245,59 @@ export function builtInProfileDefaults(
   }
 }
 
+const LOCATIONS = new Set([
+  "top",
+  "bottom",
+  "left",
+  "right",
+  "center",
+  "top-left",
+  "top-right",
+  "bottom-left",
+  "bottom-right",
+])
+
+function splitParsedChunks(body: string): string[] {
+  if (body.includes("\n")) return body.split(/\n+/).map((part) => part.trim()).filter(Boolean)
+  const out: string[] = []
+  let buf = ""
+  let depth = 0
+  for (const ch of body) {
+    if (ch === "(") depth += 1
+    if (ch === ")" && depth > 0) depth -= 1
+    if (ch === "," && depth === 0) {
+      if (buf.trim()) out.push(buf.trim())
+      buf = ""
+      continue
+    }
+    buf += ch
+  }
+  if (buf.trim()) out.push(buf.trim())
+  return out
+}
+
+/** One target per line, or per comma-separated piece of `Remove: query (where), …`. */
+export function targetsFromParsedPrompt(text: string): StageTarget[] {
+  const raw = text.trim()
+  if (!raw) return []
+  const body = raw.replace(/^remove:\s*/i, "")
+  return splitParsedChunks(body).map((chunk) => {
+    const located = chunk.match(/^(.*)\(([^()]*)\)\s*$/)
+    const where = located?.[2]?.trim().toLowerCase() ?? ""
+    const query = located && LOCATIONS.has(where) ? located[1].trim() : chunk
+    return {
+      kind: "object" as const,
+      query: query || chunk,
+      where: located && LOCATIONS.has(where) ? where : null,
+      enabled: true,
+      source: "manual" as const,
+    }
+  })
+}
+
 const BASE_PARAMS: EditorParams = {
   prompt: "",
+  parsedPrompt: "",
   targets: [],
   detect: { mode: "targets", all: false, stride: 8 },
   maskPolicy: "propagate",
@@ -529,10 +582,17 @@ function stable(value: Record<string, unknown>): string {
   return JSON.stringify(out)
 }
 
-export function divergentLabels(params: EditorParams, baseline: EditorParams): string[] {
+export function divergentEntries(
+  params: EditorParams,
+  baseline: EditorParams,
+): { key: string; label: string }[] {
   const diff = diffState(params, baseline)
   delete diff.profile
-  return Object.keys(diff).map((key) => paramLabel(key))
+  return Object.keys(diff).map((key) => ({ key, label: paramLabel(key) }))
+}
+
+export function divergentLabels(params: EditorParams, baseline: EditorParams): string[] {
+  return divergentEntries(params, baseline).map((row) => row.label)
 }
 
 export function structuralDivergence(params: EditorParams, resolvedDevice: string): boolean {
@@ -630,6 +690,7 @@ export function applyPreset(
   next = {
     ...next,
     prompt: params.prompt,
+    parsedPrompt: params.parsedPrompt,
     targets: params.targets.map((t) => ({ ...t })),
     detect: { ...next.detect, stride: params.detect.stride },
   }

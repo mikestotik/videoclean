@@ -22,10 +22,6 @@ def test_registry_ids():
 def test_all_registry_ids():
     expected = (
         "detector:grounding-dino",
-        "segmenter:sam2-tiny",
-        "segmenter:sam2-small",
-        "segmenter:sam2-base-plus",
-        "segmenter:sam2-large",
         "segmenter:sam21-tiny",
         "segmenter:sam21-small",
         "segmenter:sam21-base-plus",
@@ -35,7 +31,8 @@ def test_all_registry_ids():
     )
     for cid in expected:
         assert cid in COMPONENT_IDS
-    assert len(COMPONENT_IDS) == 11
+    assert len(COMPONENT_IDS) == 7
+    assert "segmenter:sam2-tiny" not in COMPONENT_IDS
 
 
 def test_list_status_smoke(monkeypatch, tmp_path):
@@ -51,15 +48,15 @@ def test_component_id_mapping():
 
     assert component_id_for("detector", "grounding-dino") == "detector:grounding-dino"
     assert component_id_for("detector", "owlvit") is None
-    assert component_id_for("segmenter", "sam2") == "segmenter:sam2-tiny"
-    assert component_id_for("segmenter", "sam2-video") == "segmenter:sam2-tiny"
+    assert component_id_for("segmenter", "sam2") == "segmenter:sam21-tiny"
+    assert component_id_for("segmenter", "sam2-video") == "segmenter:sam21-tiny"
     assert (
-        component_id_for("segmenter", "sam2", segmenter_model="facebook/sam2-hiera-large")
-        == "segmenter:sam2-large"
+        component_id_for("segmenter", "sam2", segmenter_model="facebook/sam2.1-hiera-large")
+        == "segmenter:sam21-large"
     )
     assert (
-        component_id_for("segmenter", "sam2", segmenter_model="facebook/sam2-hiera-small")
-        == "segmenter:sam2-small"
+        component_id_for("segmenter", "sam2", segmenter_model="facebook/sam2.1-hiera-small")
+        == "segmenter:sam21-small"
     )
     assert (
         component_id_for("segmenter", "sam2-video", segmenter_model="facebook/sam2.1-hiera-base-plus")
@@ -194,8 +191,8 @@ def test_run_download_dispatches_hf(monkeypatch):
     d.run_download("detector:grounding-dino")
     assert seen == ["IDEA-Research/grounding-dino-tiny"]
     seen.clear()
-    d.run_download("segmenter:sam2-tiny")
-    assert seen == ["facebook/sam2-hiera-tiny"]
+    d.run_download("segmenter:sam21-tiny")
+    assert seen == ["facebook/sam2.1-hiera-tiny"]
 
 
 def test_run_download_dispatches_others(monkeypatch, tmp_path: Path):
