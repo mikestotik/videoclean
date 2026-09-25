@@ -73,6 +73,7 @@ Torch **не** переустанавливается (`uv sync --no-install-pac
 
 ## Troubleshooting
 
+- **`container not found` / timeout waiting for shell prompt** — proxy username устарел или контейнер ещё не готов. Actions сначала пробует live user из `runpodctl`/API, потом `RUNPOD_SSH_PROXY_SUFFIX`. Открой Connect у RUNNING-пода и обнови Variable `RUNPOD_SSH_PROXY_SUFFIX` на хвост из `ssh <podId>-XXXXXXXX@ssh.runpod.io`. Если под только что стартовал — подожди минуту и rerun workflow.
 - **SSH просит пароль** — в Settings попал не тот ключ (нужна строка `ssh-ed25519 AAAA...`, не fingerprint). Ключ, добавленный после старта пода, на живой pod сам не попадёт — нужен новый pod.
 - **Volume не монтируется** — DC volume ≠ DC GPU. Для volume в `eu-ro-1` стартуй pod в `EU-RO-1`.
 - **Нет UI / пустой static** — один раз прогони `deploy` или `start` из Actions (CI кладёт `server/static_dist`).

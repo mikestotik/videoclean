@@ -35,11 +35,29 @@ def _pump(fd: int, buf: list[str], seconds: float) -> None:
         sys.stdout.flush()
 
 
+def detect_ssh_proxy_failure(text: str) -> Optional[str]:
+    """Return a short reason when the RunPod SSH proxy refused the session."""
+    low = (text or "").lower()
+    if "container not found" in low:
+        return "container not found"
+    if "no such pod" in low or "pod not found" in low:
+        return "pod not found"
+    return None
+
+
 def _wait_prompt(fd: int, buf: list[str], timeout: float = 45) -> None:
     end = time.time() + timeout
     while time.time() < end:
         _pump(fd, buf, 0.8)
-        tail = "".join(buf)[-400:]
+        joined = "".join(buf)
+        fatal = detect_ssh_proxy_failure(joined)
+        if fatal:
+            raise RuntimeError(
+                f"RunPod SSH proxy: {fatal}. "
+                "Pod may be restarting, or RUNPOD_SSH_PROXY_SUFFIX is stale — "
+                "check Connect tab: ssh <podId>-XXXXXXXX@ssh.runpod.io"
+            )
+        tail = joined[-400:]
         if re.search(r"root@[^#\n]*#\s*$", tail):
             return
     raise RuntimeError("timed out waiting for shell prompt")
@@ -267,29 +285,34 @@ def fetch_proxy_user_from_api(pod_id: str) -> str:
     return ""
 
 
-def resolve_proxy(pod_id: str) -> list[str]:
+def proxy_user_candidates(pod_id: str) -> list[str]:
+    """Ordered unique proxy usernames. Live sources first; suffix is a fallback."""
+    ordered: list[str] = []
+
+    def add(user: str, *, label: str) -> None:
+        user = (user or "").strip()
+        if not user:
+            return
+        if "@" in user:
+            user = user.split("@", 1)[0]
+        if user in ordered:
+            return
+        ordered.append(user)
+        print(f"proxy candidate ({label}): {user}", file=sys.stderr)
+
+    explicit = os.environ.get("RUNPOD_SSH_PROXY_USER", "").strip()
+    if explicit:
+        add(explicit, label="RUNPOD_SSH_PROXY_USER")
+    add(fetch_proxy_user_runpodctl(pod_id), label="runpodctl")
+    add(fetch_proxy_user_from_api(pod_id), label="api")
+    suffix = os.environ.get("RUNPOD_SSH_PROXY_SUFFIX", "").strip()
+    if suffix:
+        add(f"{pod_id}-{suffix}", label="RUNPOD_SSH_PROXY_SUFFIX")
+    return ordered
+
+
+def _proxy_ssh_argv(user: str) -> list[str]:
     key = os.environ["RUNPOD_SSH_KEY_PATH"]
-    user = os.environ.get("RUNPOD_SSH_PROXY_USER", "").strip()
-    if not user:
-        suffix = os.environ.get("RUNPOD_SSH_PROXY_SUFFIX", "").strip()
-        if suffix:
-            user = f"{pod_id}-{suffix}"
-            print(f"using RUNPOD_SSH_PROXY_SUFFIX → {user}", file=sys.stderr)
-    if not user:
-        user = fetch_proxy_user_runpodctl(pod_id)
-    if not user:
-        user = fetch_proxy_user_from_api(pod_id)
-
-    if not user:
-        raise SystemExit(
-            "Cannot resolve SSH proxy user. Install/run runpodctl, or set "
-            "GitHub Actions variable RUNPOD_SSH_PROXY_SUFFIX to XXXXXXXX from "
-            f"Connect tab command: ssh {pod_id}-XXXXXXXX@ssh.runpod.io"
-        )
-
-    if "@" in user:
-        user = user.split("@", 1)[0]
-
     return [
         "ssh",
         "-tt",
@@ -305,6 +328,17 @@ def resolve_proxy(pod_id: str) -> list[str]:
     ]
 
 
+def resolve_proxy(pod_id: str) -> list[str]:
+    users = proxy_user_candidates(pod_id)
+    if not users:
+        raise SystemExit(
+            "Cannot resolve SSH proxy user. Install/run runpodctl, or set "
+            "GitHub Actions variable RUNPOD_SSH_PROXY_SUFFIX to XXXXXXXX from "
+            f"Connect tab command: ssh {pod_id}-XXXXXXXX@ssh.runpod.io"
+        )
+    return _proxy_ssh_argv(users[0])
+
+
 def tcp_works(ssh_argv: list[str]) -> bool:
     # Drop -tt for a quick non-interactive probe.
     probe = [a for a in ssh_argv if a != "-tt"] + ["true"]
@@ -313,6 +347,48 @@ def tcp_works(ssh_argv: list[str]) -> bool:
         return r.returncode == 0
     except subprocess.SubprocessError:
         return False
+
+
+def proxy_probe(ssh_argv: list[str]) -> tuple[bool, str]:
+    """Non-interactive probe. Returns (ok, combined output)."""
+    probe = [a for a in ssh_argv if a != "-tt"] + ["true"]
+    try:
+        r = subprocess.run(probe, capture_output=True, timeout=25)
+    except subprocess.SubprocessError as exc:
+        return False, str(exc)
+    text = ((r.stdout or b"") + (r.stderr or b"")).decode(errors="replace")
+    if r.returncode == 0:
+        return True, text
+    return False, text
+
+
+def resolve_working_proxy(pod_id: str) -> list[str]:
+    """Try live usernames, then the Actions suffix. Fail with a clear reason."""
+    users = proxy_user_candidates(pod_id)
+    if not users:
+        raise SystemExit(
+            "Cannot resolve SSH proxy user. Install/run runpodctl, or set "
+            "GitHub Actions variable RUNPOD_SSH_PROXY_SUFFIX to XXXXXXXX from "
+            f"Connect tab command: ssh {pod_id}-XXXXXXXX@ssh.runpod.io"
+        )
+    errors: list[str] = []
+    for user in users:
+        argv = _proxy_ssh_argv(user)
+        print(f"probing proxy SSH: {user}@ssh.runpod.io", file=sys.stderr)
+        ok, text = proxy_probe(argv)
+        if ok:
+            print(f"using proxy SSH: {user}@ssh.runpod.io", file=sys.stderr)
+            return argv
+        fatal = detect_ssh_proxy_failure(text) or f"exit non-zero ({text.strip()[:160]})"
+        print(f"proxy probe failed for {user}: {fatal}", file=sys.stderr)
+        errors.append(f"{user}: {fatal}")
+    joined = "; ".join(errors)
+    raise SystemExit(
+        "No working RunPod SSH proxy user. "
+        f"Tried: {joined}. "
+        "Open the pod Connect tab and refresh GitHub variable RUNPOD_SSH_PROXY_SUFFIX "
+        f"from ssh {pod_id}-XXXXXXXX@ssh.runpod.io (or wait until the container is up)."
+    )
 
 
 def main() -> int:
@@ -343,8 +419,7 @@ def main() -> int:
             ssh_argv = None
 
     if ssh_argv is None:
-        ssh_argv = resolve_proxy(args.pod_id)
-        print(f"using proxy SSH: {ssh_argv[-1]}", file=sys.stderr)
+        ssh_argv = resolve_working_proxy(args.pod_id)
     else:
         print(f"using TCP SSH: {ssh_argv[-1]} -p {ssh_argv[ssh_argv.index('-p')+1]}", file=sys.stderr)
 
