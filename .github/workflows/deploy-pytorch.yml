@@ -66,11 +66,25 @@ jobs:
               -H "Authorization: Bearer $RUNPOD_API_KEY" "$@"
           }
 
-          # Fail fast if the name is taken (this flow never updates in place).
+          # Same name: restart. Container disk is wiped, /workspace is kept,
+          # and the start command git-pulls main. Terminate only to change GPU or image.
           pods="$(api "https://api.runpod.io/v2/pods")"
-          if printf '%s' "$pods" | jq -e --arg n "$POD_NAME" '.pods // . | map(select(.name == $n)) | length > 0' >/dev/null; then
-            echo "pod '$POD_NAME' already exists — terminate it in the console or pick another name" >&2
+          matches="$(printf '%s' "$pods" | jq -c --arg n "$POD_NAME" '[.pods // . | .[]? | select(.name == $n)]')"
+          match_count="$(printf '%s' "$matches" | jq 'length')"
+          if [[ "$match_count" -gt 1 ]]; then
+            echo "RunPod API error: $match_count pods named '$POD_NAME'" >&2
             exit 1
+          fi
+          if [[ "$match_count" -eq 1 ]]; then
+            pod_id="$(printf '%s' "$matches" | jq -r '.[0].id')"
+            echo "pod '$POD_NAME' exists ($pod_id) — restarting"
+            api -X POST -H 'Content-Type: application/json' --data '{"action":"restart"}' \
+              "https://api.runpod.io/v2/pods/${pod_id}/action" >/dev/null
+            echo "restarted: id=$pod_id"
+            echo
+            echo "Proxy URL: https://${pod_id}-7860.proxy.runpod.net"
+            echo "Restart keeps /workspace (venv, weights, clone) and pulls main."
+            exit 0
           fi
 
           dc_json="[]"

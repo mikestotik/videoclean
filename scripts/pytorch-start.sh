@@ -56,10 +56,16 @@ git fetch --depth 1 origin main
 git checkout -B main origin/main
 
 REV="$(git rev-parse HEAD)"
+# Venv lives on the volume. Restart wipes the container disk (/usr, uv, bun)
+# but keeps /workspace, so a code update does not reinstall torch or sam2.
+VENV="/workspace/videoclean/.venv"
 STAMP="/workspace/videoclean/.installed-rev"
-if [ "${VIDEOCLEAN_REINSTALL:-0}" != "1" ] && [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$REV" ]; then
+if [ "${VIDEOCLEAN_REINSTALL:-0}" != "1" ] && [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$REV" ] && [ -x "$VENV/bin/python" ]; then
   echo "revision $REV already installed; skipping pip and webui build"
 else
+  if [ ! -x "$VENV/bin/python" ]; then
+    uv venv --python "$PY" --system-site-packages "$VENV"
+  fi
   # Pin every installed distribution. Local versions (+cu128) are written
   # as installed so resolution cannot swap them for the pyproject pins
   # (torch==2.8.0, numpy<2, …).
@@ -77,12 +83,12 @@ PY
 
   # `--extra` is rejected unless a project file is named first.
   # The image uv wants `.[extras]` instead.
-  uv pip install --python "$PY" --system --break-system-packages \
+  uv pip install --python "$VENV/bin/python" \
     --overrides /tmp/image-pins.txt \
     -e ".[gpu,lama,web]"
   # sam2 is not on the image. Pin matches the init_state copy in sam2_video.py.
-  if ! "$PY" -c 'import sam2' >/dev/null 2>&1 || [ "${VIDEOCLEAN_REINSTALL:-0}" = "1" ]; then
-    uv pip install --python "$PY" --system --break-system-packages \
+  if ! "$VENV/bin/python" -c 'import sam2' >/dev/null 2>&1 || [ "${VIDEOCLEAN_REINSTALL:-0}" = "1" ]; then
+    uv pip install --python "$VENV/bin/python" \
       --overrides /tmp/image-pins.txt \
       "git+https://github.com/facebookresearch/sam2.git@2b90b9f5ceec907a1c18123530e92e794ad901a4"
   fi
@@ -107,5 +113,5 @@ PY
 fi
 
 mkdir -p "$VIDEOCLEAN_DATA_DIR" "$HF_HOME"
-"$PY" -m videoclean doctor --device cuda || true
-exec "$PY" -m videoclean serve --host 0.0.0.0 --port "$VIDEOCLEAN_PORT"
+"$VENV/bin/python" -m videoclean doctor --device cuda || true
+exec "$VENV/bin/python" -m videoclean serve --host 0.0.0.0 --port "$VIDEOCLEAN_PORT"
