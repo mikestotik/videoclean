@@ -9,8 +9,10 @@ from videoclean.adapters.hf_cache import download_hint, hf_cached
 from videoclean.application.errors import AdapterUnavailable
 from videoclean.domain.tracks import Track, apply_part
 
-# Extra VRAM kept free for the image encoder / activations while frames stay on GPU.
-_SAM2_ACTIVATION_HEADROOM = 3 * 1024**3
+# Full GPU keeps growing per-frame features in VRAM; leave a wide cushion.
+_SAM2_FULL_GPU_HEADROOM = 8 * 1024**3
+# Hybrid: frames on GPU, inference state on CPU — only one-frame encode needs headroom.
+_SAM2_HYBRID_HEADROOM = 2 * 1024**3
 
 
 @dataclass(frozen=True)
@@ -26,15 +28,24 @@ def choose_sam2_storage(
     image_size: int,
     device: str,
     vram_budget_bytes: int,
-    headroom_bytes: int = _SAM2_ACTIVATION_HEADROOM,
+    full_headroom_bytes: int = _SAM2_FULL_GPU_HEADROOM,
+    hybrid_headroom_bytes: int = _SAM2_HYBRID_HEADROOM,
 ) -> Sam2StorageDecision:
-    """Keep the normalized video tensor on CUDA only when the budget covers it."""
+    """Pick where SAM2 keeps the video tensor and the inference state.
+
+    Full GPU is only when frames plus a wide state/activation cushion fit.
+    Otherwise prefer hybrid (frames CUDA, state CPU) over full CPU offload —
+    that still removes the PCIe hit on every frame encode without OOMing on long clips.
+    """
     dev = (device or "cpu").strip().lower()
     if dev != "cuda" or int(vram_budget_bytes) <= 0 or int(n_frames) <= 0:
         return Sam2StorageDecision(True, True, "cpu")
     images_bytes = int(n_frames) * 3 * int(image_size) * int(image_size) * 4
-    if images_bytes + int(headroom_bytes) <= int(vram_budget_bytes):
+    budget = int(vram_budget_bytes)
+    if images_bytes + int(full_headroom_bytes) <= budget:
         return Sam2StorageDecision(False, False, "cuda")
+    if images_bytes + int(hybrid_headroom_bytes) <= budget:
+        return Sam2StorageDecision(False, True, "cuda")
     return Sam2StorageDecision(True, True, "cpu")
 
 
@@ -109,6 +120,35 @@ class Sam2VideoSegmenter:
             raise AdapterUnavailable(self._load_error) from exc
 
     def _propagate(self, frames: list[np.ndarray], tracks: list[Track], on_progress=None) -> list[np.ndarray]:
+        import torch
+
+        try:
+            return self._propagate_with_storage(frames, tracks, on_progress=on_progress, force_offload=False)
+        except Exception as exc:  # noqa: BLE001
+            oom_types = (getattr(torch.cuda, "OutOfMemoryError", ()), getattr(torch, "OutOfMemoryError", ()))
+            oom_types = tuple(t for t in oom_types if isinstance(t, type))
+            is_oom = (oom_types and isinstance(exc, oom_types)) or (
+                isinstance(exc, RuntimeError) and "out of memory" in str(exc).lower()
+            )
+            if self.device != "cuda" or not is_oom:
+                raise
+            # Decision was too aggressive (feature cache grew). Retry fully offloaded.
+            try:
+                torch.cuda.empty_cache()
+            except Exception:  # noqa: BLE001
+                pass
+            if on_progress:
+                on_progress(0, 1, f"{self.name} OOM — retry offload")
+            return self._propagate_with_storage(frames, tracks, on_progress=on_progress, force_offload=True)
+
+    def _propagate_with_storage(
+        self,
+        frames: list[np.ndarray],
+        tracks: list[Track],
+        on_progress=None,
+        *,
+        force_offload: bool,
+    ) -> list[np.ndarray]:
         import cv2
         import torch
 
@@ -117,7 +157,7 @@ class Sam2VideoSegmenter:
         acc = [np.zeros((h, w), dtype=np.uint8) for _ in frames]
         if on_progress:
             on_progress(0, n + len(tracks), f"{self.name} init")
-        state = self._init_state_from_frames(frames)
+        state = self._init_state_from_frames(frames, force_offload=force_offload)
         obj_id = 1
         for tr_i, tr in enumerate(tracks):
             if on_progress:
@@ -171,7 +211,7 @@ class Sam2VideoSegmenter:
             on_progress(1, 1, f"{self.name} done")
         return acc
 
-    def _init_state_from_frames(self, frames) -> dict:
+    def _init_state_from_frames(self, frames, *, force_offload: bool = False) -> dict:
         """Build the video predictor state from frames already in memory."""
         import torch
         from collections import OrderedDict
@@ -180,12 +220,15 @@ class Sam2VideoSegmenter:
         image_size = int(getattr(predictor, "image_size", 1024) or 1024)
         n = len(frames)
         h, w = frames[0].shape[:2]
-        decision = choose_sam2_storage(
-            n_frames=n,
-            image_size=image_size,
-            device=self.device,
-            vram_budget_bytes=int(getattr(self, "vram_budget_bytes", 0) or 0),
-        )
+        if force_offload:
+            decision = Sam2StorageDecision(True, True, "cpu")
+        else:
+            decision = choose_sam2_storage(
+                n_frames=n,
+                image_size=image_size,
+                device=self.device,
+                vram_budget_bytes=int(getattr(self, "vram_budget_bytes", 0) or 0),
+            )
         self.last_storage = decision
         images = _image_tensor(frames, image_size, getattr(self, "tensor_path", None))
         device = torch.device(getattr(predictor, "device", self.device))
@@ -216,6 +259,7 @@ class Sam2VideoSegmenter:
         if warmup is not None:
             warmup(state, frame_idx=0, batch_size=1)
         return state
+
 
 
 def _image_tensor(frames, image_size: int, tensor_path):
