@@ -33,7 +33,7 @@ Pod settings:
 
 Start command: `scripts/pytorch-start.sh` (the workflow inlines that file as container CMD and leaves the image entrypoint alone). Repo is public: `https://github.com/mikestotik/videoclean.git`. No custom image: packages already in the template stay at those versions.
 
-Code updates: push `main`, then run **Deploy PyTorch pod** again with the same pod name. The workflow restarts that pod. It does not terminate it. Restart wipes the container disk and keeps `/workspace` (clone, venv, Hugging Face cache). The boot script pulls `main` and reinstalls only when the git revision changed. Terminate only when the GPU, image, or disk size must change. A pod created before the venv-on-volume change still has the old start command; terminate that one once.
+Code updates: push `main`, then run **Deploy PyTorch pod** again with the same pod name. The workflow restarts that pod. It does not terminate it. Restart wipes the container disk and keeps `/workspace` (clone and Hugging Face cache). The boot script pulls `main` and installs the app into the system Python. Packages that shipped with the image, including torch, stay. Terminate only when the GPU, image, or disk size must change.
 Automated: workflow **Deploy PyTorch pod** (Actions → Run workflow).
 
 > **Gate check (10 секунд, до долгой установки).** Стоковый torch образа должен видеть CUDA, иначе хост битый и всё остальное бессмысленно:

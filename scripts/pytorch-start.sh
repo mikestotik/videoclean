@@ -6,10 +6,8 @@
 # Clone once, then serve. Idempotent: a restart with the same git revision
 # skips apt, pip, and the WebUI build.
 #
-# Image distributions are excluded from uv resolution. The venv uses
-# --system-site-packages, so torch stays the image build (2.8.0+cu128).
-# The template's uv is older than 0.9.8 and rejects --excludes. This script
-# installs uv 0.12.19, which accepts that flag.
+# Install into the image interpreter. uv there already sees torch 2.8.0+cu128
+# and does not download it. A venv does not see that build.
 set -euo pipefail
 
 # A fast exit makes RunPod restart the container immediately and bill another boot.
@@ -33,22 +31,12 @@ export UV_CACHE_DIR="${UV_CACHE_DIR:-/root/.cache/uv}"
 export UV_LINK_MODE="${UV_LINK_MODE:-copy}"
 
 PY="$(command -v python3)"
-# A failed check exits the container. RunPod restarts it at once, and the
-# driver then answers "CUDA unknown error" on every attempt. Wait it out.
-cuda_ok=0
-for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
-  if "$PY" -c 'import torch; ok = torch.cuda.is_available(); print(torch.__version__, "cuda="+str(ok)); raise SystemExit(0 if ok else 1)'; then
-    cuda_ok=1
-    break
-  fi
-  echo "CUDA not ready (attempt ${attempt}/12); nvidia-smi:"
+# One check. A retry loop restarts the container and keeps the GPU wedged.
+if ! "$PY" -c 'import torch; ok = torch.cuda.is_available(); print(torch.__version__, "cuda="+str(ok)); raise SystemExit(0 if ok else 1)'; then
+  echo "Image torch cannot see CUDA. nvidia-smi:"
   nvidia-smi || true
-  echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES-<unset>}"
-  sleep 5
-done
-if [ "$cuda_ok" != 1 ]; then
-  echo "CUDA still unavailable after 60s. Sleeping so the pod does not tight-loop."
-  sleep 60
+  echo "Stop this pod and start another host. The script cannot repair the driver."
+  sleep 120
   exit 1
 fi
 
@@ -58,12 +46,10 @@ if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1; then
   apt-get install -y --no-install-recommends ffmpeg git curl ca-certificates zstd unzip
 fi
 
-# Pin a uv that has `uv pip install --excludes`. The image binary does not.
-if ! /root/.local/bin/uv pip install --help 2>/dev/null | grep -q -- '--excludes'; then
-  curl -LsSf https://astral.sh/uv/0.12.19/install.sh | env UV_INSTALL_DIR=/root/.local/bin UV_NO_MODIFY_PATH=1 sh
+if ! command -v uv >/dev/null 2>&1; then
+  curl -fsSL https://astral.sh/uv/install.sh | sh
+  export PATH="/root/.local/bin:$PATH"
 fi
-export PATH="/root/.local/bin:${PATH}"
-uv --version
 
 # NOTE: ollama is NOT installed here on purpose. It is an on-demand
 # component: install + start it from the Config page in the WebUI
@@ -79,37 +65,35 @@ git fetch --depth 1 origin main
 git checkout -B main origin/main
 
 REV="$(git rev-parse HEAD)"
-# Venv lives on the volume. Restart wipes the container disk (/usr, uv, bun)
-# but keeps /workspace, so a code update does not reinstall torch or sam2.
-VENV="/workspace/videoclean/.venv"
+# Container disk dies on stop/start, so a stamp on /workspace is not enough:
+# the system interpreter must still be able to import the app.
 STAMP="/workspace/videoclean/.installed-rev"
-if [ "${VIDEOCLEAN_REINSTALL:-0}" != "1" ] && [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$REV" ] && [ -x "$VENV/bin/python" ]; then
+rm -rf /workspace/videoclean/.venv
+if [ "${VIDEOCLEAN_REINSTALL:-0}" != "1" ] && [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$REV" ] \
+  && "$PY" -c 'import videoclean, sam2' >/dev/null 2>&1; then
   echo "revision $REV already installed; skipping pip and webui build"
 else
-  if [ ! -x "$VENV/bin/python" ]; then
-    uv venv --python "$PY" --system-site-packages "$VENV"
-  fi
-  # Drop every image distribution from resolution. A pin like
-  # torch==2.8.0+cu128 is not on PyPI, and a venv would try to fetch it.
-  # system-site-packages still imports the image copies.
-  "$PY" - <<'PY' > /tmp/image-excludes.txt
+  # Pin every distribution already on the image interpreter. uv then keeps
+  # torch==2.8.0+cu128 instead of downloading torch==2.8.0 from PyPI.
+  "$PY" - <<'PY' > /tmp/image-pins.txt
 from importlib.metadata import distributions
 seen = set()
 for dist in distributions():
     name = dist.metadata.get("Name")
-    if not name or name.lower() in seen:
+    ver = dist.version
+    if not name or not ver or name.lower() in seen:
         continue
     seen.add(name.lower())
-    print(name)
+    print(f"{name}=={ver}")
 PY
 
-  uv pip install --python "$VENV/bin/python" \
-    --excludes /tmp/image-excludes.txt \
+  uv pip install --python "$PY" --system --break-system-packages \
+    --overrides /tmp/image-pins.txt \
     -e ".[gpu,lama,web]"
   # sam2 is not on the image. Pin matches the init_state copy in sam2_video.py.
-  if ! "$VENV/bin/python" -c 'import sam2' >/dev/null 2>&1 || [ "${VIDEOCLEAN_REINSTALL:-0}" = "1" ]; then
-    uv pip install --python "$VENV/bin/python" \
-      --excludes /tmp/image-excludes.txt \
+  if ! "$PY" -c 'import sam2' >/dev/null 2>&1 || [ "${VIDEOCLEAN_REINSTALL:-0}" = "1" ]; then
+    uv pip install --python "$PY" --system --break-system-packages \
+      --overrides /tmp/image-pins.txt \
       "git+https://github.com/facebookresearch/sam2.git@2b90b9f5ceec907a1c18123530e92e794ad901a4"
   fi
 
@@ -133,5 +117,5 @@ PY
 fi
 
 mkdir -p "$VIDEOCLEAN_DATA_DIR" "$HF_HOME"
-"$VENV/bin/python" -m videoclean doctor --device cuda || true
-exec "$VENV/bin/python" -m videoclean serve --host 0.0.0.0 --port "$VIDEOCLEAN_PORT"
+"$PY" -m videoclean doctor --device cuda || true
+exec "$PY" -m videoclean serve --host 0.0.0.0 --port "$VIDEOCLEAN_PORT"
