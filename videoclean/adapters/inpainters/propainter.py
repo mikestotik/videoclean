@@ -185,6 +185,9 @@ class ProPainterInpainter:
     def _run(self, frames_bgr: list[np.ndarray], masks_u8: list[np.ndarray]) -> list[np.ndarray]:
         import torch
 
+        # RAFT builds pairs as frames[:, :-1] vs frames[:, 1:]. One frame is a
+        # batch of 0, and corr.view(0, H/8, W/8, -1) raises (17×17 on a ~136 crop).
+        frames_bgr, masks_u8, keep = _pad_pair(frames_bgr, masks_u8)
         device = torch.device(self.device)
         use_half = self.device == "cuda"
         orig_h, orig_w = frames_bgr[0].shape[:2]
@@ -236,7 +239,19 @@ class ProPainterInpainter:
             out.append(bgr)
         if self.device == "cuda":
             torch.cuda.empty_cache()
-        return out
+        return out[:keep]
+
+
+def _pad_pair(
+    frames: list[np.ndarray], masks: list[np.ndarray]
+) -> tuple[list[np.ndarray], list[np.ndarray], int]:
+    """RAFT needs two frames. A one-frame hole repeats the frame as its pair."""
+    n = len(frames)
+    if n >= 2:
+        return frames, masks, n
+    if n == 0:
+        return frames, masks, 0
+    return [frames[0], frames[0]], [masks[0], masks[0]], 1
 
     def _raft_flows(self, frames, video_length):
         import torch
