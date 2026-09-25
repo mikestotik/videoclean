@@ -42,6 +42,7 @@ jobs:
       inputs.action == 'deploy' ||
       inputs.action == 'start'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -60,6 +61,7 @@ jobs:
       needs.build-web.result == 'success' &&
       (github.event_name == 'push' || inputs.action == 'deploy' || inputs.action == 'start')
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -137,6 +139,7 @@ jobs:
 
       - name: Pull + build UI + restart on pod
         if: steps.ensure.outputs.offline != 'true'
+        timeout-minutes: 15
         env:
           POD_ID: ${{ steps.ensure.outputs.pod_id }}
           RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
@@ -147,14 +150,14 @@ jobs:
           export RUNPOD_POD_ID='${POD_ID}'
           export VIDEOCLEAN_REF=main
           # Cold start may still be cloning the first time.
-          for i in \$(seq 1 90); do
+          for i in \$(seq 1 24); do
             if [[ -f /workspace/videoclean/.git/HEAD ]]; then
               break
             fi
-            echo "waiting for git clone (\${i}/90)..."
+            echo "waiting for git clone (\${i}/24)..."
             sleep 5
           done
-          # Bootstrap remote-deploy.sh from git if this volume has an older checkout.
+          test -d /workspace/videoclean/.git
           cd /workspace/videoclean
           git fetch origin main
           git reset --hard origin/main
@@ -166,7 +169,7 @@ jobs:
             --pod-id "${POD_ID}" \
             --pod-json "$(cat /tmp/pod.json 2>/dev/null || echo '{}')" \
             --script-file /tmp/remote_deploy.sh \
-            --timeout 1200
+            --timeout 840
 
           echo "UI: https://${POD_ID}-7860.proxy.runpod.net"
 
