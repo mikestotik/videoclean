@@ -75,10 +75,11 @@ for dist in distributions():
     print(f"{name}=={ver}")
 PY
 
+  # `--extra` is rejected unless a project file is named first.
+  # The image uv wants `.[extras]` instead.
   uv pip install --python "$PY" --system --break-system-packages \
     --overrides /tmp/image-pins.txt \
-    --extra gpu --extra lama --extra web \
-    -e .
+    -e ".[gpu,lama,web]"
   # sam2 is not on the image. Pin matches the init_state copy in sam2_video.py.
   if ! "$PY" -c 'import sam2' >/dev/null 2>&1 || [ "${VIDEOCLEAN_REINSTALL:-0}" = "1" ]; then
     uv pip install --python "$PY" --system --break-system-packages \
