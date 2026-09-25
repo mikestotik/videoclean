@@ -31,8 +31,11 @@ env:
   RUNPOD_POD_NAME: ${{ vars.RUNPOD_POD_NAME || 'videoclean-dev' }}
   RUNPOD_DATA_CENTER: ${{ vars.RUNPOD_DATA_CENTER || 'EU-RO-1' }}
   RUNPOD_IMAGE: runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404
+  # Connect tab: ssh <podId>-XXXXXXXX@ssh.runpod.io → set this to XXXXXXXX
+  RUNPOD_SSH_PROXY_SUFFIX: ${{ vars.RUNPOD_SSH_PROXY_SUFFIX }}
 
 jobs:
+  # Gate: webui must compile before we touch the GPU pod.
   build-web:
     if: >
       github.event_name == 'push' ||
@@ -49,11 +52,6 @@ jobs:
         run: |
           bun install --frozen-lockfile
           bun run build
-      - uses: actions/upload-artifact@v4
-        with:
-          name: static_dist
-          path: server/static_dist/
-          retention-days: 2
 
   deploy:
     needs: build-web
@@ -64,22 +62,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: static_dist
-          path: server/static_dist
 
-      - name: Setup tools and SSH
+      - name: Setup SSH
         env:
           RUNPOD_SSH_PRIVATE_KEY: ${{ secrets.RUNPOD_SSH_PRIVATE_KEY }}
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq jq rsync openssh-client
+          sudo apt-get update -qq && sudo apt-get install -y -qq jq openssh-client
           test -n "${RUNPOD_SSH_PRIVATE_KEY}" || { echo "missing secret RUNPOD_SSH_PRIVATE_KEY"; exit 1; }
+          test -n "${RUNPOD_SSH_PROXY_SUFFIX}" || {
+            echo "missing vars.RUNPOD_SSH_PROXY_SUFFIX (from ssh <podId>-SUFFIX@ssh.runpod.io)" >&2
+            exit 1
+          }
           mkdir -p ~/.ssh
           printf '%s\n' "${RUNPOD_SSH_PRIVATE_KEY}" > ~/.ssh/runpod_key
           chmod 600 ~/.ssh/runpod_key
           echo "RUNPOD_SSH_KEY_PATH=${HOME}/.ssh/runpod_key" >> "${GITHUB_ENV}"
-          chmod +x scripts/runpod-api.sh scripts/runpod-restart.sh scripts/runpod-start.sh scripts/runpod-env.sh scripts/runpod-bootstrap.sh
+          chmod +x scripts/runpod-api.sh scripts/runpod_ssh_exec.py \
+            scripts/runpod-remote-deploy.sh scripts/runpod-env.sh \
+            scripts/runpod-restart.sh scripts/runpod-start.sh scripts/runpod-bootstrap.sh
 
       - name: Ensure pod (start if requested)
         id: ensure
@@ -93,6 +93,7 @@ jobs:
           if [[ -n "${running}" ]]; then
             echo "pod_id=$(jq -r .id <<<"${running}")" >> "${GITHUB_OUTPUT}"
             echo "offline=false" >> "${GITHUB_OUTPUT}"
+            printf '%s' "${running}" > /tmp/pod.json
             exit 0
           fi
 
@@ -116,50 +117,53 @@ jobs:
 
           created="$(scripts/runpod-api.sh create)"
           pid="$(jq -r .id <<<"${created}")"
-          echo "created pod ${pid}; waiting for SSH"
-          scripts/runpod-api.sh wait-ssh "${pid}" >/dev/null
+          echo "created pod ${pid}"
+          # Give cold start time to clone; proxy deploy does not need TCP.
+          for i in $(seq 1 36); do
+            curl -fsS -H "Authorization: Bearer ${RUNPOD_API_KEY}" \
+              "https://rest.runpod.io/v1/pods/${pid}" > /tmp/pod.json || true
+            status="$(jq -r .desiredStatus /tmp/pod.json 2>/dev/null || echo "")"
+            echo "status=${status} (${i}/36)"
+            [[ "${status}" == "RUNNING" ]] && break
+            sleep 5
+          done
+          sleep 20
           echo "pod_id=${pid}" >> "${GITHUB_OUTPUT}"
           echo "offline=false" >> "${GITHUB_OUTPUT}"
 
-      - name: Rsync + restart
+      - name: Pull + build UI + restart on pod
         if: steps.ensure.outputs.offline != 'true'
         env:
-          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
           POD_ID: ${{ steps.ensure.outputs.pod_id }}
         run: |
           set -euo pipefail
-          pod_json="$(curl -fsS -H "Authorization: Bearer ${RUNPOD_API_KEY}" \
-            "https://rest.runpod.io/v1/pods/${POD_ID}")"
-          target="$(printf '%s' "${pod_json}" | scripts/runpod-api.sh ssh-target)"
-          ip="${target%%:*}"
-          port="${target##*:}"
-          echo "rsync → root@${ip} -p ${port}"
-          SSH=(ssh -i "${RUNPOD_SSH_KEY_PATH}" -p "${port}" -o StrictHostKeyChecking=no -o BatchMode=yes)
-          RSYNC_RSH="${SSH[*]}"
-          "${SSH[@]}" "root@${ip}" 'mkdir -p /workspace/videoclean'
-          # First boot: wait until cold-start finished uv sync and launched serve
-          # (pid file), so we do not race rsync against an in-progress sync.
-          for i in $(seq 1 120); do
-            if "${SSH[@]}" "root@${ip}" 'test -f /workspace/run/videoclean.pid'; then
-              echo "cold start ready"
+          cat > /tmp/remote_deploy.sh <<EOF
+          set -euo pipefail
+          export RUNPOD_POD_ID='${POD_ID}'
+          export VIDEOCLEAN_REF=main
+          # Cold start may still be cloning the first time.
+          for i in \$(seq 1 90); do
+            if [[ -f /workspace/videoclean/.git/HEAD ]]; then
               break
             fi
-            if "${SSH[@]}" "root@${ip}" 'test -f /workspace/videoclean/scripts/runpod-restart.sh' \
-              && [[ "${i}" -gt 6 ]]; then
-              # Scripts present but still syncing; keep waiting for pid, with a soft cap.
-              :
-            fi
-            echo "waiting for cold start (${i}/120)..."
+            echo "waiting for git clone (\${i}/90)..."
             sleep 5
           done
-          # No --delete: multiple sources + delete can wipe unrelated volume paths.
-          rsync -az \
-            -e "${RSYNC_RSH}" \
-            --exclude '__pycache__/' \
-            --exclude '.pytest_cache/' \
-            ./videoclean ./server ./scripts ./pyproject.toml ./uv.lock ./README.md \
-            "root@${ip}:/workspace/videoclean/"
-          "${SSH[@]}" "root@${ip}" "export RUNPOD_POD_ID=${POD_ID}; bash /workspace/videoclean/scripts/runpod-restart.sh"
+          # Bootstrap remote-deploy.sh from git if this volume has an older checkout.
+          cd /workspace/videoclean
+          git fetch origin main
+          git reset --hard origin/main
+          bash /workspace/videoclean/scripts/runpod-remote-deploy.sh
+          test -f /workspace/videoclean/server/static_dist/index.html
+          curl -fsS -o /dev/null -w "HTTP %{http_code}\n" http://127.0.0.1:7860/
+          EOF
+
+          python3 scripts/runpod_ssh_exec.py \
+            --pod-id "${POD_ID}" \
+            --pod-json "$(cat /tmp/pod.json 2>/dev/null || echo '{}')" \
+            --script-file /tmp/remote_deploy.sh \
+            --timeout 1200
+
           echo "UI: https://${POD_ID}-7860.proxy.runpod.net"
 
   stop:

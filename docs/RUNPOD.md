@@ -17,7 +17,23 @@
    | `RUNPOD_API_KEY` | API key из RunPod |
    | `RUNPOD_NETWORK_VOLUME_ID` | id volume (как в S3/API) |
    | `RUNPOD_SSH_PRIVATE_KEY` | весь файл `~/.ssh/runpod_github_actions` включая `BEGIN/END` |
-4. Опционально **Variables**: `RUNPOD_POD_NAME` (дефолт `videoclean-dev`), `RUNPOD_DATA_CENTER` (дефолт `EU-RO-1`).
+4. **Variables** (Settings → Secrets → Actions → Variables):
+   | Variable | Значение |
+   |---|---|
+   | `RUNPOD_SSH_PROXY_SUFFIX` | **обязательно**: хвост из Connect → SSH, команда вида `ssh <podId>-XXXXXXXX@ssh.runpod.io` → `XXXXXXXX` (на аккаунт стабилен) |
+   | `RUNPOD_POD_NAME` | опционально, дефолт `videoclean-dev` |
+   | `RUNPOD_DATA_CENTER` | опционально, дефолт `EU-RO-1` |
+
+## Автообновление после коммита
+
+Пока pod **RUNNING**: каждый push в `main` → Actions:
+
+1. проверяет, что `webui` собирается в CI;
+2. по SSH (`ssh.runpod.io`) на поде: `git pull` → `bun run build` → restart `serve`.
+
+`static_dist` в git не хранится — UI собирается на volume (bun кэшируется). Руками после коммита ничего делать не нужно.
+
+Если pod выключен: push **не** поднимает GPU (экономия). Сначала Actions → **start**, дальше снова автодеплой с пушей.
 
 ## Как пользоваться
 
