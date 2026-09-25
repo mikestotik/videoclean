@@ -1,4 +1,4 @@
-name: RunPod deploy
+name: RunPod deploy v2
 
 on:
   push:
