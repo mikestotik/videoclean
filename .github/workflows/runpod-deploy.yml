@@ -78,7 +78,9 @@ jobs:
           curl -fsSL -o /usr/local/bin/runpodctl \
             "https://github.com/runpod/runpodctl/releases/download/v2.14.0/runpodctl-linux-amd64"
           chmod +x /usr/local/bin/runpodctl
-          runpodctl config --apiKey "${RUNPOD_API_KEY}"
+          # runpodctl reads RUNPOD_API_KEY from the environment (config/doctor not required).
+          mkdir -p "${HOME}/.runpod"
+          printf 'apiKey: "%s"\n' "${RUNPOD_API_KEY}" > "${HOME}/.runpod/config.toml"
           chmod +x scripts/runpod-api.sh scripts/runpod_ssh_exec.py \
             scripts/runpod-remote-deploy.sh scripts/runpod-env.sh \
             scripts/runpod-restart.sh scripts/runpod-start.sh scripts/runpod-bootstrap.sh
