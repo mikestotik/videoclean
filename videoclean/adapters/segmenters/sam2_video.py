@@ -1,18 +1,20 @@
 from __future__ import annotations
 
+import gc
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
 from videoclean.adapters.hf_cache import download_hint, hf_cached
+from videoclean.application.budget import RESERVE_BYTES
 from videoclean.application.errors import AdapterUnavailable
 from videoclean.domain.tracks import Track, apply_part
 
 # Full GPU keeps growing per-frame features in VRAM; leave a wide cushion.
 _SAM2_FULL_GPU_HEADROOM = 8 * 1024**3
-# Hybrid: frames on GPU, inference state on CPU — only one-frame encode needs headroom.
-_SAM2_HYBRID_HEADROOM = 2 * 1024**3
+# Hybrid: frames on GPU, state on CPU. Encode still needs several GiB of working VRAM.
+_SAM2_HYBRID_HEADROOM = 6 * 1024**3
 
 
 @dataclass(frozen=True)
@@ -47,6 +49,54 @@ def choose_sam2_storage(
     if images_bytes + int(hybrid_headroom_bytes) <= budget:
         return Sam2StorageDecision(False, True, "cuda")
     return Sam2StorageDecision(True, True, "cpu")
+
+
+def _live_vram_budget_bytes(configured_bytes: int) -> int:
+    """Cap the prepare-time budget by free VRAM right now (minus reserve)."""
+    configured = int(configured_bytes or 0)
+    try:
+        import torch
+
+        if not torch.cuda.is_available():
+            return configured
+        free, _total = torch.cuda.mem_get_info()
+        live = int(free) - int(RESERVE_BYTES)
+        if live < 0:
+            live = 0
+        if configured <= 0:
+            return live
+        return min(configured, live)
+    except Exception:  # noqa: BLE001
+        return configured
+
+
+def _is_cuda_oom(exc: BaseException) -> bool:
+    import torch
+
+    oom_types = tuple(
+        t
+        for t in (
+            getattr(torch.cuda, "OutOfMemoryError", None),
+            getattr(torch, "OutOfMemoryError", None),
+        )
+        if isinstance(t, type)
+    )
+    if oom_types and isinstance(exc, oom_types):
+        return True
+    return isinstance(exc, RuntimeError) and "out of memory" in str(exc).lower()
+
+
+def _reclaim_cuda() -> None:
+    """Drop frames held by a failed OOM traceback, then release the CUDA cache."""
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 class Sam2VideoSegmenter:
@@ -120,23 +170,15 @@ class Sam2VideoSegmenter:
             raise AdapterUnavailable(self._load_error) from exc
 
     def _propagate(self, frames: list[np.ndarray], tracks: list[Track], on_progress=None) -> list[np.ndarray]:
-        import torch
-
         try:
             return self._propagate_with_storage(frames, tracks, on_progress=on_progress, force_offload=False)
         except Exception as exc:  # noqa: BLE001
-            oom_types = (getattr(torch.cuda, "OutOfMemoryError", ()), getattr(torch, "OutOfMemoryError", ()))
-            oom_types = tuple(t for t in oom_types if isinstance(t, type))
-            is_oom = (oom_types and isinstance(exc, oom_types)) or (
-                isinstance(exc, RuntimeError) and "out of memory" in str(exc).lower()
-            )
-            if self.device != "cuda" or not is_oom:
+            if self.device != "cuda" or not _is_cuda_oom(exc):
                 raise
-            # Decision was too aggressive (feature cache grew). Retry fully offloaded.
-            try:
-                torch.cuda.empty_cache()
-            except Exception:  # noqa: BLE001
-                pass
+            # Traceback keeps the failed inference_state (and its CUDA tensors) alive.
+            exc.__traceback__ = None
+            del exc
+            _reclaim_cuda()
             if on_progress:
                 on_progress(0, 1, f"{self.name} OOM — retry offload")
             return self._propagate_with_storage(frames, tracks, on_progress=on_progress, force_offload=True)
@@ -158,58 +200,66 @@ class Sam2VideoSegmenter:
         if on_progress:
             on_progress(0, n + len(tracks), f"{self.name} init")
         state = self._init_state_from_frames(frames, force_offload=force_offload)
-        obj_id = 1
-        for tr_i, tr in enumerate(tracks):
-            if on_progress:
-                on_progress(n + tr_i, n + len(tracks), f"{self.name} track {tr_i + 1}/{len(tracks)}")
-            anchors = _anchor_boxes(tr, w, h, max_anchors=8)
-            if not anchors:
-                continue
-            for frame_idx, box in anchors:
-                self._predictor.add_new_points_or_box(
-                    inference_state=state,
-                    frame_idx=frame_idx,
-                    obj_id=obj_id,
-                    box=np.array(box, dtype=np.float32),
-                )
-            obj_id += 1
-        if obj_id == 1:
-            return acc
-
-        prop_total = max(n, 1)
-
-        def _consume() -> None:
-            for frame_idx, _obj_ids, mask_logits in self._predictor.propagate_in_video(state):
+        try:
+            obj_id = 1
+            for tr_i, tr in enumerate(tracks):
                 if on_progress:
-                    on_progress(
-                        frame_idx + 1,
-                        prop_total,
-                        f"{self.name} propagate {frame_idx + 1}/{n}",
-                    )
-                if frame_idx >= len(acc):
+                    on_progress(n + tr_i, n + len(tracks), f"{self.name} track {tr_i + 1}/{len(tracks)}")
+                anchors = _anchor_boxes(tr, w, h, max_anchors=8)
+                if not anchors:
                     continue
-                for plane in mask_logits:
-                    sl = plane
-                    if hasattr(sl, "cpu"):
-                        sl = sl.cpu().numpy()
-                    while getattr(sl, "ndim", 0) > 2:
-                        sl = sl[0]
-                    acc[frame_idx][sl > 0] = 255
+                for frame_idx, box in anchors:
+                    self._predictor.add_new_points_or_box(
+                        inference_state=state,
+                        frame_idx=frame_idx,
+                        obj_id=obj_id,
+                        box=np.array(box, dtype=np.float32),
+                    )
+                obj_id += 1
+            if obj_id == 1:
+                return acc
 
-        with torch.inference_mode():
-            if self.device == "cuda":
-                with torch.autocast("cuda", dtype=torch.bfloat16):
+            prop_total = max(n, 1)
+
+            def _consume() -> None:
+                for frame_idx, _obj_ids, mask_logits in self._predictor.propagate_in_video(state):
+                    if on_progress:
+                        on_progress(
+                            frame_idx + 1,
+                            prop_total,
+                            f"{self.name} propagate {frame_idx + 1}/{n}",
+                        )
+                    if frame_idx >= len(acc):
+                        continue
+                    for plane in mask_logits:
+                        sl = plane
+                        if hasattr(sl, "cpu"):
+                            sl = sl.cpu().numpy()
+                        while getattr(sl, "ndim", 0) > 2:
+                            sl = sl[0]
+                        acc[frame_idx][sl > 0] = 255
+
+            with torch.inference_mode():
+                if self.device == "cuda":
+                    with torch.autocast("cuda", dtype=torch.bfloat16):
+                        _consume()
+                else:
                     _consume()
-            else:
-                _consume()
-        if self.dilate_px > 0:
-            k = cv2.getStructuringElement(
-                cv2.MORPH_ELLIPSE, (self.dilate_px * 2 + 1, self.dilate_px * 2 + 1)
-            )
-            acc = [cv2.dilate(m, k) if np.any(m) else m for m in acc]
-        if on_progress:
-            on_progress(1, 1, f"{self.name} done")
-        return acc
+            if self.dilate_px > 0:
+                k = cv2.getStructuringElement(
+                    cv2.MORPH_ELLIPSE, (self.dilate_px * 2 + 1, self.dilate_px * 2 + 1)
+                )
+                acc = [cv2.dilate(m, k) if np.any(m) else m for m in acc]
+            if on_progress:
+                on_progress(1, 1, f"{self.name} done")
+            return acc
+        except Exception:
+            state.clear()
+            raise
+        finally:
+            # Drop refs even on success so the next job starts from a clean slate.
+            if isinstance(state, dict):
+                state.clear()
 
     def _init_state_from_frames(self, frames, *, force_offload: bool = False) -> dict:
         """Build the video predictor state from frames already in memory."""
@@ -227,7 +277,9 @@ class Sam2VideoSegmenter:
                 n_frames=n,
                 image_size=image_size,
                 device=self.device,
-                vram_budget_bytes=int(getattr(self, "vram_budget_bytes", 0) or 0),
+                vram_budget_bytes=_live_vram_budget_bytes(
+                    int(getattr(self, "vram_budget_bytes", 0) or 0)
+                ),
             )
         self.last_storage = decision
         images = _image_tensor(frames, image_size, getattr(self, "tensor_path", None))
@@ -255,10 +307,17 @@ class Sam2VideoSegmenter:
             "temp_output_dict_per_obj": {},
             "frames_tracked_per_obj": {},
         }
-        warmup = getattr(predictor, "_get_image_feature", None)
-        if warmup is not None:
-            warmup(state, frame_idx=0, batch_size=1)
-        return state
+        try:
+            warmup = getattr(predictor, "_get_image_feature", None)
+            if warmup is not None:
+                warmup(state, frame_idx=0, batch_size=1)
+            return state
+        except Exception:
+            # Drop partial CUDA tensors before the caller decides to retry/offload.
+            state.clear()
+            del state, images
+            _reclaim_cuda()
+            raise
 
 
 
