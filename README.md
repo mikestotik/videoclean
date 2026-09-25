@@ -193,6 +193,8 @@ make docker                   # videoclean-api + videoclean-web
 docker compose up --build     # web открыть на :8080; VITE_API_BASE_URL — URL API для браузера
 ```
 
+**RunPod (CUDA-dev, без сборки torch-образа):** Network Volume + GitHub Actions rsync — [docs/RUNPOD.md](docs/RUNPOD.md).
+
 **Локально:**
 
 ```bash

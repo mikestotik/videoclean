@@ -1,0 +1,183 @@
+name: RunPod deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "videoclean/**"
+      - "server/**"
+      - "webui/**"
+      - "scripts/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/runpod-deploy.yml"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "start | deploy | stop (terminate)"
+        required: true
+        type: choice
+        options:
+          - deploy
+          - start
+          - stop
+        default: deploy
+
+concurrency:
+  group: runpod-deploy
+  cancel-in-progress: true
+
+env:
+  RUNPOD_POD_NAME: ${{ vars.RUNPOD_POD_NAME || 'videoclean-dev' }}
+  RUNPOD_DATA_CENTER: ${{ vars.RUNPOD_DATA_CENTER || 'EU-RO-1' }}
+  RUNPOD_IMAGE: runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404
+
+jobs:
+  build-web:
+    if: >
+      github.event_name == 'push' ||
+      inputs.action == 'deploy' ||
+      inputs.action == 'start'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install and build webui
+        working-directory: webui
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: static_dist
+          path: server/static_dist/
+          retention-days: 2
+
+  deploy:
+    needs: build-web
+    if: >
+      always() &&
+      needs.build-web.result == 'success' &&
+      (github.event_name == 'push' || inputs.action == 'deploy' || inputs.action == 'start')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: static_dist
+          path: server/static_dist
+
+      - name: Setup tools and SSH
+        env:
+          RUNPOD_SSH_PRIVATE_KEY: ${{ secrets.RUNPOD_SSH_PRIVATE_KEY }}
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq jq rsync openssh-client
+          test -n "${RUNPOD_SSH_PRIVATE_KEY}" || { echo "missing secret RUNPOD_SSH_PRIVATE_KEY"; exit 1; }
+          mkdir -p ~/.ssh
+          printf '%s\n' "${RUNPOD_SSH_PRIVATE_KEY}" > ~/.ssh/runpod_key
+          chmod 600 ~/.ssh/runpod_key
+          echo "RUNPOD_SSH_KEY_PATH=${HOME}/.ssh/runpod_key" >> "${GITHUB_ENV}"
+          chmod +x scripts/runpod-api.sh scripts/runpod-restart.sh scripts/runpod-start.sh scripts/runpod-env.sh scripts/runpod-bootstrap.sh
+
+      - name: Ensure pod (start if requested)
+        id: ensure
+        env:
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+          RUNPOD_NETWORK_VOLUME_ID: ${{ secrets.RUNPOD_NETWORK_VOLUME_ID }}
+          WANT_START: ${{ github.event_name == 'workflow_dispatch' && inputs.action == 'start' }}
+        run: |
+          set -euo pipefail
+          running="$(scripts/runpod-api.sh find-running || true)"
+          if [[ -n "${running}" ]]; then
+            echo "pod_id=$(jq -r .id <<<"${running}")" >> "${GITHUB_OUTPUT}"
+            echo "offline=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          if [[ "${WANT_START}" != "true" ]]; then
+            if [[ "${{ github.event_name }}" == "push" ]]; then
+              echo "Pod offline — skip deploy (Actions → RunPod deploy → start)."
+              echo "offline=true" >> "${GITHUB_OUTPUT}"
+              exit 0
+            fi
+            echo "No RUNNING pod named ${RUNPOD_POD_NAME}. Choose action=start." >&2
+            exit 1
+          fi
+
+          leftover="$(scripts/runpod-api.sh find-any || true)"
+          if [[ -n "${leftover}" ]]; then
+            lid="$(jq -r .id <<<"${leftover}")"
+            echo "terminating leftover pod ${lid}"
+            scripts/runpod-api.sh terminate "${lid}" || true
+            sleep 5
+          fi
+
+          created="$(scripts/runpod-api.sh create)"
+          pid="$(jq -r .id <<<"${created}")"
+          echo "created pod ${pid}; waiting for SSH"
+          scripts/runpod-api.sh wait-ssh "${pid}" >/dev/null
+          echo "pod_id=${pid}" >> "${GITHUB_OUTPUT}"
+          echo "offline=false" >> "${GITHUB_OUTPUT}"
+
+      - name: Rsync + restart
+        if: steps.ensure.outputs.offline != 'true'
+        env:
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+          POD_ID: ${{ steps.ensure.outputs.pod_id }}
+        run: |
+          set -euo pipefail
+          pod_json="$(curl -fsS -H "Authorization: Bearer ${RUNPOD_API_KEY}" \
+            "https://rest.runpod.io/v1/pods/${POD_ID}")"
+          target="$(printf '%s' "${pod_json}" | scripts/runpod-api.sh ssh-target)"
+          ip="${target%%:*}"
+          port="${target##*:}"
+          echo "rsync → root@${ip} -p ${port}"
+          SSH=(ssh -i "${RUNPOD_SSH_KEY_PATH}" -p "${port}" -o StrictHostKeyChecking=no -o BatchMode=yes)
+          RSYNC_RSH="${SSH[*]}"
+          "${SSH[@]}" "root@${ip}" 'mkdir -p /workspace/videoclean'
+          # First boot: wait until cold-start finished uv sync and launched serve
+          # (pid file), so we do not race rsync against an in-progress sync.
+          for i in $(seq 1 120); do
+            if "${SSH[@]}" "root@${ip}" 'test -f /workspace/run/videoclean.pid'; then
+              echo "cold start ready"
+              break
+            fi
+            if "${SSH[@]}" "root@${ip}" 'test -f /workspace/videoclean/scripts/runpod-restart.sh' \
+              && [[ "${i}" -gt 6 ]]; then
+              # Scripts present but still syncing; keep waiting for pid, with a soft cap.
+              :
+            fi
+            echo "waiting for cold start (${i}/120)..."
+            sleep 5
+          done
+          # No --delete: multiple sources + delete can wipe unrelated volume paths.
+          rsync -az \
+            -e "${RSYNC_RSH}" \
+            --exclude '__pycache__/' \
+            --exclude '.pytest_cache/' \
+            ./videoclean ./server ./scripts ./pyproject.toml ./uv.lock ./README.md \
+            "root@${ip}:/workspace/videoclean/"
+          "${SSH[@]}" "root@${ip}" "export RUNPOD_POD_ID=${POD_ID}; bash /workspace/videoclean/scripts/runpod-restart.sh"
+          echo "UI: https://${POD_ID}-7860.proxy.runpod.net"
+
+  stop:
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'stop'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Terminate pod
+        env:
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq jq
+          chmod +x scripts/runpod-api.sh
+          pod_json="$(scripts/runpod-api.sh find-any || true)"
+          if [[ -z "${pod_json}" ]]; then
+            echo "No pod named ${RUNPOD_POD_NAME} to terminate."
+            exit 0
+          fi
+          pid="$(jq -r .id <<<"${pod_json}")"
+          scripts/runpod-api.sh terminate "${pid}"
+          echo "Terminated ${pid}"
